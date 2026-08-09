@@ -92,14 +92,17 @@ local function buildShadowBlob()
     { -3, 0,  3, 0, 0, 1 }, { -6, 0,  2, 0, 0, 1 },
   }
   local indices = {}
+  -- LÖVE vertex maps are 1-based. The center vertex is 1 and the perimeter
+  -- vertices are 2..9; using zero-based indices can produce stretched
+  -- triangles on Android's GLES renderer.
   for i = 1, 7 do
-    indices[#indices + 1] = 0
-    indices[#indices + 1] = i
+    indices[#indices + 1] = 1
     indices[#indices + 1] = i + 1
+    indices[#indices + 1] = i + 2
   end
-  indices[#indices + 1] = 0
-  indices[#indices + 1] = 8
   indices[#indices + 1] = 1
+  indices[#indices + 1] = 9
+  indices[#indices + 1] = 2
   return Voxel3D.newMesh(verts, indices)
 end
 

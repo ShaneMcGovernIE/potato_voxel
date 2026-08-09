@@ -64,11 +64,12 @@ function BrickProfile.actorShadowMapEnabled(level)
   return level == BrickProfile.DESKTOP_HIGH_LEVEL
 end
 
--- Active Brick rungs keep the cheap actor contact/blob fallback. The old
--- policy disabled every shadow at LOW and POTATO, which also disabled the
--- fallback decals and made NPCs appear to float. OFF remains shadow-free.
+-- HIGH, MEDIUM and LOW keep shadows; POTATO disables the shadow pass entirely
+-- to preserve the rung's minimum frame budget. OFF remains shadow-free.
+BrickProfile.POTATO_LEVEL = 4
 function BrickProfile.shadowsEnabled(level)
-  return (level or 0) > 0
+  level = level or 0
+  return level > 0 and level < BrickProfile.POTATO_LEVEL
 end
 
 -- The pipeline record and the rows hook captured the VOXEL ladder by
@@ -206,9 +207,9 @@ function BrickProfile.apply(V)
   ShadowMap.BRICK_HIGH_RES = 1536
 
   -- HIGH uses the full two-layer map on Brick/Android as well as desktop.
-  -- Lower Brick rungs turn the per-frame actor gate off in VoxelScene and
-  -- continue using the existing flat contact/blob decals, while the world
-  -- layer keeps the reduced Brick shadow policy.
+  -- MEDIUM and LOW turn the per-frame actor gate off in VoxelScene and
+  -- continue using the existing flat contact/blob decals. POTATO disables
+  -- the complete shadow pass, while HIGH keeps the two-layer map.
   ShadowMap.SPRITE_LAYER = true
 end
 

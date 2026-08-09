@@ -1027,9 +1027,9 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- reaches far north and barely south, which is right for every rung
   -- but a head free to face south.
   local shCx, shCy = FirstPerson.shadowCenter(cx, cy, vh)
-  -- Every active rung keeps shadows on. HIGH selects the real two-layer actor
-  -- map on all devices; MEDIUM and lower use the cheap contact/blob fallback
-  -- while the world map stays available for terrain and static geometry.
+  -- HIGH, MEDIUM and LOW keep shadows. POTATO disables the shadow pass for
+  -- its minimum frame budget; HIGH selects the real two-layer actor map on all
+  -- devices, while MEDIUM and LOW use the cheap contact/blob fallback.
   local shadowsOn = BrickProfile.shadowsEnabled(Voxel.level)
   if shadowsOn then
     castShadows(state, terrain, nbMesh, posed, shCx, shCy, vw, vh, atlasFor,
