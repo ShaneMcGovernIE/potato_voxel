@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.3.9] - 2026-08-11
+## [1.3.10] - 2026-08-11
 
 ### Added
 
@@ -28,6 +28,17 @@
   bias and filter were computed for the finer rung; a fixed SHADOW QUALITY
   rung now produces a map of exactly that size, and the Brick HIGH rung's
   documented 1536 edge is real.
+
+## [1.3.9] - 2026-08-11
+
+### Fixed
+
+- The enemy HUD panel is hidden while a wild battle's intro plays its ball
+  animation, instead of showing an empty status box over the arena.
+
+### Contributors
+
+- **AverageConsumer** — the wild-intro HUD fix.
 
 ## [1.3.7] - 2026-08-11
 
