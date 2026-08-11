@@ -92,6 +92,7 @@ local DayTint = V.require("DayTint")
 local Water = V.require("Water")
 local ForestAtmos = V.require("ForestAtmos")
 local AntiAlias = V.require("AntiAlias")
+local ShadowSettings = V.require("ShadowSettings")
 local Upscale = V.require("Upscale")
 local FirstPerson = V.require("FirstPerson")
 local FreeMove = V.require("FreeMove")
@@ -624,12 +625,32 @@ local SETTINGS = {
     .. "to make somebody ill in a headset. Turn it on if you have your sea "
     .. "legs and want the continuity.",
     when = function() return VR.enabled() end, full = true },
+  -- Marked `full` for the same reason as AA: not knobs on the look, what the
+  -- look COSTS, so FULL neither sets them nor takes the rows away -- the
+  -- player decides what their hardware can carry, from inside FULL like
+  -- anywhere else.
+  { ShadowSettings.enabledSetting,
+    "Cast real shadows across the diorama -- a shadow climbs a wall, drapes "
+    .. "over a roof and slides across a passing NPC. OFF is the flat-lit "
+    .. "model: no shadow map is drawn, no contact blobs sit under the "
+    .. "characters, and nothing reads as pasted on -- there just is no sun.",
+    full = true },
+  { ShadowSettings.qualitySetting,
+    "How fine a shadow map to spend on the pass, as the edge of the square "
+    .. "map in texels. AUTO is what the pass already does -- the smallest "
+    .. "size whose texel stays under a target slice of a world pixel, up to "
+    .. "2048. A fixed rung forces the map's edge whatever the view: bigger "
+    .. "maps resolve finer shadow edges and cost fill rate and RAM (2048 is "
+    .. "a 16MB depth pass), which is the whole of why this is a row.",
+    full = true },
 }
 
 -- On the Brick the settings schema is deliberately EMPTY: every knob is
 -- pinned by BrickProfile and there is nothing to configure, so the mod
--- manager's page is a card with no form. The VOXEL row still lives on the
--- OPTIONS menu, through the render-pipelines registry, as the quality
+-- manager's page is a card with no form. The two shadow rows are the one
+-- exception -- they stay live on the Brick (see voxelSettingsRows), so the
+-- Brick's page offers them and nothing else. The VOXEL row still lives on
+-- the OPTIONS menu, through the render-pipelines registry, as the quality
 -- ladder (OFF / HIGH / MEDIUM / LOW).
 local schema = {}
 if not BrickProfile.isBrick() then
@@ -639,6 +660,13 @@ if not BrickProfile.isBrick() then
     -- situational (a row hidden for now), this one is existential
     local vrOnly = entry[1] == VR.setting or entry[1] == VR.smoothTurn
     if not vrOnly or VR.supported() then
+      schema[#schema + 1] = entry[1]:schema(entry[2])
+    end
+  end
+else
+  for _, entry in ipairs(SETTINGS) do
+    if entry[1] == ShadowSettings.enabledSetting
+       or entry[1] == ShadowSettings.qualitySetting then
       schema[#schema + 1] = entry[1]:schema(entry[2])
     end
   end
@@ -938,6 +966,12 @@ local function voxelSettingsRows(game)
   for _, row in ipairs(Pipelines.rows(game)) do rows[#rows + 1] = row end
   if BrickProfile.isBrick() then
     rows[#rows + 1] = OverworldBattle.setting:row()
+    -- The shadow rows stay live on the Brick like 3D-BTL does: OFF is a
+    -- real frame-budget lever on a handheld, and SHADOW QUALITY a real
+    -- resolution one. The other SETTINGS knobs are pinned single-rung there
+    -- and would be dead switches, so they stay off this list.
+    rows[#rows + 1] = ShadowSettings.enabledSetting:row()
+    rows[#rows + 1] = ShadowSettings.qualitySetting:row()
   else
     local full = Voxel.isFull(Pipelines.level("voxel"))
     if full then

@@ -46,6 +46,7 @@ local VoxelState = V.require("VoxelState")
 local DayNight = V.require("DayNight")
 local BrickProfile = V.require("BrickProfile")
 local AntiAlias = V.require("AntiAlias")
+local ShadowSettings = V.require("ShadowSettings")
 local Upscale = V.require("Upscale")
 local PaletteFX = require("src.render.PaletteFX")
 local Map = require("src.world.Map")
@@ -558,9 +559,17 @@ function BattleScene.render(state, arena, textures, token)
   Voxel3D.camera = nil
   local actorShadows = BrickProfile.battleActorShadowMap(VoxelState.level)
   ShadowMap.setSpriteLayerActive(actorShadows)
-  castShadows(state, arena, terrain, nbMesh, cx, cy, vw, vh, atlasFor,
-              cards, token, host, neighbors, water, nbWater, groundY,
-              actorShadows)
+  -- The SHADOWS row is the last word over the arena too: OFF skips the sun
+  -- pass and the contact blobs alike (ShadowMap.off() drops both layers, so
+  -- the main pass sends sunDark=0 and the mons stand flat-lit).
+  local battleShadows = ShadowSettings.enabled()
+  if battleShadows then
+    castShadows(state, arena, terrain, nbMesh, cx, cy, vw, vh, atlasFor,
+                cards, token, host, neighbors, water, nbWater, groundY,
+                actorShadows)
+  else
+    ShadowMap.off()
+  end
 
   -- An opaque void either way. Outdoors the camera is low enough that the
   -- horizon is genuinely in frame, so it is sky; indoors it is the dark end
@@ -645,7 +654,7 @@ function BattleScene.render(state, arena, textures, token)
       end
     end
     end
-    if not discs and not actorShadows then
+    if battleShadows and not discs and not actorShadows then
       drawContactShadows(arena, groundY)
     end
     -- The mons, standing on their tiles. Depth-tested like everything else,

@@ -32,6 +32,41 @@ if brick then
   for level = 2, 4 do T.eq(brick.actorShadowMapEnabled(level), false, "lower modes use contact shadows") end
   for level = 1, 4 do T.eq(brick.shadowsEnabled(level), true, "active modes keep contact shadows") end
   T.eq(brick.shadowsEnabled(0), false, "OFF disables shadows")
+  local ShadowSettings = exports.lib.require("ShadowSettings")
+  T.eq(ShadowSettings.enabledSetting.values[1], true, "SHADOWS defaults to on")
+  T.eq(ShadowSettings.qualitySetting.values[1], 0, "SHADOW QUALITY defaults to AUTO")
+  T.check(ShadowSettings.enabled(), "SHADOWS reads ON under the Brick pin")
+  -- the SHADOW QUALITY row forces the map edge ahead of the profile's HIGH
+  -- guarantee, and AUTO (the Brick pin) lets the guarantee through
+  local qv, ql = ShadowSettings.qualitySetting.values,
+                 ShadowSettings.qualitySetting.labels
+  ShadowSettings.qualitySetting.values = { 0, 512, 1024, 2048 }
+  ShadowSettings.qualitySetting.labels = { "AUTO", "512", "1024", "2048" }
+  ShadowSettings.qualitySetting.index = nil
+  ShadowSettings.qualitySetting:setValue(2048)
+  T.eq(ShadowSettings.quality(), 2048, "quality 2048 forces the map edge")
+  T.eq(ShadowMap._resolutionFor(100, 100, 1), 2048,
+       "quality wins over the HIGH fixed 1536 map")
+  ShadowSettings.qualitySetting:setValue(512)
+  T.eq(ShadowMap._resolutionFor(100, 100, 1), 512,
+       "quality 512 forces a smaller map than the ladder would")
+  ShadowSettings.qualitySetting.values = qv
+  ShadowSettings.qualitySetting.labels = ql
+  ShadowSettings.qualitySetting.index = nil
+  T.eq(ShadowMap._resolutionFor(100, 100, 1), 1536,
+       "AUTO restores the HIGH fixed 1536 map")
+  -- the SHADOWS toggle gates the whole pass
+  local ev, el = ShadowSettings.enabledSetting.values,
+                 ShadowSettings.enabledSetting.labels
+  ShadowSettings.enabledSetting.values = { true, false }
+  ShadowSettings.enabledSetting.labels = { "ON", "OFF" }
+  ShadowSettings.enabledSetting.index = nil
+  ShadowSettings.enabledSetting:setValue(false)
+  T.check(not ShadowSettings.enabled(), "SHADOWS OFF disables the pass")
+  ShadowSettings.enabledSetting.values = ev
+  ShadowSettings.enabledSetting.labels = el
+  ShadowSettings.enabledSetting.index = nil
+  T.check(ShadowSettings.enabled(), "SHADOWS ON re-enables the pass")
   T.eq(Water.setting.values[1], "off", "WATER is pinned off")
   T.eq(ForestAtmos.setting.values[1], "off", "FOREST FX is pinned off")
   T.eq(Structures.ROUND_RING, 12, "Brick keeps the full border ring")

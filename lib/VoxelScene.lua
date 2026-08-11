@@ -26,6 +26,7 @@ local Water = V.require("Water")
 local VoxelGrid = V.require("VoxelGrid")
 local DayNight = V.require("DayNight")
 local FirstPerson = V.require("FirstPerson")
+local ShadowSettings = V.require("ShadowSettings")
 local BattleBillboard = V.require("BattleBillboard")
 local Pokedex = V.require("Pokedex")
 local PaletteFX = require("src.render.PaletteFX")
@@ -1045,8 +1046,12 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   local shCx, shCy = FirstPerson.shadowCenter(cx, cy, vh)
   -- Every active rung keeps shadows on. HIGH selects the real two-layer actor
   -- map on all devices; MEDIUM and lower use the cheap contact/blob fallback
-  -- while the world map stays available for terrain and static geometry.
+  -- while the world map stays available for terrain and static geometry. The
+  -- SHADOWS row is the last word over both -- OFF is the flat-lit diorama,
+  -- shadow map AND contact blobs together (ShadowMap.off() drops both layers
+  -- so the main pass sends sunDark=0).
   local shadowsOn = BrickProfile.shadowsEnabled(Voxel.level)
+                and ShadowSettings.enabled()
   if shadowsOn then
     castShadows(state, terrain, nbMesh, posed, shCx, shCy, vw, vh, atlasFor,
                 water, nbWater, battleCards, battleToken)

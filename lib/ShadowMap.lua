@@ -29,6 +29,7 @@ local V = ...
 
 local Mat4 = V.require("Mat4")
 local Voxel = V.require("VoxelState")
+local ShadowSettings = V.require("ShadowSettings")
 
 local ShadowMap = {}
 
@@ -76,7 +77,14 @@ ShadowMap.BRICK_HIGH_RES = nil
 
 -- Choose the square shadow-map edge for a fitted frustum. Kept separate from
 -- fit() so the profile's HIGH-size guarantee can be tested without a GPU.
+--
+-- The player's SHADOW QUALITY row wins first: a fixed rung (512/1024/2048)
+-- forces the map's edge whatever the view, and returns before the profile
+-- guarantees or the adaptive ladder can speak. AUTO (nil) falls through to
+-- the existing choice -- the Brick HIGH guarantee, then the ladder.
 function ShadowMap._resolutionFor(w, h, level)
+  local fixed = ShadowSettings.quality()
+  if fixed then return fixed end
   if level == 1 and ShadowMap.BRICK_HIGH_RES then
     return ShadowMap.BRICK_HIGH_RES
   end
@@ -572,8 +580,12 @@ function ShadowMap.begin(cx, cy, vw, vh, sprites)
   local sh = getShader()
   if not sh then return false end
   if not sprites then
-    -- fit first: it is what decides which resolution rung this view wants
+    -- fit first: it is what decides which resolution rung this view wants.
+    -- The canvas is then (re)made at that edge -- the rung's whole point is
+    -- how many texels the box is divided into, so a 1536 fit on a 1024
+    -- canvas would be a 1024 map wearing a 1536 fit's snap and bias.
     fit(cx, cy, vw, vh)
+    if getCanvas(ShadowMap.res) == nil then return false end
   end
   local c = sprites and spriteCanvas or canvas
   if not c or c == false then return false end

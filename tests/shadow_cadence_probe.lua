@@ -43,10 +43,14 @@ local Mat4 = assert(loadfile(root .. "/lib/Mat4.lua"))()
 -- HIGH rung: level 1, a 0.9-rad camera pitch (the analysis scenario), and
 -- the FOCAL VoxelState ships with.
 local Voxel = { level = 1, angle = 0.9, FOCAL = 1.0 }
+-- the SHADOW QUALITY row is pinned AUTO by BrickProfile, so the probe's
+-- host answers AUTO (nil) and the ladder decides, exactly as on the Brick.
+local ShadowSettings = { quality = function() return nil end }
 local V = {
   require = function(name)
     if name == "Mat4" then return Mat4 end
     if name == "VoxelState" then return Voxel end
+    if name == "ShadowSettings" then return ShadowSettings end
     error("probe: unexpected require " .. tostring(name))
   end,
 }

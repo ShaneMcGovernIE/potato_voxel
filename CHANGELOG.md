@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.3.9] - 2026-08-11
+
+### Added
+
+- Added a SHADOWS row (ON / OFF). OFF is the flat-lit diorama: no shadow map
+  is drawn, the main pass is sent sunDark=0, and the contact blobs under the
+  characters go with it -- in free-roam and staged battles alike, so a device
+  that cannot carry the shadow pass can turn it off wholesale rather than
+  only dropping the expensive animated-actor layer.
+- Added a SHADOW QUALITY row (AUTO / 512 / 1024 / 2048). AUTO is the adaptive
+  ladder the pass always ran (the smallest size whose texel stays under a
+  target slice of a world pixel, capped at 2048); a fixed rung forces the
+  square shadow map's edge in texels whatever the view, so a player can trade
+  fill rate and RAM (a 2048 edge is a 16 MB depth pass, re-rasterised
+  whenever the shadow signature moves) for finer shadow edges.
+- Both rows are visible in every profile: they appear on the VOXEL SETTINGS
+  submenu and the mod manager's page whether the device runs the Brick
+  profile (which pins every other knob) or the full desktop mod, and stay on
+  the menu under the FULL preset.
+
+### Fixed
+
+- The shadow map canvas is now allocated at the fitted resolution rung
+  instead of staying pinned to the ladder's smallest size. The 1536 and 2048
+  rungs used to render into a 1024 (or 512 on the Brick) map whose fit, depth
+  bias and filter were computed for the finer rung; a fixed SHADOW QUALITY
+  rung now produces a map of exactly that size, and the Brick HIGH rung's
+  documented 1536 edge is real.
+
 ## [1.3.7] - 2026-08-11
 
 ### Added
