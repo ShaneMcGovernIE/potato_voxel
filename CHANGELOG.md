@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.4.1] - 2026-08-12
+
+### Fixed
+
+- The map-cache build now starts on Windows: the cache folder is created with
+  Windows-native commands (`if not exist ... mkdir ...` for each level instead
+  of the POSIX-only `mkdir -p`, which cmd.exe rejected by treating `-p` as a
+  folder name and choking on the `/dev/null` redirect). The build used to fail
+  the instant it began after a cache wipe, on every Windows release back to
+  1.3.3.
+
 ## [1.4.0] - 2026-08-12
 
 ### Added

@@ -57,6 +57,24 @@ MeshCache.configure({ maps = maps, tilesets = {} })
 T.check(firstIdentity ~= MeshCache.identity(),
         "map data changes the cache identity")
 
+local posixMkdir = MeshCache.mkdirCommands(
+  "/home/user/.local/share/love/game/mod-derived/potato_voxel/meshes", "/")
+T.eq(type(posixMkdir), "table", "mkdir commands come back as a list")
+T.eq(#posixMkdir, 1, "POSIX tree creation is a single command")
+T.eq(posixMkdir[1],
+     'mkdir -p "/home/user/.local/share/love/game/mod-derived/potato_voxel/meshes" 2>/dev/null',
+     "POSIX uses mkdir -p with silenced stderr")
+local winMkdir = MeshCache.mkdirCommands(
+  "C:\\LOVE\\game\\mod-derived\\potato_voxel\\meshes", "\\")
+T.eq(#winMkdir, 5, "Windows creates each component below the drive root")
+T.eq(winMkdir[1], 'if not exist "C:\\LOVE" mkdir "C:\\LOVE"',
+     "Windows guards the drive-level folder")
+T.eq(winMkdir[2], 'if not exist "C:\\LOVE\\game" mkdir "C:\\LOVE\\game"',
+     "Windows guards each intermediate folder")
+T.eq(winMkdir[5],
+     'if not exist "C:\\LOVE\\game\\mod-derived\\potato_voxel\\meshes" mkdir "C:\\LOVE\\game\\mod-derived\\potato_voxel\\meshes"',
+     "Windows deepest component is the cache dir itself")
+
 local record = MeshCache.jobRecord({
   id = "A", tileset = { image = "tileset.png", trueColor = false },
   renderer = { gbcAtlas = false },

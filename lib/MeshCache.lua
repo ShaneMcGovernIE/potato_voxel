@@ -216,6 +216,33 @@ MeshCache.identity = identity
 local dirTried = false
 local cacheDir = false          -- resolved once; false when unusable
 
+-- The shell commands that create the cache directory tree. Windows cmd has
+-- no `mkdir -p`: it cannot create missing parents and errors when the
+-- target already exists, so emit one guarded `if not exist ... mkdir ...`
+-- per component below the drive root (each level idempotent -- creating a
+-- missing level or skipping an existing one both exit cleanly). Everywhere
+-- else a single POSIX `mkdir -p` (stderr silenced) is enough. Exported so
+-- the headless suite can assert the exact commands without running cmd.exe.
+local function mkdirCommands(dir, sep)
+  if sep ~= "\\" then
+    local q = dir:gsub('"', '\\"')
+    return { 'mkdir -p "' .. q .. '" 2>/dev/null' }
+  end
+  local commands = {}
+  local acc = ""
+  for part in dir:gmatch("[^\\]+") do
+    if part ~= "" then
+      acc = acc == "" and part or (acc .. "\\" .. part)
+      if acc:match("^%a:\\") then
+        local q = acc:gsub('"', '\\"')
+        commands[#commands + 1] =
+          'if not exist "' .. q .. '" mkdir "' .. q .. '"'
+      end
+    end
+  end
+  return commands
+end
+
 function MeshCache.available()
   if not (ffi and love and love.graphics
           and love.data and love.data.newByteData) then
@@ -251,14 +278,10 @@ function MeshCache.dir()
   local d = base .. sep .. "mod-derived" .. sep .. "potato_voxel"
             .. sep .. "meshes"
   -- io.* cannot create missing parents; mkdir the tree like the engine's
-  -- portable filesystem does
-  local q = d:gsub('"', '\\"')
-  local ok = os.execute('mkdir -p "' .. q .. '" 2>/dev/null')
-  if not (ok == true or ok == 0) then
-    -- Windows cmd has no mkdir -p; its plain mkdir creates the whole
-    -- tree, so try that before giving up (failure stays a silent no-op).
-    local ok2 = os.execute('mkdir "' .. q .. '" 2>nul')
-    if not (ok2 == true or ok2 == 0) then return nil end
+  -- portable filesystem does. Failure stays a silent no-op (nil above).
+  for _, command in ipairs(mkdirCommands(d, sep)) do
+    local ok = os.execute(command)
+    if not (ok == true or ok == 0) then return nil end
   end
   cacheDir = d
   return d
@@ -1031,6 +1054,8 @@ end
 -- serialized bytes; decodeMesh reads them back.
 MeshCache.encodeMesh = encodeMesh
 MeshCache.decodeMesh = decodeMesh
+-- mkdir command builder for MeshCache.dir, exported for tests
+MeshCache.mkdirCommands = mkdirCommands
 -- indexed terrain/water payloads (brick.11+)
 MeshCache.encodeIndexed = encodeIndexed
 MeshCache.decodeIndexed = decodeIndexed
