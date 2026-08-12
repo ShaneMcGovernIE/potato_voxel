@@ -1,4 +1,4 @@
--- Headless Brick-only invariants for PotatoVoxel.
+-- Headless invariants for the single PotatoVoxel build.
 package.path = "./?.lua;./?/init.lua;" .. package.path
 local T = require("tests.modkit")
 local Data = require("src.core.Data")
@@ -8,24 +8,42 @@ T.eq(#run.errors, 0, "loads clean")
 local exports = run.loader.exports.potato_voxel
 T.check(exports ~= nil, "mod exports a table")
 local brick = exports and exports.brick
-T.check(brick ~= nil and brick.isBrick(), "Brick mode is unconditional")
+T.check(brick ~= nil and brick.isBrick(), "the one build is the Brick build")
 if brick then
   local Voxel = exports.lib.require("VoxelState")
   local ShadowMap = exports.lib.require("ShadowMap")
   local Water = exports.lib.require("Water")
   local ForestAtmos = exports.lib.require("ForestAtmos")
+  local AntiAlias = exports.lib.require("AntiAlias")
+  local WorldCurve = exports.lib.require("WorldCurve")
+  local VoxelGrid = exports.lib.require("VoxelGrid")
   local Structures = exports.lib.require("Structures")
   local OverworldBattle = exports.lib.require("OverworldBattle")
-  T.eq(#Voxel.ANGLES_DEG, 5, "VOXEL keeps OFF/HIGH/MEDIUM/LOW/POTATO")
+  local QualityMode = exports.lib.require("QualityMode")
+  T.eq(#Voxel.ANGLES_DEG, 6, "VOXEL keeps OFF/HIGH/MEDIUM/LOW/POTATO/CUSTOM")
   T.eq(Voxel.ANGLE_LABELS[1], "OFF", "VOXEL OFF rung is retained")
   T.eq(Voxel.ANGLE_LABELS[2], "HIGH", "VOXEL HIGH rung is retained")
   T.eq(Voxel.ANGLE_LABELS[3], "MEDIUM", "VOXEL MEDIUM rung is retained")
   T.eq(Voxel.ANGLE_LABELS[4], "LOW", "VOXEL LOW rung is retained")
   T.eq(Voxel.ANGLE_LABELS[5], "POTATO", "VOXEL POTATO rung is retained")
-  T.eq(brick.renderScale(1), 1.0, "HIGH renders at full resolution")
-  T.eq(brick.renderScale(2), 0.75, "MEDIUM renders at 75 percent")
-  T.eq(brick.renderScale(3), 0.5, "LOW renders at 50 percent")
-  T.eq(brick.renderScale(4), 0.33, "POTATO renders at 33 percent")
+  T.eq(Voxel.ANGLE_LABELS[6], "CUSTOM", "VOXEL CUSTOM rung exists")
+  -- RENDER SCALE is a knob now; the default is 100% (the same HIGH shipped
+  -- with), and the quality-mode presets write it
+  T.eq(brick.renderScale(), 1.0, "RENDER SCALE defaults to 100 percent")
+  T.eq(QualityMode.renderFraction(), 1.0, "render fraction follows the knob")
+  T.eq(QualityMode.renderSetting.values[1], 100, "RENDER SCALE ladder starts at 100")
+  -- applying a mode writes its preset, including the render scale
+  QualityMode.applyMode(3)
+  T.eq(QualityMode.renderFraction(), 0.5, "LOW preset renders at 50 percent")
+  T.eq(Water.setting:get(), "off", "LOW preset turns WATER off")
+  T.check(QualityMode.matches(3), "an applied preset matches its mode")
+  QualityMode.applyMode(1)
+  T.eq(QualityMode.renderFraction(), 1.0, "HIGH preset restores 100 percent")
+  T.eq(Water.setting:get(), "full", "HIGH preset sets WATER to FULL")
+  -- deviating from a preset breaks the match: the mode is then CUSTOM
+  Water.setting:setValue("off")
+  T.check(not QualityMode.matches(1), "a changed knob breaks the preset match")
+  T.eq(QualityMode.CUSTOM_LEVEL, 5, "CUSTOM is the last VOXEL rung")
   T.eq(ShadowMap.BRICK_HIGH_RES, 1536, "HIGH uses a 1536 shadow map")
   T.eq(ShadowMap._resolutionFor(100, 100, 1), 1536, "HIGH shadow map is fixed")
   T.eq(brick.actorShadowMapEnabled(1), true, "HIGH keeps both shadow layers")
@@ -67,8 +85,16 @@ if brick then
   ShadowSettings.enabledSetting.labels = el
   ShadowSettings.enabledSetting.index = nil
   T.check(ShadowSettings.enabled(), "SHADOWS ON re-enables the pass")
-  T.eq(Water.setting.values[1], "off", "WATER is pinned off")
-  T.eq(ForestAtmos.setting.values[1], "off", "FOREST FX is pinned off")
+  T.eq(Water.setting.values[1], "off", "WATER defaults off")
+  T.eq(#Water.setting.values, 3, "WATER ladder stays available")
+  T.eq(ForestAtmos.setting.values[1], "off", "FOREST FX defaults off")
+  T.check(#ForestAtmos.setting.values >= 2, "FOREST FX ladder stays available")
+  T.eq(AntiAlias.setting.values[1], 0, "AA defaults off")
+  T.eq(#AntiAlias.setting.values, 3, "AA ladder stays available")
+  T.eq(WorldCurve.setting.values[1], 0, "V-CURVE defaults off")
+  T.eq(#WorldCurve.setting.values, 4, "V-CURVE ladder stays available")
+  T.eq(VoxelGrid.setting.values[1], false, "V-GRID defaults off")
+  T.eq(#VoxelGrid.setting.values, 2, "V-GRID stays a toggle")
   T.eq(Structures.ROUND_RING, 12, "Brick keeps the full border ring")
   T.eq(Structures.HULL_BILLBOARDS, true, "Brick uses billboard hulls")
   T.eq(Structures.BILLBOARD_CROSS, true, "Brick crosses billboard hulls")
@@ -80,10 +106,39 @@ if brick then
   }
   T.eq(OverworldBattle.hudLive(intro, 0), false,
        "wild intro does not show an empty enemy HUD panel")
-  intro.introBalls = nil
-  T.eq(OverworldBattle.hudLive(intro, 0), true,
-       "enemy HUD returns after the intro")
-  local Prebuild = exports.lib.require("CachePrebuild")
+   intro.introBalls = nil
+   T.eq(OverworldBattle.hudLive(intro, 0), true,
+        "enemy HUD returns after the intro")
+   -- the STADIUM SPRITES toggle: off by default (flat pics, today's 3D-BTL),
+   -- and flipping it on is what makes Stadium.mode answer "A"
+   T.eq(OverworldBattle.stadiumSetting.values[1], false,
+        "STADIUM SPRITES defaults off")
+   T.eq(#OverworldBattle.stadiumSetting.values, 2,
+        "STADIUM SPRITES stays a toggle")
+   T.check(not OverworldBattle.stadiumSprites(),
+           "STADIUM SPRITES reads OFF by default")
+   local Stadium = exports.lib.require("Stadium")
+   T.check(Stadium.mode() == nil, "no stadium mode with the toggle off")
+   OverworldBattle.stadiumSetting:setValue(true)
+   T.check(OverworldBattle.stadiumSprites(), "STADIUM SPRITES toggles on")
+   T.eq(Stadium.mode(), "A", "stadium mode is A when the toggle is on")
+   OverworldBattle.stadiumSetting:setValue(false)
+   T.check(Stadium.mode() == nil, "stadium mode leaves when toggled off")
+   -- the STADIUM packs use the same LZ4 compression as the mesh cache: a raw
+   -- DSM3 stream passes through untouched, a small one stays raw, and when
+   -- LÖVE's LZ4 is available a big pack wraps in a container that round-trips
+   local Pack = exports.lib.require("StadiumPack")
+   T.eq(Pack.decompress("DSM3rawbytes"), "DSM3rawbytes",
+        "a raw pack passes through untouched")
+   T.eq(Pack.compress("tiny"), "tiny", "a small pack stays raw")
+   if love and love.data and love.data.compress then
+     local raw = string.rep("DSM3\track data for a species\n", 200)
+     local packed = Pack.compress(raw)
+     T.check(packed ~= raw and packed:sub(1, 4) == "PVDZ",
+             "a big pack compresses into the container")
+     T.eq(Pack.decompress(packed), raw, "a compressed pack round-trips")
+   end
+   local Prebuild = exports.lib.require("CachePrebuild")
   local jobs = Prebuild.enumerate({ B = { id="B", width=3, height=2, connections={} }, A = { id="A", width=4, height=5, connections={} } })
   T.eq(#jobs, 4, "prebuild enumerates body and full variants")
 end
@@ -95,11 +150,10 @@ end
 local MeshCache = exports and exports.lib and exports.lib.require("MeshCache")
 if MeshCache and MeshCache.encodeMesh then
   -- dir() must capture BOTH pcall returns: pcall returns (true, path) and
-  -- the first value alone is a boolean -- on the Brick isBrick() is true
-  -- so available() reaches dir(), and `true .. sep` used to throw, which
-  -- killed every mesh build and left no mod-derived dir on device. (Headless
-  -- isBrick() is false so available() never reaches dir(); we drive dir()
-  -- directly and reset its one-shot latch to use the stubbed base.)
+  -- the first value alone is a boolean, and `true .. sep` used to throw,
+  -- killing every mesh build and leaving no mod-derived dir on device.
+  -- (Headless available() never reaches dir(); we drive dir() directly and
+  -- reset its one-shot latch to use the stubbed base.)
   local latchIdx
   for i = 1, 12 do
     if debug.getupvalue(MeshCache.dir, i) == "dirTried" then latchIdx = i end

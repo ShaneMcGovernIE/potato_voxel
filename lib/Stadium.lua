@@ -86,11 +86,18 @@ function Stadium.selected()
 end
 
 -- "A", "B", or nil when the row is on neither stadium rung.
+--
+-- The STADIUM SPRITES toggle stands in for the old STADIUM A rung on the
+-- universal build's OFF/ON 3D-BTL ladder: on means the staged fight uses
+-- the models, off means the flat battle pics. The legacy VALUE checks are
+-- kept for a save that still carries a stadium rung from before the ladder
+-- collapsed (and for any future unpinning of it).
 function Stadium.mode()
   local OverworldBattle = V.require("OverworldBattle")
   local value = OverworldBattle.setting:get()
   if value == Stadium.VALUE then return "A" end
   if value == Stadium.VALUE_B then return "B" end
+  if OverworldBattle.stadiumSprites() then return "A" end
   return nil
 end
 

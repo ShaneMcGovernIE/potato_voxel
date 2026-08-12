@@ -62,7 +62,61 @@ local floor = math.floor
 StadiumPack.CACHE_DIR = "potato_voxel/stadium"
 StadiumPack.DIR = "assets/stadium"
 
+-- ------- compression
+--
+-- The same LZ4 (love.data.compress) the terrain mesh cache uses, so the
+-- packs shrink on disk and read back faster. A pack is either a raw DSM3
+-- byte stream (exactly what the packer always wrote) or that stream wrapped
+-- in a tiny container -- "PVDZ" + u32 rawLen + LZ4(body). Detected on read,
+-- so an old raw set, a new compressed set, or a mix all load through the
+-- same path and no format bump is needed.
+--
+-- Decompressing on LOAD is safe for the lazy animations: the scan that makes
+-- them lazy is a byte walk over `model.bytes`, and LZ4 of a couple of
+-- hundred kilobytes is microseconds -- the expensive part, building the Lua
+-- tables, is still deferred to the frame a track actually plays.
+local COMPRESSED_MAGIC = "PVDZ"
+
+local function u32le(n)
+  n = n % 4294967296
+  return string.char(n % 256, math.floor(n / 256) % 256,
+                     math.floor(n / 65536) % 256, math.floor(n / 16777216) % 256)
+end
+
+local function readU32le(s, p)
+  return s:byte(p) + s:byte(p + 1) * 256
+       + s:byte(p + 2) * 65536 + s:byte(p + 3) * 16777216
+end
+
+-- Wrap `body` (a DSM3 stream) in the compression container, or hand it back
+-- untouched when LZ4 is unavailable or would make it bigger.
+function StadiumPack.compress(body)
+  local data = love and love.data
+  if type(body) == "string" and #body >= 1024 and data and data.compress then
+    local ok, packed = pcall(data.compress, "string", "lz4", body)
+    if ok and type(packed) == "string" and #packed < #body then
+      return COMPRESSED_MAGIC .. u32le(#body) .. packed
+    end
+  end
+  return body
+end
+
+-- Unwrap a pack read off disk. A raw DSM3 stream passes through untouched;
+-- a compressed one is decompressed (nil if the container is corrupt or LZ4
+-- is missing, which the caller treats as "no pack").
+function StadiumPack.decompress(bytes)
+  if bytes:sub(1, 4) ~= COMPRESSED_MAGIC then return bytes end
+  if #bytes < 9 then return nil end
+  local data = love and love.data
+  if not (data and data.decompress) then return nil end
+  local rawLen = readU32le(bytes, 5)
+  local ok, raw = pcall(data.decompress, "string", "lz4", bytes:sub(9))
+  if not (ok and type(raw) == "string" and #raw == rawLen) then return nil end
+  return raw
+end
+
 local function readPack(species)
+  local bytes = nil
   -- The cache only counts when StadiumInstall's marker says it is a
   -- complete, CURRENT build -- an old cache (a rev the extractor has since
   -- fixed, a format that moved) must not shadow a fresh shipped set, and a
@@ -73,16 +127,19 @@ local function readPack(species)
      and V.require("StadiumInstall").ready() then
     local okInfo, info = pcall(love.filesystem.getInfo, rel, "file")
     if okInfo and info then
-      local ok, bytes = pcall(love.filesystem.read, rel)
-      if ok and type(bytes) == "string" and #bytes > 4 then return bytes end
+      local ok, got = pcall(love.filesystem.read, rel)
+      if ok and type(got) == "string" and #got > 4 then bytes = got end
     end
   end
-  local mod = V.mod
-  if not (mod and mod.read) then return nil end
-  local ok, bytes = pcall(mod.read, mod,
+  if not bytes then
+    local mod = V.mod
+    if not (mod and mod.read) then return nil end
+    local ok, got = pcall(mod.read, mod,
                           ("%s/%03d.dsm"):format(StadiumPack.DIR, species))
-  if ok and type(bytes) == "string" and #bytes > 4 then return bytes end
-  return nil
+    if ok and type(got) == "string" and #got > 4 then bytes = got end
+  end
+  if not bytes then return nil end
+  return StadiumPack.decompress(bytes)
 end
 
 -- The battle system's context slots, in the order tools/stadium_pack.py

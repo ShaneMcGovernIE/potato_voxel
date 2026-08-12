@@ -183,6 +183,30 @@ OverworldBattle.backSetting = ModSetting.new(OverworldBattle.BACK_KEY,
                                              OverworldBattle.BACK_LABEL,
                                              { false, true }, { "OFF", "ON" })
 
+-- ------- STADIUM SPRITES: the Pokemon Stadium models for staged fights
+--
+-- The parent ladder once carried STADIUM A / STADIUM B as rungs of the
+-- 3D-BTL row. The universal build's 3D-BTL is a plain OFF / ON (staged
+-- fights on, flat battle pics), and this is the switch that brings the
+-- models back: on, a staged fight is skinned with the Pokemon Stadium
+-- battle models -- the same "STADIUM A" fight the old rung staged, with the
+-- move's own animation playing -- and off, the flat pics as before.
+--
+-- Defaults off, which is exactly what 3D-BTL does today, and it only ever
+-- matters inside a staged fight (Stadium.mode reads it). Requires the models
+-- built from the player's own Pokemon Stadium (US) 1.0 ROM (StadiumInstall);
+-- a mon whose pack is missing declines to its flat pic, one model at a time.
+OverworldBattle.STADIUM_KEY = "stadiumSprites"
+OverworldBattle.STADIUM_LABEL = "STADIUM SPRITES"
+
+OverworldBattle.stadiumSetting = ModSetting.new(
+  OverworldBattle.STADIUM_KEY, OverworldBattle.STADIUM_LABEL,
+  { false, true }, { "OFF", "ON" })
+
+function OverworldBattle.stadiumSprites()
+  return OverworldBattle.stadiumSetting:get() and true or false
+end
+
 -- Gated on 3D-BTL rather than read alone: with staged battles off there is no
 -- staged shot for a back pic to be pinned in FRONT of, and the engine's own
 -- battle screen already draws exactly this. And held OFF under VR: the

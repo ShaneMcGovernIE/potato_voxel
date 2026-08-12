@@ -95,8 +95,8 @@ Water.KEY = "water"
 Water.LABEL = "WATER"
 
 Water.setting = ModSetting.new(Water.KEY, Water.LABEL,
-                               { "full", "sky", "off" },
-                               { "FULL", "SKY", "OFF" })
+                               { "off", "sky", "full" },
+                               { "OFF", "SKY", "FULL" })
 
 function Water.level()
   local v = Water.setting:get()

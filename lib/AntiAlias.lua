@@ -145,8 +145,8 @@ local function targetFor(slot, w, h)
   return t.canvas
 end
 
--- The box filter, and the whole of why it is a shader rather than a scaled
--- draw with linear filtering on.
+-- The fold, and the whole of why it is a shader rather than a scaled draw
+-- with linear filtering on.
 --
 -- The void this pass renders into is cleared to a TRANSPARENT BLACK, and at
 -- the rungs below FULL a good deal of the frame is still that. Averaging a
@@ -164,19 +164,40 @@ end
 -- land dead on the four texel centres the destination pixel covers, so it is
 -- an exact 2x2 box; at 2X the source grid does not divide, and the bilinear
 -- fetch under each tap widens the box a little rather than missing samples.
+--
+-- The box is then given a gentle unsharp (AntiAlias.SHARP): it subtracts a
+-- wider neighbourhood average, so the tileset's texel-scale detail -- which
+-- honest supersampling averages away -- comes back, while the geometry
+-- edges, a smoother ramp across several texels, are mostly unchanged by the
+-- difference. That is the one quality the box fold genuinely gives up, and
+-- this is the cheap way to get it back without abandoning supersampling.
+-- Setting SHARP to 0 restores the plain box exactly.
 local SHADER = [[
   uniform vec2 tap;        // half a SOURCE texel, in uv
+  uniform vec2 wide;       // the unsharp neighbourhood, in uv
+  uniform float sharp;     // unsharp strength (0 = plain box fold)
   vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
     vec4 a = Texel(tex, tc + vec2(-tap.x, -tap.y));
     vec4 b = Texel(tex, tc + vec2( tap.x, -tap.y));
     vec4 c = Texel(tex, tc + vec2(-tap.x,  tap.y));
     vec4 d = Texel(tex, tc + vec2( tap.x,  tap.y));
     float al = (a.a + b.a + c.a + d.a) * 0.25;
-    if (al <= 0.0) return vec4(0.0);
-    vec3 sum = a.rgb * a.a + b.rgb * b.a + c.rgb * c.a + d.rgb * d.a;
-    return vec4(sum * 0.25 / al, al) * color;
+    if (al <= 0.001) return vec4(0.0);
+    vec3 avg = a.rgb * a.a + b.rgb * b.a + c.rgb * c.a + d.rgb * d.a;
+    vec4 e = Texel(tex, tc + vec2(-wide.x, -wide.y));
+    vec4 f = Texel(tex, tc + vec2( wide.x, -wide.y));
+    vec4 g = Texel(tex, tc + vec2(-wide.x,  wide.y));
+    vec4 h = Texel(tex, tc + vec2( wide.x,  wide.y));
+    vec3 blr = e.rgb * e.a + f.rgb * f.a + g.rgb * g.a + h.rgb * h.a;
+    vec3 p = avg + sharp * (avg - blr);
+    return vec4(p / (al * 4.0), al) * color;
   }
 ]]
+
+-- Unsharp strength for the fold. Conservative on purpose: too much and the
+-- AA'd edges get their steps back, which is the whole thing the row exists
+-- to remove. Tune by eye in-game; 0 is the plain box fold.
+AntiAlias.SHARP = 0.25
 
 local shader = nil            -- nil = untried, false = unavailable
 
@@ -216,6 +237,13 @@ function AntiAlias.resolve(canvas, w, h, slot)
   if sh then
     love.graphics.setShader(sh)
     pcall(sh.send, sh, "tap", { 0.5 / cw, 0.5 / ch })
+    -- the unsharp neighbourhood, ~1 DISPLAY pixel out, in source texels:
+    -- the source is `s = cw/w` texels per display pixel, so the wide taps sit
+    -- `s` source texels from the centre (a ~2 display-px footprint). Tune the
+    -- radius here and the strength in AntiAlias.SHARP.
+    local s = cw / math.max(1, w)
+    pcall(sh.send, sh, "wide", { s / cw, s / ch })
+    pcall(sh.send, sh, "sharp", AntiAlias.SHARP or 0)
   end
   local drew = pcall(function()
     love.graphics.setCanvas(target)

@@ -19,25 +19,28 @@ These changes target frame-time spikes, fill rate, and memory pressure. They are
 
 ## Quality modes
 
-The **VOXEL** option is a simple ladder:
+The **VOXEL** option is a mode ladder. Picking a mode applies that mode's
+tuned defaults to every quality knob in the VOXEL SETTINGS menu; changing
+any knob individually flips the mode to **CUSTOM**, which keeps your own
+combination until you pick a named mode again:
 
 - **OFF** — use the normal 2D overworld.
-- **HIGH** — full-resolution 3D rendering and full actor shadows.
-- **MEDIUM** — 75% render scale with cheaper actor shadows.
-- **LOW** — 50% render scale with cheaper actor shadows.
-- **POTATO** — 33% render scale with the lowest GPU workload.
+- **HIGH** — 100% render scale, full water and forest effects, 2X AA.
+- **MEDIUM** — 75% render scale, sky reflections, low forest effects.
+- **LOW** — 50% render scale, cheaper shadows, water and forest off.
+- **POTATO** — 33% render scale, the lowest GPU workload.
+- **CUSTOM** — the VOXEL row reads this the moment any knob leaves its
+  mode's preset.
 
-The potato profile is enabled by default on every device. This keeps the first experience consistent and avoids requiring players to tune several independent graphics settings. On that profile, **3D-BTL** appears directly after VOXEL as an **OFF / ON** switch. It defaults OFF, follows the VOXEL quality scale when enabled, and keeps the map mesh cache; legacy staged and Stadium selections remain compatible internally when ON.
+**RENDER SCALE** (100% / 75% / 50% / 33%) is its own row in the VOXEL
+SETTINGS menu: the modes set it, and moving it on its own also flips the
+mode to CUSTOM.
 
-## Desktop compatibility
-
-The full desktop path from the original mod remains available:
-
-```sh
-DS_BRICK=0 /path/to/gen1recomp/love      # full desktop path
-DS_BRICK=1 /path/to/gen1recomp/love      # force PotatoVoxel tuning
-# unset: PotatoVoxel tuning (default)
-```
+The potato profile is the build. Every device runs the same tuned diorama —
+there is no environment switch to a full desktop path, so behaviour is
+identical everywhere. **3D-BTL** defaults OFF, follows the VOXEL quality
+scale when enabled, and keeps the map mesh cache; legacy staged and Stadium
+selections remain compatible internally when ON.
 
 VR support and its OpenXR loader are not included in this release. If you need VR, use the upstream mod or restore the loader from it.
 
@@ -55,11 +58,11 @@ From the engine checkout root:
 
 ```sh
 POKEPORT_DATA_DIR="$PWD/tests/fixture_data" \
-  DS_BRICK=0 luajit mods/potato_voxel/tests/potato_voxel_test.lua
+  luajit mods/potato_voxel/tests/potato_voxel_test.lua
 ```
 
-The suite asserts the desktop path (it runs with `DS_BRICK=0`); the potato
-collapse is exercised in-process by `BrickProfile.apply()`. Gates:
+The suite asserts the single potato build (the collapse is exercised
+in-process by `BrickProfile.apply()`). Gates:
 
 ```sh
 python3 tools/modkit.py lint mods/potato_voxel

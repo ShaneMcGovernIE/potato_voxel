@@ -65,11 +65,10 @@ VoxelGrid.setting = ModSetting.new(VoxelGrid.KEY, VoxelGrid.LABEL,
 -- this for the length of its own draw and puts it back after. nil means
 -- "follow the setting", which is every frame outside such a pass.
 --
--- The overworld battle is the one user: a fight is a STAGED shot, not the
--- world being walked around in, and the seams are what make it read as
--- constructed rather than as a photograph of somewhere. The row still owns
--- what free-roam looks like, and is not written to -- switching the mode off
--- mid-battle would silently rewrite the player's own setting.
+-- No pass currently sets it -- the overworld battle used to force the seams
+-- on as a "staged shot" look, but now follows the row like everywhere else.
+-- It is kept because a future pass that needs the grid regardless has a
+-- place to stand, and the battle's old habit shows how it is scoped.
 VoxelGrid.override = nil
 
 function VoxelGrid.enabled()

@@ -214,8 +214,13 @@ StadiumInstall.status = status
 local function writePack(species, bytes)
   local f = fs()
   if not f then return false, "no filesystem" end
+  -- LZ4 (via StadiumPack.compress), the same codec the mesh cache uses: the
+  -- whole 24 MB set shrinks by roughly half and reads back faster, and the
+  -- reader unwraps the container on load, so the DSM3 format itself is
+  -- untouched (an old raw set still reads).
+  local out = StadiumPack.compress(bytes)
   local ok, err = f.write(("%s/%03d.dsm"):format(StadiumInstall.DIR, species),
-                          bytes)
+                          out)
   if not ok then return false, tostring(err) end
   return true
 end

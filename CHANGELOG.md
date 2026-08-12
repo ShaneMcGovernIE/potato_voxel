@@ -1,5 +1,48 @@
 # Changelog
 
+## [1.4.0] - 2026-08-12
+
+### Added
+
+- One build for every device: the DS_BRICK environment switch is gone, so the
+  tuned diorama runs identically on everything -- no more desktop/potato
+  split.
+- The VOXEL ladder is now a set of quality MODES (OFF / HIGH / MEDIUM / LOW /
+  POTATO / CUSTOM). Picking a mode applies its tuned preset to every quality
+  knob -- WATER, FOREST FX, AA, V-CURVE, V-GRID, 3D-BTL, SHADOWS, SHADOW
+  QUALITY and RENDER SCALE -- and changing any knob on its own flips the mode
+  to CUSTOM until a named mode is picked again.
+- Added a RENDER SCALE row (100% / 75% / 50% / 33%), the single biggest
+  frame-budget lever: the modes set it, and moving it on its own also flips
+  the mode to CUSTOM.
+- The quality knobs (WATER, FOREST FX, AA, V-CURVE, V-GRID, BACK SPRITES) are
+  no longer pinned off on every device: each is a switchable row on the VOXEL
+  SETTINGS submenu.
+- Added a STADIUM SPRITES row (OFF / ON): staged fights use the Pokemon
+  Stadium battle models -- skinned and animated -- instead of the flat battle
+  pics. It shows while 3D-BTL is on and needs the models built from the
+  player's own Pokemon Stadium (US) 1.0 ROM.
+- Stadium packs are now compressed with LZ4 -- the same codec as the terrain
+  mesh cache -- so the set is roughly 40% smaller on disk and reads back
+  faster. Old raw packs and new compressed ones load through the same path.
+
+### Changed
+
+- Stadium models and their discs are lit by a real sun-directional diffuse
+  term (an ambient floor plus a diffuse against the actual sun direction)
+  instead of a flat axis-aligned guess, so a Pokemon reads as properly
+  shaded in the same light the shadow map throws.
+- V-GRID now follows the player's setting inside 3D battles (it used to be
+  forced on).
+- The anti-aliasing fold gains a light crispness (unsharp) term, so
+  supersampling no longer washes out the tileset (AntiAlias.SHARP, tunable).
+
+### Fixed
+
+- Stadium models no longer read their own stale shadow: they are cast-only,
+  like the flat battle cards, so the glitchy moire that crawled over their
+  bodies is gone.
+
 ## [1.3.10] - 2026-08-11
 
 ### Added

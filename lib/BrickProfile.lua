@@ -1,14 +1,14 @@
 -- lib/BrickProfile.lua
 --
--- The TrimUI Brick build of the fork. The Brick (tg5040: 4x Cortex-A53
--- @1.8GHz, PowerVR GE8300, ~998MB RAM) keeps the diorama but not the
--- desktop's frame budget, so every knob is pre-tuned here and the mod is
--- a single quality ladder.
+-- The tuning this build ships with. The fork is the TrimUI Brick build
+-- (tg5040: 4x Cortex-A53 @1.8GHz, PowerVR GE8300, ~998MB RAM): it keeps the
+-- diorama but not a desktop's frame budget, so every knob is pre-tuned here
+-- and the mod is a single quality ladder.
 --
--- This fork IS the Brick build, so the profile is the DEFAULT on every
--- device: the full desktop mod (the parent's 8-rung VOXEL ladder, the
--- T-SHIFT pipeline, every row on the OPTIONS menu) is one env var away
--- (DS_BRICK=0). Everything in this module is applied at load.
+-- There is ONE build -- this one, on every device. The old DS_BRICK
+-- environment switch that could opt a device into the full desktop mod is
+-- gone, so the profile applies unconditionally at load and no device runs
+-- anything else.
 --
 -- One lever makes the collapse safe rather than fragile:
 --
@@ -17,52 +17,47 @@
 --     tuned rung is therefore the same thing as forcing that rung: a fresh
 --     install, an unknown stored value and a gated-off read all resolve to
 --     it. Nothing can move a knob the ladder no longer names.
+local V = ...
 local BrickProfile = {}
 
-function BrickProfile.on()
-  -- DS_BRICK overrides the default on ANY device:
-  --   DS_BRICK=1  force the Brick profile on
-  --   DS_BRICK=0  force it off (the full desktop mod)
-  -- Unset: ON -- this fork is the Brick build, so its tuning is what a
-  -- fresh install gets everywhere.
-  local force = os.getenv("DS_BRICK")
-  if force == "1" then return true end
-  if force == "0" then return false end
-  return true
-end
-
-BrickProfile.brick = BrickProfile.on()
+-- The profile is unconditional: this build IS the Brick build on every
+-- device. isBrick() is kept as an always-true predicate so callers and the
+-- test suite still have one name for "the tuning this build ships with".
+BrickProfile.brick = true
 
 function BrickProfile.isBrick()
   return BrickProfile.brick
 end
 
--- The fraction of the window resolution the voxel scene is rendered at
--- on the Brick, per VOXEL rung: HIGH renders the scene at the window's
--- own resolution, MEDIUM at 3/4, LOW at half -- the original 0.5 rung --
--- and POTATO at a third. The composite folds the smaller canvas back up to
--- the window with ordinary canvas filtering, so the
--- GE8300 fills a fraction of the pixels per scene pass -- the single
--- biggest frame-budget saving the fork has. Level 0 (OFF) never renders;
--- 1.0 is a harmless stand-in.
-BrickProfile.RENDER_SCALES = { [1] = 1.0, [2] = 0.75, [3] = 0.5, [4] = 0.33 }
-
-function BrickProfile.renderScale(level)
-  if not BrickProfile.isBrick() then return 1 end
-  return BrickProfile.RENDER_SCALES[level] or 1
+-- The fraction of the window resolution the voxel scene is rendered at.
+-- The RENDER SCALE knob (QualityMode) owns it now -- the quality modes
+-- write it as part of their preset and the player can move it on its own --
+-- so this reads the knob rather than deriving a scale from the VOXEL rung.
+-- The composite folds the smaller canvas back up to the window with
+-- ordinary canvas filtering, so the GE8300 fills a fraction of the pixels
+-- per scene pass -- the single biggest frame-budget saving the fork has.
+--
+-- QualityMode is required LAZILY, not at load: BrickProfile is loaded early
+-- (VoxelScene asks for it), and QualityMode's settings chain reaches back
+-- through OverworldBattle and BattleScene to VoxelScene -- a load-time
+-- require would recurse forever. By the time a scale is ever read the whole
+-- mod is loaded and the require is a cache hit.
+local function renderFraction()
+  return V.require("QualityMode").renderFraction()
 end
 
--- Battles can be enabled while VOXEL is OFF. Use the cheapest scene rung in
--- that case; otherwise follow the player's selected quality level.
-function BrickProfile.battleRenderScale(level)
-  if not BrickProfile.isBrick() then return 1 end
-  level = math.floor(tonumber(level) or 0)
-  if level < 1 or level > 4 then level = 4 end
-  return BrickProfile.renderScale(level)
+function BrickProfile.renderScale()
+  return renderFraction()
+end
+
+-- The battle arena renders at the same RENDER SCALE knob. 3D-BTL can be on
+-- while VOXEL is off, and the knob is still the right answer there: it is
+-- what the player chose, not a mode the arena is not running under.
+function BrickProfile.battleRenderScale()
+  return BrickProfile.renderScale()
 end
 
 function BrickProfile.battleActorShadowMap(level)
-  if not BrickProfile.isBrick() then return true end
   return level == 1
 end
 
@@ -105,11 +100,8 @@ local function pin(V, name, values, labels)
 end
 
 function BrickProfile.apply(V)
-  if not BrickProfile.isBrick() then return end
-
   local Voxel = V.require("VoxelState")
   local OverworldBattle = V.require("OverworldBattle")
-  local TiltShift = V.require("TiltShift")
   local ChunkMesher = V.require("ChunkMesher")
   local ShadowMap = V.require("ShadowMap")
   local Structures = V.require("Structures")
@@ -148,56 +140,33 @@ function BrickProfile.apply(V)
   -- flat card (~36 quads a tree), still ~80x cheaper than the carve.
   Structures.BILLBOARD_CROSS = true
 
-  -- VOXEL becomes OFF / HIGH / MEDIUM / LOW / POTATO. Every on-rung is the
-  -- same classic 35-degree diorama framing (the FULL preset's camera); the
-  -- rungs differ in RENDER SCALE (100% / 75% / 50% / 33%), which is the
-  -- knob that buys frame budget on a handheld -- the sub-native rungs are
-  -- folded back with ordinary canvas filtering. FULL_LEVEL stays 1
-  -- because HIGH is FULL -- the engine's FULL branches still match -- and
-  -- main.lua gates applyFull and the rows hook on the Brick so the
+  -- VOXEL becomes OFF / HIGH / MEDIUM / LOW / POTATO / CUSTOM. Every on-rung
+  -- is the same classic 35-degree diorama framing (the FULL preset's camera);
+  -- the rungs differ in what QualityMode's preset applies -- the RENDER
+  -- SCALE and the quality knobs. CUSTOM is the player's own combination,
+  -- reached the moment any knob leaves its mode's preset (QualityMode).
+  -- FULL_LEVEL stays 1 because HIGH is FULL -- the engine's FULL branches
+  -- still match -- and main.lua gates applyFull and the rows hook so the
   -- preset cannot re-enable the expensive rungs it would otherwise set
   -- on arrival.
-  replaceInPlace(Voxel.ANGLES_DEG, { 0, 35, 35, 35, 35 })
-  replaceInPlace(Voxel.ANGLE_LABELS, { "OFF", "HIGH", "MEDIUM", "LOW", "POTATO" })
+  replaceInPlace(Voxel.ANGLES_DEG, { 0, 35, 35, 35, 35, 35 })
+  replaceInPlace(Voxel.ANGLE_LABELS,
+                 { "OFF", "HIGH", "MEDIUM", "LOW", "POTATO", "CUSTOM" })
   Voxel.MAX_LEVEL = #Voxel.ANGLES_DEG - 1
   Voxel.HOTKEY_ORDER = { 0, 1, 2, 3, 4 }
   if Voxel.level > Voxel.MAX_LEVEL then Voxel.level = 0 end
 
-  -- Every quality knob pins to its tuned rung.
-  --   WATER      OFF  -- the reflective pass is the biggest fill-rate cost
-  --                     after shadows, and a handheld diorama reads fine
-  --                     without the lake's mirror; the player can still
-  --                     turn it on per session.
-  --   FOREST FX  OFF  -- the volumetric shafts and ground haze are the
-  --                     single most expensive per-pixel pass in the mod
-  --                     (FULL peaked near 40% of frame cost in forests);
-  --                     the Brick's frame budget does not stretch to them.
-  --   3D-BTL     OFF by default -- staged battles are optional because they
-  --                     remain the biggest mid-battle cost; the row is still
-  --                     available when a player wants the full scene.
-  --   AA         OFF  -- OFF was already the default; the 4X rung's 4x
-  --                     canvases are not worth a handheld's fill rate or
-  --                     RAM.
-  --   V-CURVE    OFF and V-GRID OFF -- the ornaments a fixed diorama does
-  --                     not need.
-  pin(V, "Water", { "off" }, { "OFF" })
-  pin(V, "ForestAtmos", { "off" }, { "OFF" })
+  -- The quality knobs are NOT pinned: every device runs this one build, and
+  -- its settings are the player's to change from the VOXEL SETTINGS menu.
+  -- The potato tuning is carried by the DEFAULTS (each knob's values[1]),
+  -- not by locks -- WATER and FOREST FX reorder their ladders to OFF-first
+  -- so the low-end default holds, and the higher rungs stay reachable for
+  -- devices that can carry them.
+  --
+  --   3D-BTL is the one exception: its module default is 2D-3D A (staged
+  --   battles ON), which would spend the whole frame budget by default, so
+  --   it pins to a plain OFF / ON toggle.
   pin(V, "OverworldBattle", { false, true }, { "OFF", "ON" })
-  pin(V, "AntiAlias", { 0 }, { "OFF" })
-  pin(V, "WorldCurve", { 0 }, { "OFF" })
-  pin(V, "VoxelGrid", { false }, { "OFF" })
-
-  -- BACK SPRITES decides what a STAGED battle frames. It stays off on the
-  -- Brick: the optimized scene owns both cards and keeps one composition.
-  OverworldBattle.backSetting.values = { false }
-  OverworldBattle.backSetting.labels = { "OFF" }
-  OverworldBattle.backSetting.index = nil
-
-  -- T-SHIFT: the pipeline is not registered on the Brick (main.lua), so the
-  -- blur never runs and its row and hotkey never exist. The LABELS table is
-  -- still pinned in case anything reads it.
-  replaceInPlace(TiltShift.LABELS, { "OFF" })
-  TiltShift.level = 0
 
   -- The mesh pump yields sooner per frame on four cores: each chunk's
   -- carve-in spreads over more frames but never spikes one. The parent

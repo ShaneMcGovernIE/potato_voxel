@@ -48,6 +48,7 @@ local V = ...
 
 local Mat4 = V.require("Mat4")
 local Voxel3D = V.require("Voxel3D")
+local ShadowMap = V.require("ShadowMap")
 
 local StadiumStage = {}
 
@@ -95,17 +96,17 @@ function StadiumStage.radiusFor(r)
 end
 
 -- Per-vertex shading, in the same terms StadiumRig lights the models with, so
--- a disc and the Pokemon standing on it agree about where the sun is. Fitted
--- to Voxel3D.FACE_SHADE's six values: the constant is the average, and each
--- axis term is half the spread between that axis's two faces.
-local SHADE_BASE = 0.7725
-local SHADE_X = 0.06
-local SHADE_Y = 0.225
-local SHADE_Z = 0.11
+-- a disc and the Pokemon standing on it agree about where the sun is. The
+-- same real sun-directional diffuse StadiumRig now uses: AMBIENT is the floor
+-- a face turned from the sun falls to, and LIGHT scales the normal's
+-- alignment with the sun's own direction (ShadowMap.sunDir).
+local AMBIENT = 0.40
+local LIGHT = 0.85
+local SUN_D = ShadowMap.sunDir()
+local LX, LY, LZ = -SUN_D[1], -SUN_D[2], -SUN_D[3]
 
 local function shadeFor(nx, ny, nz)
-  local s = SHADE_BASE + nx * SHADE_X + ny * SHADE_Y + nz * SHADE_Z
-  if s < 0.30 then return 0.30 end
+  local s = AMBIENT + LIGHT * math.max(LX * nx + LY * ny + LZ * nz, 0)
   if s > 1.00 then return 1.00 end
   return s
 end

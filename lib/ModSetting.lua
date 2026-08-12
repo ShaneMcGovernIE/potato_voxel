@@ -12,7 +12,7 @@
 --   options:define   a home in options.modOptions.DRAMATIC_SHAPE, plus a row
 --                    on this mod's page in the mod manager.
 --   the dedicated VOXEL SETTINGS screen renders the same setting descriptors
---                    alongside the VOXEL and T-SHIFT pipeline rows.
+--                    alongside the VOXEL pipeline row.
 --
 -- Both rows read and write the one stored value, so they cannot disagree.
 -- Writing mirrors what the manager's own page does (ManagerState:setOption):

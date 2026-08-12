@@ -1,7 +1,7 @@
 {
   "id": "potato_voxel",
   "name": "PotatoVoxel",
-  "version": "1.3.9",
+  "version": "1.4.0",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -23,5 +23,5 @@
   ],
   "affects_link": false,
   "github": "ShaneMcGovernIE/potato_voxel",
-  "description": "PotatoVoxel (fork of Dramatic Shape): the overworld as a 3D voxel diorama, retuned for low-end devices. Same diorama, with the settings that would otherwise cost a handheld its frame budget: one quality ladder (VOXEL OFF / HIGH / MEDIUM / LOW / POTATO = 100% / 75% / 50% / 33% render scale, sub-native rungs folded back with ordinary canvas filtering), every quality knob pre-pinned, disk mesh cache. Desktop HIGH keeps the full two-layer actor shadow map; MEDIUM and lower use contact/blob actor shadows. The full desktop mod is one env var away (DS_BRICK=0)."
+  "description": "PotatoVoxel (fork of Dramatic Shape): the overworld as a 3D voxel diorama, retuned for low-end devices. Same diorama, with the settings that would otherwise cost a handheld its frame budget: the VOXEL ladder is a set of quality MODES (OFF / HIGH / MEDIUM / LOW / POTATO / CUSTOM) -- picking a mode applies its tuned defaults to the quality knobs (WATER, FOREST FX, AA, V-CURVE, V-GRID, 3D-BTL, SHADOWS), and touching any knob flips the mode to CUSTOM. A RENDER SCALE knob (100% / 75% / 50% / 33%) is the single biggest frame-budget lever, set by the modes and adjustable on its own; disk mesh cache. HIGH keeps the full two-layer actor shadow map; MEDIUM and lower use contact/blob actor shadows. One build for every device -- no desktop environment switch."
 }

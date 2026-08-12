@@ -55,6 +55,7 @@ local V = ...
 
 local Voxel3D = V.require("Voxel3D")
 local StadiumPack = V.require("StadiumPack")
+local ShadowMap = V.require("ShadowMap")
 
 local StadiumRig = {}
 StadiumRig.__index = StadiumRig
@@ -71,18 +72,27 @@ local ANG = math.pi / 32768
 -- `shade` baked from which way its face points, and the shadow map
 -- multiplies on top of that (see Voxel3D.FACE_SHADE). A skinned model has
 -- no fixed faces to bake, so the same answer is computed per vertex from
--- the posed normal -- and these four numbers are FACE_SHADE's own six
--- values, fitted:
+-- the posed normal.
 --
---     +Y up 1.00   -Y down 0.55   +X east 0.84   -X west 0.72
---     +Z south 0.90   -Z north 0.68
+-- It used to be an AXIS-ALIGNED guess at FACE_SHADE's values -- south as
+-- bright as up, north and west a fixed dark -- which read flat and did not
+-- match the light the shadow map was actually throwing. Now it is a real
+-- diffuse term against the SUN'S OWN DIRECTION (ShadowMap.sunDir): a face
+-- turned toward the sun lights up by LIGHT times its normal's alignment,
+-- and one turned away falls to AMBIENT. A Pokemon's flank catches exactly
+-- the light the shadow map says it does, so the two read as one picture.
 --
--- so a Pokemon's flank catches the same southeastern sun the roof of the
--- house behind it does, and the two read as being in one picture.
-local SHADE_BASE = 0.7725
-local SHADE_X = 0.06
-local SHADE_Y = 0.225
-local SHADE_Z = 0.11
+-- Both are tune-by-eye. LIGHT is how strongly the sunward side glows,
+-- AMBIENT the floor the shadow side falls to.
+local AMBIENT = 0.40
+local LIGHT = 0.85
+
+-- toward the sun, in world space, precomputed once: the sun does not move.
+-- ShadowMap.sunDir() is the direction the light TRAVELS (down onto the
+-- ground), so the direction a surface must FACE to see the sun is its
+-- negation.
+local SUN_D = ShadowMap.sunDir()
+local LX, LY, LZ = -SUN_D[1], -SUN_D[2], -SUN_D[3]
 
 -- ------- an instance
 
@@ -720,9 +730,13 @@ function StadiumRig:skin(yaw)
       local wx = piv[o + 1] * ax + piv[o + 2] * ay + piv[o + 3] * az
       local wy = piv[o + 5] * ax + piv[o + 6] * ay + piv[o + 7] * az
       local wz = piv[o + 9] * ax + piv[o + 10] * ay + piv[o + 11] * az
-      -- the model matrix's yaw, by hand: (x, z) turned, y untouched
-      row[6] = SHADE_BASE + SHADE_X * (cy * wx + sy * wz) + SHADE_Y * wy
-               + SHADE_Z * (cy * wz - sy * wx)
+      -- the model matrix's yaw, by hand: (x, z) turned, y untouched, then
+      -- the world normal against the WORLD sun (see the lighting block)
+      local ex = cy * wx + sy * wz
+      local ez = cy * wz - sy * wx
+      local lit = LX * ex + LY * wy + LZ * ez
+      row[6] = AMBIENT + LIGHT * math.max(lit, 0)
+      if row[6] > 1 then row[6] = 1 end
     end
     pcall(part.mesh.setVertices, part.mesh, rows)
   end
@@ -792,6 +806,16 @@ end
 -- own units where an integer plane means nothing (see VoxelGrid). Glass off
 -- for the same reason the sprite passes turn it off -- the mask's
 -- coordinates belong to the tileset atlas, not to a Pokemon's texture.
+--
+-- The mons are CAST-ONLY (receiveSun=false), the same as the flat battle
+-- cards: they throw a real shadow onto the arena, but they do not sample
+-- the shadow map themselves. A model both casts into the map AND reads it
+-- back, and its dense geometry -- far steeper in the sun's frame than the
+-- terrain the bias is tuned for -- falls outside the acne margin and draws
+-- moire bands crawling over its own body; on top of that the map is keyed
+-- to the camera and the turn, not the animation, so a model that moves
+-- reads a stale copy of itself. Fully lit, the model is clean and its
+-- ground shadow is all the shadow it needs.
 function StadiumRig:draw(matrix, pull)
   Voxel3D.seams(false)
   Voxel3D.glass(false)
@@ -803,14 +827,14 @@ function StadiumRig:draw(matrix, pull)
       additive = additive or {}
       additive[#additive + 1] = part
     elseif part.texture then
-      Voxel3D.draw(part.mesh, part.texture, matrix, pull)
+      Voxel3D.draw(part.mesh, part.texture, matrix, pull, nil, false)
     end
   end
   if additive then
     Voxel3D.blend("add")
     for _, part in ipairs(additive) do
       if part.texture then
-        Voxel3D.draw(part.mesh, part.texture, matrix, pull)
+        Voxel3D.draw(part.mesh, part.texture, matrix, pull, nil, false)
       end
     end
     Voxel3D.blend(nil)

@@ -12,11 +12,6 @@
 --              buffer, not a y-sort: walk behind a building and the
 --              building is simply in front.
 --
---   tiltshift  a worldPresent pipeline -- the stage that post-processes
---              the finished world BEFORE the UI composites over it.  A
---              tilt-shift blur that sells the miniature-model look, on the
---              diorama only, leaving text boxes and menus crisp.
---
 -- Everything a display mode needs beyond the two draw functions -- the
 -- OFF/15/35/50 ladder, the options rows, the hotkeys, persistence in
 -- save.options.pipelines, the free-roam gate, the mutual exclusion with
@@ -81,7 +76,6 @@ end
 local Voxel = V.require("VoxelState")
 local Voxel3D = V.require("Voxel3D")
 local VoxelScene = V.require("VoxelScene")
-local TiltShift = V.require("TiltShift")
 local ChunkMesher = V.require("ChunkMesher")
 local VoxelGrid = V.require("VoxelGrid")
 local WorldCurve = V.require("WorldCurve")
@@ -93,6 +87,7 @@ local Water = V.require("Water")
 local ForestAtmos = V.require("ForestAtmos")
 local AntiAlias = V.require("AntiAlias")
 local ShadowSettings = V.require("ShadowSettings")
+local QualityMode = V.require("QualityMode")
 local Upscale = V.require("Upscale")
 local FirstPerson = V.require("FirstPerson")
 local FreeMove = V.require("FreeMove")
@@ -127,13 +122,11 @@ mod.exports.isLoading = function()
   return Voxel.loading == true, Voxel.loadingMap
 end
 
--- The low-end runtime tuner (lib/BrickProfile.lua): the TrimUI Brick
--- tuning this fork ships with, applied on every platform. Loaded on
--- every platform so the rest of this file can ask isBrick() freely; it
--- no-ops everywhere except Linux (the Brick). Its apply() must run before
--- the pipeline registrations below -- the voxel pipeline and the rows hook
--- capture the ladders by reference, and apply mutates those tables in
--- place.
+-- The runtime tuner (lib/BrickProfile.lua): the low-end tuning this build
+-- ships with, applied unconditionally on every device -- there is one build
+-- and this is it. Its apply() must run before the pipeline registrations
+-- below -- the voxel pipeline and the rows hook capture the ladders by
+-- reference, and apply mutates those tables in place.
 local BrickProfile = V.require("BrickProfile")
 BrickProfile.apply(V)
 
@@ -187,8 +180,6 @@ mod.content.render_pipelines:register("voxel", {
   -- 3 is the engine's TILT key, which this mode supersedes -- see the
   -- hotkey block near the bottom of this file for how it is claimed
   hotkey = "8",
-  -- above tiltshift, so the two sort together in the options list with the
-  -- mode first and its post-process under it
   priority = 20,
 
   -- Headless runs and drivers without a depth canvas or shader support
@@ -214,6 +205,11 @@ mod.content.render_pipelines:register("voxel", {
     -- would make the zoom keys and the wheel dead while the mode was on, and
     -- would fight anyone who changed one deliberately.
     applyFull(level)
+    -- And every VOXEL rung is a MODE preset now: landing on HIGH/MEDIUM/LOW/
+    -- POTATO applies that mode's defaults to the quality knobs, and a knob
+    -- moved off its mode's preset flips the rung to CUSTOM (QualityMode).
+    QualityMode.onLevel(level)
+    QualityMode.enforce(level)
     Voxel.update(dt, level)
     -- the first-person head, on the same tick: its blend in and out of the
     -- orbit, the mouse capture lifecycle, and the frame's stick-rate look.
@@ -325,15 +321,15 @@ mod.content.render_pipelines:register("voxel", {
     -- canvas it was handed, so the sky's dither, the water's march and the
     -- camera itself all come out the same picture at a higher sample rate.
     local rw, rh = AntiAlias.expand(sw, sh)
-    -- On the Brick the scene renders SMALLER than the window instead --
-    -- BrickProfile.renderScale, one of 1.0 / 0.75 / 0.5 picked by the
-    -- live VOXEL rung -- and the same resolve() fold at the end brings
-    -- it back up. Same machinery as AA, opposite direction: the GE8300
+    -- The scene renders SMALLER than the window at the RENDER SCALE the
+    -- quality modes set (100% / 75% / 50% / 33%) -- BrickProfile.renderScale
+    -- reads that knob -- and the same resolve() fold at the end brings it
+    -- back up. Same machinery as AA, opposite direction: the GE8300
     -- fills a fraction of the pixels for every scene pass and the voxel
     -- diorama keeps its frame budget without the desktop's fill rate.
     -- The composite is the only place that knows; everything inside
     -- measures itself in the canvas it was handed.
-    local rs = BrickProfile.renderScale(Voxel.level)
+    local rs = BrickProfile.renderScale()
     local crw = math.max(1, math.floor(rw * rs + 0.5))
     local crh = math.max(1, math.floor(rh * rs + 0.5))
     local canvas = VoxelScene.render(ctx.state, crw, crh,
@@ -395,37 +391,6 @@ do
   end
 end
 
--- The tilt-shift blur and its OPTIONS row are dropped on the Brick: the
--- diorama is already ON its optimised framing there, and a full-screen
--- blur pass over a 720p display costs what a handheld cannot afford. The
--- pipeline being unregistered takes its row and its "6" hotkey off with
--- it (the registry only offers registered pipelines).
-if not BrickProfile.isBrick() then
-mod.content.render_pipelines:register("tiltshift", {
-  label = "T-SHIFT",
-  levels = TiltShift.LABELS,
-  -- 6 is free: no engine branch claims it, so this one alone reaches the
-  -- registry by the documented route
-  hotkey = "6",
-  priority = 10,
-
-  update = function(dt, level)
-    TiltShift.update(dt, level)
-  end,
-
-  -- worldPresent, not present: the blur belongs on the diorama, not on the
-  -- dialog box in front of it.  A pass-through when the level is 0 or the
-  -- shader is unavailable, so the frame is untouched in every other case.
-  worldPresent = function(canvas)
-    return TiltShift.apply(canvas)
-  end,
-
-  invalidate = function()
-    TiltShift.invalidate()
-  end,
-})
-end
-
 -- ------- this mod's own settings
 --
 -- Neither of these is a pipeline: they own no pass of the frame, they
@@ -475,9 +440,6 @@ applyFull = function(level)
   local opts = Game.save and Game.save.options
   if not opts then return end
 
-  -- the miniature blur at its strongest: FULL is the diorama look, and the
-  -- tilt-shift is most of what makes it read as a model
-  Pipelines.setLevel("tiltshift", Pipelines.maxLevel("tiltshift"))
   Pipelines.syncOptions(opts)
   -- the horizon flat. The curve bends the world away from a walking player,
   -- which fights a fixed diorama framing
@@ -533,6 +495,12 @@ local function stagedBattles()
 end
 
 local SETTINGS = {
+  { QualityMode.renderSetting,
+    "Render the 3D scene at a fraction of the window resolution and fold "
+    .. "it back up -- the single biggest frame-budget lever. Each quality "
+    .. "mode (HIGH / MEDIUM / LOW / POTATO) sets this; moving it on its own "
+    .. "switches the mode to CUSTOM.",
+    full = true },
   { VoxelGrid.setting, "One-pixel wireframe along every voxel edge." },
   { WorldCurve.setting,
     "Bend the world down over the horizon, Animal Crossing style." },
@@ -581,6 +549,17 @@ local SETTINGS = {
     .. "original slot, instead of standing it on the map facing the foe. "
     .. "The foe is still out there on its own tile.",
     when = function() return stagedBattles() and not VR.enabled() end,
+    full = true },
+  -- Shows only while a fight can actually be staged, like BACK SPRITES
+  -- above: the switch decides how a STAGED fight is drawn, so without a
+  -- staged fight it decides nothing.
+  { OverworldBattle.stadiumSetting,
+    "Fight with the Pokemon Stadium battle models -- skinned and animated, "
+    .. "playing the animation the move actually calls for -- instead of the "
+    .. "flat battle pics. Needs the models built from your own Pokemon "
+    .. "Stadium (US) 1.0 ROM: import it from the STADIUM ROM row, or drop "
+    .. "it in the baseroms folder and restart.",
+    when = function() return stagedBattles() end,
     full = true },
   { DayNight.setting,
     "What time it is outdoors: pin the sky to DAY, NIGHT, DUSK or DAWN, "
@@ -645,30 +624,19 @@ local SETTINGS = {
     full = true },
 }
 
--- On the Brick the settings schema is deliberately EMPTY: every knob is
--- pinned by BrickProfile and there is nothing to configure, so the mod
--- manager's page is a card with no form. The two shadow rows are the one
--- exception -- they stay live on the Brick (see voxelSettingsRows), so the
--- Brick's page offers them and nothing else. The VOXEL row still lives on
--- the OPTIONS menu, through the render-pipelines registry, as the quality
--- ladder (OFF / HIGH / MEDIUM / LOW).
+-- The mod manager's page offers the same settings the VOXEL SETTINGS menu
+-- does: every knob is configurable now, so the page is a real form rather
+-- than the old empty card. The VR rows are the one omission -- they are
+-- absent from the manager's page wherever the platform cannot do VR at all
+-- (the OPTIONS menu's `when` gates are situational, a row hidden for now;
+-- this one is existential). The VOXEL row still lives on the OPTIONS menu,
+-- through the render-pipelines registry, as the quality ladder (OFF / HIGH
+-- / MEDIUM / LOW / POTATO).
 local schema = {}
-if not BrickProfile.isBrick() then
-  for _, entry in ipairs(SETTINGS) do
-    -- the VR rows are absent from the mod manager's page too where the
-    -- platform cannot do VR at all -- the OPTIONS menu's `when` gates are
-    -- situational (a row hidden for now), this one is existential
-    local vrOnly = entry[1] == VR.setting or entry[1] == VR.smoothTurn
-    if not vrOnly or VR.supported() then
-      schema[#schema + 1] = entry[1]:schema(entry[2])
-    end
-  end
-else
-  for _, entry in ipairs(SETTINGS) do
-    if entry[1] == ShadowSettings.enabledSetting
-       or entry[1] == ShadowSettings.qualitySetting then
-      schema[#schema + 1] = entry[1]:schema(entry[2])
-    end
+for _, entry in ipairs(SETTINGS) do
+  local vrOnly = entry[1] == VR.setting or entry[1] == VR.smoothTurn
+  if not vrOnly or VR.supported() then
+    schema[#schema + 1] = entry[1]:schema(entry[2])
   end
 end
 mod.options:define(schema)
@@ -677,17 +645,15 @@ mod.options:define(schema)
 --
 --   3  VOXEL    cycle the camera ladder      (was 6; skips FULL)
 --   5  V-GRID   toggle the wireframe         (new)
---   6  T-SHIFT  cycle the blur ladder        (was 9)
 --   7  V-CURVE  cycle the horizon bend       (new)
 --   8  3D-BTL   cycle overworld battles      (new)
---   9  WATER    cycle the water reflections  (new; 9 was T-SHIFT's old key)
+--   9  WATER    cycle the water reflections  (new)
 --
--- Only 6 arrives by the documented route. Game:keypressed answers the
--- engine's own display keys FIRST and returns -- 2 COLORS, 3 TILT, 4 ZOOM,
--- 5 GBC FX -- and only then offers the key to Pipelines.hotkey, expressly
--- so "a pipeline can never shadow one" (Schemas, render_pipelines.hotkey).
--- 3 and 5 are two of those, and 7 and 8 belong to plain mod settings that
--- own no pass and so have no registry to claim a key from at all.
+-- Game:keypressed answers the engine's own display keys FIRST and returns
+-- -- 2 COLORS, 3 TILT, 4 ZOOM, 5 GBC FX -- and only then offers the key to
+-- Pipelines.hotkey. 3 and 5 are two of those, and 7, 8 and 9 belong to
+-- plain mod settings that own no pass and so have no registry to claim a
+-- key from at all.
 --
 -- So this wraps Game:keypressed. It is the invasive option and it is the
 -- only one: polling the keyboard in update() would fire alongside the
@@ -707,17 +673,15 @@ mod.options:define(schema)
 -- applies its own gate and ladder, and the three lines after it are the
 -- engine's own (syncOptions, the tilt exclusion, writeOptions).
 
--- The Brick build is a single quality ladder, so the keys that cycled the
--- removed rungs are left alone: 5/7/8/9 fall through to the engine, and 6
--- is the tilt-shift key, whose pipeline is not registered there. Only "3"
--- stays, stepping OFF -> HIGH -> MEDIUM -> LOW.
+-- The build is a single quality ladder, so the keys that cycled the removed
+-- rungs are left alone: 5/7/9 fall through to the engine. Only "8" stays,
+-- stepping OFF -> HIGH -> MEDIUM -> LOW -> POTATO.
 local HOTKEYS = BrickProfile.isBrick()
   and { ["8"] = "pipeline", ["lshift"] = "pipeline", ["rshift"] = "pipeline" }
   or {
   ["8"] = "pipeline",           -- voxel, by its declared hotkey
   ["lshift"] = "pipeline",
   ["rshift"] = "pipeline",
-  ["6"] = "pipeline",           -- tiltshift, likewise
   ["5"] = VoxelGrid.setting,
   ["7"] = WorldCurve.setting,
   ["3"] = OverworldBattle.setting,
@@ -843,7 +807,7 @@ local function insertGrouped(out, extra)
   local anchor = nil
   for i, row in ipairs(out) do
     local id = type(row) == "table" and row.id
-    if id == "pipeline:voxel" or id == "pipeline:tiltshift" then anchor = i end
+    if id == "pipeline:voxel" then anchor = i end
   end
   if not anchor then
     for _, row in ipairs(extra) do out[#out + 1] = row end
@@ -854,9 +818,8 @@ local function insertGrouped(out, extra)
 end
 
 -- FULL owns the settings that describe the LOOK, so while it is selected those
--- are taken off the menu rather than left to be changed under it -- including
--- T-SHIFT, which is a pipeline row the engine put there. A row that no longer
--- decides anything is worse than no row.
+-- are taken off the menu rather than left to be changed under it. A row that
+-- no longer decides anything is worse than no row.
 --
 -- The battle rows are the exception and they stay; see the rows hook.
 local function dropRow(out, id)
@@ -964,32 +927,21 @@ local function voxelSettingsRows(game)
   local Pipelines = require("src.render.Pipelines")
   local rows = {}
   for _, row in ipairs(Pipelines.rows(game)) do rows[#rows + 1] = row end
-  if BrickProfile.isBrick() then
-    rows[#rows + 1] = OverworldBattle.setting:row()
-    -- The shadow rows stay live on the Brick like 3D-BTL does: OFF is a
-    -- real frame-budget lever on a handheld, and SHADOW QUALITY a real
-    -- resolution one. The other SETTINGS knobs are pinned single-rung there
-    -- and would be dead switches, so they stay off this list.
-    rows[#rows + 1] = ShadowSettings.enabledSetting:row()
-    rows[#rows + 1] = ShadowSettings.qualitySetting:row()
-  else
-    local full = Voxel.isFull(Pipelines.level("voxel"))
-    if full then
-      DayNight.forceSync(game)
-      for i = #rows, 1, -1 do
-        if rows[i].id == "pipeline:tiltshift" then table.remove(rows, i) end
-      end
+  -- Every setting row lives here. The potato tuning is the DEFAULT, not a
+  -- lock, so each knob is a switchable row (WATER OFF/SKY/FULL, FOREST FX
+  -- OFF/LOW/FULL, AA OFF/2X/4X, V-CURVE, V-GRID, 3D-BTL, BACK SPRITES,
+  -- DAY/NIGHT, SHADOWS, SHADOW QUALITY). The only gates are the situational
+  -- `when`s -- VR rows, and BACK SPRITES needing a staged fight -- so
+  -- nothing a device can carry is hidden from it.
+  for _, entry in ipairs(SETTINGS) do
+    if not entry.when or entry.when() then
+      rows[#rows + 1] = entry[1]:row()
     end
-    for _, entry in ipairs(SETTINGS) do
-      if (entry.full or not full) and (not entry.when or entry.when()) then
-        rows[#rows + 1] = entry[1]:row()
-      end
-    end
-    local okPick, importRow = pcall(function()
-      return V.require("StadiumRomPick").row()
-    end)
-    if okPick and importRow then rows[#rows + 1] = importRow end
   end
+  local okPick, importRow = pcall(function()
+    return V.require("StadiumRomPick").row()
+  end)
+  if okPick and importRow then rows[#rows + 1] = importRow end
   rows[#rows + 1] = {
     id = "potato_voxel:prebuild",
     label = "PREBUILD CACHE",
@@ -1046,7 +998,7 @@ mod.hooks:wrap("ui.options.rows", function(next, game, rows)
   for i = #out, 1, -1 do
     local id = type(out[i]) == "table" and out[i].id or ""
     id = id or ""
-    if id == "pipeline:voxel" or id == "pipeline:tiltshift"
+    if id == "pipeline:voxel"
        or id:find("^potato_voxel:") then table.remove(out, i) end
   end
   out[#out + 1] = {

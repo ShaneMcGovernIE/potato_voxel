@@ -70,10 +70,10 @@ local function onAndroid()
 end
 
 ForestAtmos.setting = onAndroid()
-  and ModSetting.new("atmos", "FOREST FX", { "low", "off" },
-                     { "LOW", "OFF" })
-  or ModSetting.new("atmos", "FOREST FX", { "full", "low", "off" },
-                    { "FULL", "LOW", "OFF" })
+  and ModSetting.new("atmos", "FOREST FX", { "off", "low" },
+                     { "OFF", "LOW" })
+  or ModSetting.new("atmos", "FOREST FX", { "off", "low", "full" },
+                    { "OFF", "LOW", "FULL" })
 
 -- the animation clock: ticked by main.lua's always-running update hook,
 -- pinnable (frozen = true) so a screenshot driver can hold a frame still

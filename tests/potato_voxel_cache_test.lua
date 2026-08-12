@@ -12,18 +12,21 @@ local Prebuild = exports.lib.require("CachePrebuild")
 local MeshCache = exports.lib.require("MeshCache")
 local Brick = exports.brick
 local Battles = exports.lib.require("OverworldBattle")
+local QualityMode = exports.lib.require("QualityMode")
 
 if Brick and Brick.isBrick() then
-  T.eq(Brick.battleRenderScale(0), 0.33,
-       "battle scene uses POTATO scale when VOXEL is OFF")
-  T.eq(Brick.battleRenderScale(1), 1.0,
-       "battle scene follows HIGH scale")
+  T.eq(Brick.battleRenderScale(), 1.0,
+       "battle scene follows the RENDER SCALE knob (default 100%)")
+  QualityMode.renderSetting:setValue(50)
+  T.eq(Brick.battleRenderScale(), 0.5,
+       "battle scene follows a changed RENDER SCALE")
+  QualityMode.renderSetting:setValue(100)
   T.eq(Brick.battleActorShadowMap(1), true,
        "HIGH keeps battle actor shadow map")
   T.eq(Brick.battleActorShadowMap(4), false,
        "POTATO uses cheap battle contact shadows")
   T.eq(Battles.setting.values[1], false, "3D-BTL is off by default")
-  T.eq(Battles.setting.values[2], true, "3D-BTL remains available on Brick")
+  T.eq(Battles.setting.values[2], true, "3D-BTL remains available")
 end
 
 local maps = {
