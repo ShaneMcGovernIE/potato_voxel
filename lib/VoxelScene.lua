@@ -180,8 +180,17 @@ local function groundAt(map, cellX, cellY)
   -- exactly one step -- the "hops like a ledge" seam bug.
   if not map:inBounds(cellX, cellY) then return 0 end
   local shapes = TileShape.forMap(map)
-  local s = shapes[map:cellTile(cellX, cellY)]
+  -- Resolve the graphics tile in its CELL context, exactly as the terrain
+  -- mesher does. Gold's native Map:cellTile is a collision class, and even
+  -- the bridge's graphics alias cannot answer whether an unpinned floor tile
+  -- lives in a walkable cell; indexing `shapes` directly therefore picked an
+  -- unrelated raised box and left people floating a full wall-height up.
+  local tx, ty = cellX * 2, cellY * 2 + 1
+  local s = TileShape.at(map, shapes, map:tileAt(tx, ty), tx, ty)
   if not s then return 0 end
+  -- A façade may be pinned upright while its doorway cell remains walkable.
+  -- The player passes through that artwork, not onto its wall-height box.
+  if s.art == "upright" and map:isWalkableCell(cellX, cellY) then return 0 end
   -- a recessed class (water) still supports whatever stands on it; only
   -- raised ground lifts the model.  Stairs never do: the class height is
   -- the flight's TALL end, but the player enters at floor level and the
