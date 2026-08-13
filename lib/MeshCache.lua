@@ -217,6 +217,25 @@ local function activeVersion()
   return "red"
 end
 
+-- Browser-authored pins and house recipes are geometry inputs just like the
+-- generated map data.  They live outside game.data, so the original cache
+-- identity could consider a mesh valid after the workbench changed it and
+-- upload the old terrain without ever calling Structures/Buildings.  Hash
+-- their small JSON files into the identity: every saved edit becomes a cache
+-- miss, while an unchanged workbench keeps the normal warm-start benefit.
+local function workbenchRevision()
+  local read = V.mod and V.mod.read
+  if type(read) ~= "function" then return "none" end
+  local buildings = V.mod:read("data/workbench_buildings.json") or ""
+  local overrides = V.mod:read("data/workbench_overrides.json") or ""
+  local cutouts = V.mod:read("data/workbench_cutouts.json") or ""
+  local hash = hashString(17, "workbench-v1")
+  hash = hashString(hash, buildings)
+  hash = hashString(hash, overrides)
+  hash = hashString(hash, cutouts)
+  return tostring(hash)
+end
+
 local function identityParts()
   local okTR, TileRenderer = pcall(require, "src.render.TileRenderer")
   local voidFill = (okTR and TileRenderer and TileRenderer.voidFill) or "trees"
@@ -227,6 +246,7 @@ local function identityParts()
     activeVersion = activeVersion(),
     profile = profile,
     dataKey = dataKey,
+    workbenchKey = workbenchRevision(),
     voidFill = tostring(voidFill),
   }
 end
@@ -234,13 +254,14 @@ end
 local function identity()
   local parts = identityParts()
   return table.concat({ parts.format, parts.version, parts.activeVersion,
-                        parts.profile, parts.dataKey, parts.voidFill }, "|")
+                        parts.profile, parts.dataKey, parts.workbenchKey,
+                        parts.voidFill }, "|")
 end
 
 -- Compares two identity strings (expected vs actual) and returns the names of
 -- the components that differ, so diagnostics can pinpoint a drift.
 local IDENTITY_COMPONENTS = { "format", "version", "activeVersion", "profile",
-                              "dataKey", "voidFill" }
+                              "dataKey", "workbenchKey", "voidFill" }
 
 local function splitIdentity(id)
   local parts = {}
@@ -315,6 +336,12 @@ local function mkdirCommands(dir, sep)
 end
 
 function MeshCache.available()
+  -- Dev sessions are for shaping live geometry.  A persisted terrain mesh
+  -- turns that feedback loop into a cache-invalidation problem, so opt out
+  -- completely: no old payload can be loaded and no exploratory edit is
+  -- written back for a later normal play session.  Release builds retain the
+  -- on-disk cache unchanged.
+  if os.getenv("POKEPORT_DEV") == "1" then return false end
   if not (ffi and love and love.graphics
           and love.data and love.data.newByteData) then
     return false
@@ -1063,6 +1090,7 @@ local function writeBuildInfo(id, parts)
     "activeVersion=" .. tostring(parts.activeVersion),
     "profile=" .. parts.profile,
     "dataKey=" .. parts.dataKey,
+    "workbenchKey=" .. parts.workbenchKey,
     "voidFill=" .. parts.voidFill,
     "builtAt=" .. tostring(os.time and os.time() or 0),
   }, "\n") .. "\n")

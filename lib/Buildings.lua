@@ -126,6 +126,7 @@ end
 -- The shape profile ships with the mod; absent or broken simply means no
 -- building templates, and every building falls back to the volume path.
 local spec = nil
+local workbench = nil
 local function profile()
   if spec == nil then
     local ok, s = pcall(V.data, "voxel_heights")
@@ -134,7 +135,46 @@ local function profile()
   return spec or nil
 end
 
+-- The browser workbench records experimental Gold building recipes separately
+-- from the shipped profile. A recipe is intentionally a whole 8px-tile grid:
+-- that is the unit Buildings matches and turns into a measured roof/facade,
+-- unlike TileShape's individual tile pins. Broken local JSON is ignored so an
+-- interrupted browser write can only fall back to the ordinary volume path.
+local function workbenchBuildings(tilesetId)
+  if workbench == nil then
+    local body = V.mod:read("data/workbench_buildings.json")
+    local Json = V.require("WorkbenchJson")
+    local parsed = body and Json.decode(body)
+    workbench = (type(parsed) == "table" and parsed) or false
+  end
+  local sets = workbench and workbench.tilesets
+  local recipes = sets and sets[tilesetId]
+  return type(recipes) == "table" and recipes or nil
+end
+
+local function validRecipe(t)
+  if type(t) ~= "table" or type(t.tiles) ~= "table" or #t.tiles == 0
+     or #t.tiles > 64 or type(t.roofRows) ~= "number"
+     or type(t.roofBack) ~= "number" or type(t.roofFront) ~= "number"
+     or type(t.roofCycle) ~= "table" or #t.roofCycle ~= 2
+     or type(t.slab) ~= "number" then return false end
+  local width = type(t.tiles[1]) == "table" and #t.tiles[1] or 0
+  if width < 1 or width > 64 or t.roofRows < 1
+     or t.roofRows > #t.tiles * 8 or t.slab < 1 then return false end
+  for _, row in ipairs(t.tiles) do
+    if type(row) ~= "table" or #row ~= width then return false end
+    for _, tile in ipairs(row) do
+      if type(tile) ~= "number" or tile < 0 or tile > 255
+         or tile ~= math.floor(tile) then return false end
+    end
+  end
+  local c0, c1 = t.roofCycle[1], t.roofCycle[2]
+  return type(c0) == "number" and type(c1) == "number"
+     and c0 >= 0 and c1 >= c0 and c1 < t.roofRows
+end
+
 local models = {}          -- "<tileset>:<index>" -> prebuilt local quads
+local diagnostics = {}     -- map id -> last matching pass (workbench support)
 
 -- ------------------------------------------------------------------ read --
 
@@ -1264,11 +1304,23 @@ end
 -- S.objectQuads and the tiles are claimed so the volume path never boxes a
 -- building this module has already modelled.
 function Buildings.build(S, map, data, perRow)
-  if not data then return end
+  local diag = { data = data ~= nil, templates = 0, candidates = 0, matches = 0 }
+  diagnostics[map.id] = diag
+  if not data then diag.reason = "tileset pixels unavailable"; return end
   local tileset = map.tileset
   local s = profile()
-  local list = s and s.buildings and s.buildings[tileset.id]
-  if not list then return end
+  local base = s and s.buildings and s.buildings[tileset.id]
+  local extra = workbenchBuildings(tileset.id)
+  if not base and not extra then diag.reason = "no templates for tileset"; return end
+  -- Preserve shipped ordering (some overlapping templates rely on it), then
+  -- append local captured recipes. Copying the list avoids mutating the data
+  -- module on every mesh rebuild.
+  local list = {}
+  for _, t in ipairs(base or {}) do list[#list + 1] = t end
+  for _, t in ipairs(extra or {}) do
+    if validRecipe(t) then list[#list + 1] = t end
+  end
+  diag.templates = #list
 
   local atlasW = tileset.imageWidth or 128
   local atlasH = tileset.imageHeight or 48
@@ -1316,6 +1368,7 @@ function Buildings.build(S, map, data, perRow)
           -- list order below is the priority order -- the tower's own
           -- templates come first precisely so they take those cells.
           if tx <= tw - bw and ty <= th - bh then
+            diag.candidates = diag.candidates + 1
             if Perf.enabled then Perf.count("buildings.candidate_checks") end
             local free = true
             for r = 0, bh - 1 do
@@ -1328,6 +1381,7 @@ function Buildings.build(S, map, data, perRow)
               if not free then break end
             end
             if free and matches(S, t, tx, ty) then
+              diag.matches = diag.matches + 1
               if Perf.enabled then Perf.count("buildings.matches") end
               if not built then
                 local key = tileset.id .. ":" .. index
@@ -1449,10 +1503,21 @@ function Buildings.stats()
   return out
 end
 
+function Buildings.diagnostics(mapId)
+  return mapId and diagnostics[mapId] or diagnostics
+end
+
 -- Drop the prebuilt models (hot reload, or a mod shadowing the profile).
 function Buildings.invalidate()
   spec = nil
+  -- Workbench recipes are JSON beside the shipped profile.  They are read
+  -- once for normal frame-time performance, so a browser save followed by
+  -- Gold's Hot reload must drop this cache as well as the generated quads.
+  -- Without this, the old empty recipe list survived and a newly saved house
+  -- could never be claimed until a full game restart.
+  workbench = nil
   models = {}
+  diagnostics = {}
 end
 
 return Buildings

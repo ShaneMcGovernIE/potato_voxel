@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en"><head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PotatoVoxel Workbench</title><link rel="stylesheet" href="/style.css">
+</head><body>
+  <header><div><h1>PotatoVoxel Workbench</h1><p>Gold overworld survey and profile pins</p></div><span id="connection" class="badge">Waiting for game</span></header>
+  <main>
+    <section class="card controls"><h2>Map jump</h2>
+      <label>Find map <input id="map-filter" placeholder="Pallet, Route, map id…"></label>
+      <label>Map <select id="map"></select></label>
+      <div class="coordinates"><label>X <input id="x" type="number" min="0" value="0"></label><label>Y <input id="y" type="number" min="0" value="0"></label>
+      <label>Facing <select id="facing"><option>down</option><option>up</option><option>left</option><option>right</option></select></label></div>
+      <button id="teleport">Teleport</button><button id="reload" class="secondary">Hot reload profile</button>
+      <p id="game-status" class="hint">Start Gold with PotatoVoxel enabled to connect.</p>
+    </section>
+    <section class="card live"><h2>Live area</h2><div id="location" class="location">No overworld data yet.</div>
+      <div class="march"><button data-move="up">↑</button><button data-move="left">←</button><button data-move="down">↓</button><button data-move="right">→</button><span>Move inspector</span></div>
+      <p class="hint">Each square is the actual 16×16 game artwork. Click a square to inspect it or use it as a house-capture corner.</p>
+      <div id="nearby" class="nearby"></div><div id="objects" class="objects"></div>
+    </section>
+    <section class="card editor"><h2>Selected graphic tile</h2>
+      <p id="selection" class="hint">Click a nearby cell, then one of its four graphic tiles.</p>
+      <label>Voxel class <select id="shape"></select></label><button id="save-pin">Write selected tile</button>
+      <button id="save-cell" class="secondary">Stamp selected cell</button>
+      <p class="hint">“Auto” removes a local pin. A cell stamp writes the selected class to its four graphic tiles.</p>
+      <pre id="tile-detail"></pre>
+    </section>
+    <section class="card cutout-editor"><h2>Object voxelizer — signs, props, tall trees</h2>
+      <p>Capture any rectangular group of map cells. It becomes one exact graphic pattern, so a 2×2 or taller tree stays connected. The tool cuts away edge-connected background like the Gen 1 sign treatment; click pixels to correct the mask. Red pixels are removed; visible pixels become a 3D voxel prism.</p>
+      <div class="capture-actions"><button id="capture-selected-object">Use selected cell (single object)</button><button id="set-object-nw" class="secondary">1. Set object top-left</button><button id="set-object-se" class="secondary">2. Set object bottom-right</button></div>
+      <button id="capture-object" class="secondary">3. Capture selected rectangle</button>
+      <p id="object-capture-status" class="hint">For a sign or any one 16×16 cell, select it and use the first button. For trees and connected scenery, set both rectangle corners instead.</p>
+      <div class="cutout-layout"><canvas id="cutout-preview" width="384" height="384"></canvas>
+        <div><label>Object name <input id="cutout-name" maxlength="80" value="New Bark sign"></label>
+          <label>3D depth <input id="cutout-depth" type="number" min="1" max="32" value="2"></label>
+          <button id="make-cutout" class="secondary">4. Build editable pixel mask</button>
+          <button id="invert-cutout" class="secondary">Invert visible / cut-away pixels</button>
+          <button id="save-cutout">5. Save voxel object</button>
+          <button id="reload-cutout" class="secondary">6. Hot reload it in Gold</button>
+          <p id="cutout-status" class="hint">Capture an object, then build its pixel mask. Depth 2 suits a sign; 12–24 gives a tree or prop a deeper body.</p></div></div>
+    </section>
+    <section class="card builder"><div class="builder-copy"><h2>Fix a house — capture its full tile drawing</h2>
+      <p>A house is not repaired by painting four tiles “roof.” Capture the entire visible house rectangle; PotatoVoxel will match that exact tile layout everywhere it appears and build a roof plus façade from its own art.</p>
+      <div class="capture-actions"><button id="set-nw" class="secondary">1. Set top-left from selected cell</button><button id="set-se" class="secondary">2. Set bottom-right from selected cell</button><button id="capture-building">3. Capture house tiles</button></div>
+      <p id="capture-status" class="hint">Select the top-left and bottom-right cells of one house, including its roof and porch, then capture.</p>
+      <div class="recipe-fields"><label>Recipe name <input id="building-name" maxlength="80" value="New Bark house"></label>
+        <label>Roof art rows (pixels) <input id="roof-rows" type="number" min="1" value="16"></label>
+        <label>Roof back depth <input id="roof-back" type="number" min="1" value="7"></label>
+        <label>Roof front depth <input id="roof-front" type="number" min="1" value="9"></label>
+        <label>Roof repeat start <input id="roof-cycle-start" type="number" min="0" value="5"></label>
+        <label>Roof repeat end <input id="roof-cycle-end" type="number" min="0" value="8"></label>
+        <label>Wall slab depth <input id="slab" type="number" min="1" max="16" value="4"></label>
+        <label>Front eave <input id="front-eave" type="number" min="0" max="16" value="4"></label></div>
+      <button id="reset-building" class="secondary">Use recommended Johto-home settings</button>
+      <p class="hint">For this 8×4 capture, the roof is the first two tile rows: roof rows 16, back 7, front 9, repeat 5–8, slab 4, eave 4. The orange line in the artwork preview must sit directly below the roof.</p>
+      <button id="save-building">4. Save house recipe</button><button id="reload-building" class="secondary">5. Hot reload it in Gold</button>
+      <p id="recipe-status" class="hint">No house capture yet.</p></div>
+      <canvas id="voxel-preview" width="330" height="230"></canvas>
+      <div class="capture-grid-wrap"><pre id="capture-grid">Capture a house to see its exact 8×8 tile layout.</pre></div>
+    </section>
+  </main><footer>Local-only bridge. It changes visual geometry, never collision or game events.</footer>
+  <script type="module" src="/app.js"></script>
+</body></html>
