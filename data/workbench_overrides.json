@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "tilesets": {
+    "TILESET_JOHTO": {
+      "pins": {
+        "78": "signpost",
+        "79": "signpost",
+        "94": "signpost",
+        "95": "signpost"
+      }
+    }
+  }
+}

@@ -2893,6 +2893,26 @@ return {
       -- the above can reach them -- probed `b` class over all 216 of
       -- them, unchanged by this entry.
     },
+
+    -- Gold revisits Kanto using a separate 96-tile atlas, so the Gen 1
+    -- OVERWORLD pins above cannot be reused by tile number.  These are the
+    -- equivalent scenery roles in Gold's TILESET_KANTO: visual-only pins
+    -- for terrain and objects which its collision data otherwise leaves as
+    -- generic walls or flat tiles.
+    TILESET_KANTO = {
+      ground = { 0x10, 0x11, 0x23, 0x2C, 0x30, 0x39 },
+      water = { 0x14, 0x31, 0x33, 0x54 },
+      ledge = { 0x0D, 0x24, 0x27, 0x34, 0x36, 0x37 },
+      flower = { 0x03, 0x04 },
+      -- Route trees and the town hedge are distinct drawings but both are
+      -- one-cell canopies; carve their silhouette instead of joining a row
+      -- into a rectangular wall.
+      cylinder = { 0x2A, 0x2B, 0x3A, 0x3B, 0x40, 0x41, 0x50, 0x51 },
+      -- Rail fencing and town signs need the thin, per-pixel treatments;
+      -- collision only says that their cells are blocked, not what they are.
+      post = { 0x0E, 0x55 },
+      signpost = { 0x46, 0x47, 0x56, 0x57 },
+    },
   },
 
   -- Buildings whose whole sprite is voxelized band by band (lib/Buildings.lua,

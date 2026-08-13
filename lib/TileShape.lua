@@ -209,6 +209,7 @@ local ART = {
 }
 
 local spec = nil          -- the loaded data file, or false when absent
+local workbench = nil     -- optional local browser-workbench tile overrides
 local cache = {}          -- tileset id -> resolved shape list
 local figCache = {}       -- tileset id -> parsed figure masks, or false
 local mntCache = {}       -- tileset id -> parsed mounted masks, or false
@@ -225,6 +226,24 @@ local function load()
     spec = (ok and type(s) == "table") and s or false
   end
   return spec or nil
+end
+
+-- The local Voxel Workbench writes this deliberately small JSON overlay rather
+-- than rewriting the hand-authored profile.  Keeping edits separate makes an
+-- exploratory fix reversible and lets a user update the upstream profile
+-- without losing their field notes.  The overlay vocabulary is restricted by
+-- the browser server; this reader still treats malformed/missing data as no
+-- overrides so rendering can never fail because the tool is not running.
+local function workbenchPins(tilesetId)
+  if workbench == nil then
+    local body = V.mod:read("data/workbench_overrides.json")
+    local Json = V.require("WorkbenchJson")
+    local parsed = body and Json.decode(body)
+    workbench = (type(parsed) == "table" and parsed) or false
+  end
+  local sets = workbench and workbench.tilesets
+  local entry = sets and sets[tilesetId]
+  return entry and entry.pins or nil
 end
 
 function TileShape.heights()
@@ -244,10 +263,21 @@ local function authoredGroups(tilesetId, heights)
   local s = load()
   local entry = s and s.tilesets and s.tilesets[tilesetId]
   local out = {}
-  if not entry then return out end
-  for class, tiles in pairs(entry) do
-    if heights[class] and type(tiles) == "table" then
-      for _, t in ipairs(tiles) do out[t] = class end
+  if entry then
+    for class, tiles in pairs(entry) do
+      if heights[class] and type(tiles) == "table" then
+        for _, t in ipairs(tiles) do out[t] = class end
+      end
+    end
+  end
+  -- A value of "auto" removes an inherited hand pin; every other valid class
+  -- replaces it.  These are applied last because they are the explicit local
+  -- answer made while looking at the live Gold map.
+  for tile, class in pairs(workbenchPins(tilesetId) or {}) do
+    local t = tonumber(tile)
+    if t and t >= 0 and t == math.floor(t) then
+      if class == "auto" then out[t] = nil
+      elseif type(class) == "string" and heights[class] then out[t] = class end
     end
   end
   return out
@@ -704,6 +734,7 @@ end
 -- record needs the next lookup to re-resolve (hot reload, mod toggle).
 function TileShape.invalidate()
   spec = nil
+  workbench = nil
   cache = {}
   figCache = {}
   mntCache = {}

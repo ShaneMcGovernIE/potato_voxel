@@ -107,6 +107,25 @@ local PINNED_DEPTH = { billboard = 10, prop = 5, stool = 10, cutout = 1,
 local MAX_ROWS = 6                 -- volume height cap: 48px
 
 local cache = {}
+local workbenchCutouts = nil
+local applyWorkbenchCutouts
+
+-- Browser-created cutouts are deliberately position-patterned rather than
+-- global tile pins. A Johto sign often shares one of its four tiles with a
+-- window or a wall elsewhere; matching the complete 16×16 cell preserves the
+-- author's intended one-off object without changing any other use of that
+-- artwork.
+local function cutoutRecipes(tilesetId)
+  if workbenchCutouts == nil then
+    local body = V.mod:read("data/workbench_cutouts.json")
+    local Json = V.require("WorkbenchJson")
+    local parsed = body and Json.decode(body)
+    workbenchCutouts = (type(parsed) == "table" and parsed) or false
+  end
+  local sets = workbenchCutouts and workbenchCutouts.tilesets
+  local recipes = sets and sets[tilesetId]
+  return type(recipes) == "table" and recipes or nil
+end
 
 -- ---------------------------------------------------------------- pixels --
 
@@ -163,6 +182,7 @@ function Structures.forMap(map)
   local tileset = map.tileset
   local shapes = TileShape.forMap(map)
   local void = voidTiles(tileset)
+  local data = pixels(tileset)
   local perRow = tileset.tilesPerRow or 16
 
   local def = map.def
@@ -250,7 +270,13 @@ function Structures.forMap(map)
         hideBareRing = hullRingOnly or nil,
         runs = {}, skip = {}, ground = {}, doorFold = {}, objectQuads = {},
         grassQuads = {}, flowerQuads = {}, roundStamps = {}, figures = {} }
-  Buildings.build(S, map, pixels(tileset), perRow)
+  -- Explicit workbench masks claim their cells before the automatic region
+  -- detector. A saved sign is therefore neither a generic wall nor joined to
+  -- a neighbouring authored billboard during the normal passes below.
+  if applyWorkbenchCutouts and data then
+    applyWorkbenchCutouts(S, map, data, perRow, 0, tw - 1, 0, th - 1)
+  end
+  Buildings.build(S, map, data, perRow)
 
   -- Fold doors into their buildings. A door cell is WALKABLE (the player
   -- steps onto it to warp), so it resolves to ground and punches a hole in
@@ -2593,6 +2619,22 @@ function Structures.extractObjects(S, map, region, data, perRow, force)
     end
   end
 
+  -- A workbench mask is the final word on which pixels belong to its object.
+  -- The preview/editor produces a binary image sized to the captured tile
+  -- rectangle after its automatic black-outline cut, and the user can correct
+  -- any pixel before saving. The
+  -- surrounding apron remains air so the ordinary object builder still gives
+  -- the cutout its proper ground plane, UVs, thickness, and shadow casting.
+  if type(force) == "table" and type(force.mask) == "table" then
+    for py = 0, bh - 1 do
+      local row = force.mask[py + 1]
+      for px = 0, bw - 1 do
+        local i = (py + 1) * W + px + 1
+        state[i] = row and row:sub(px + 1, px + 1) == "1" and "solid" or "air"
+      end
+    end
+  end
+
   -- flood background in from the ground at the structure's feet
   local flooded = {}
   local queue = {}
@@ -2774,8 +2816,12 @@ function Structures.buildObject(S, map, region, cluster,
   -- a body, standing at the cluster's south row, base on the ground plane
   local depth = OBJECT_DEPTH
   if force then
-    local cs = S.shapeAt[keyOf(cluster.tiles[1][1], cluster.tiles[1][2])]
-    depth = (cs and PINNED_DEPTH[cs.class]) or PINNED_DEPTH.billboard
+    if type(force) == "table" then
+      depth = force.depth or PINNED_DEPTH.signpost
+    else
+      local cs = S.shapeAt[keyOf(cluster.tiles[1][1], cluster.tiles[1][2])]
+      depth = (cs and PINNED_DEPTH[cs.class]) or PINNED_DEPTH.billboard
+    end
   end
   local wx0 = cluster.minX * 8
 
@@ -3006,6 +3052,53 @@ function Structures.buildObject(S, map, region, cluster,
     end
   end
   return true
+end
+
+-- Match a workbench cell recipe against the graphic grid and hand its exact
+-- editable silhouette to the established per-pixel sign/prop builder. The
+-- Recipes may span an arbitrary captured rectangle (trees, signs, props, or
+-- buildings). Keeping the match rectangular preserves the exact tile layout.
+applyWorkbenchCutouts = function(S, map, data, perRow, x0, x1, y0, y1)
+  local recipes = cutoutRecipes(map.tileset and map.tileset.id)
+  if not recipes then return end
+  for _, recipe in ipairs(recipes) do
+    local tiles, mask = recipe.tiles, recipe.mask
+    if type(tiles) == "table" and #tiles > 0 and type(tiles[1]) == "table"
+       and type(mask) == "table" and #mask == #tiles * 8 then
+      local bh, bw = #tiles, #tiles[1]
+      for ty = y0, y1 - bh + 1 do
+        for tx = x0, x1 - bw + 1 do
+          local matched, free = true, true
+          for r = 1, bh do
+            if type(tiles[r]) ~= "table" or #tiles[r] ~= bw then matched = false break end
+            for c = 1, bw do
+              local k = keyOf(tx + c - 1, ty + r - 1)
+              if S.tileAt[k] ~= tiles[r][c] then matched = false break end
+              if S.skip[k] then free = false end
+            end
+            if not matched then break end
+          end
+          if matched and free then
+            local reg = { tiles = {}, minX = tx, maxX = tx + bw - 1,
+                          minY = ty, maxY = ty + bh - 1 }
+            for r = 0, bh - 1 do for c = 0, bw - 1 do
+              reg.tiles[#reg.tiles + 1] = { tx + c, ty + r }
+            end end
+            local leftover = Structures.extractObjects(S, map, reg, data, perRow,
+                                                       { mask = mask, depth = recipe.depth })
+            if #leftover < #reg.tiles then
+              S.workbenchCutoutCount = (S.workbenchCutoutCount or 0) + 1
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
+function Structures.workbenchCutoutCount(mapId)
+  local S = mapId and cache[mapId]
+  return S and (S.workbenchCutoutCount or 0) or 0
 end
 
 -- ---- authored masks with a body ----
@@ -3883,6 +3976,7 @@ function Structures.invalidate(mapId)
     cache = {}
     atlasData = {}
     roundCache = {}
+    workbenchCutouts = nil
     Buildings.invalidate()
   end
 end

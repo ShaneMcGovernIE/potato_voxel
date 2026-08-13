@@ -32,6 +32,26 @@
 
 local mod = ...
 
+-- Gold has its own live World and composition path.  The Gen 1 implementation
+-- below patches the Red/Blue/Yellow singleton and must never be evaluated on
+-- a Gen 2 boot: its assumptions about neighbours, menus, and battle state are
+-- not compatible with Gold.  Keep the two entry paths separate and let the
+-- Gold bridge adapt only the renderer-facing world data it needs.
+do
+  local ok, GameVersion = pcall(require, "src.core.GameVersion")
+  local generation = ok and GameVersion and GameVersion.generation
+      and GameVersion.generation() or nil
+  if tonumber(generation) == 2 then
+    local source = mod:read("gen2/main.lua")
+    if not source then
+      error("potato_voxel: missing Gold bridge (gen2/main.lua)", 0)
+    end
+    local chunk, err = load(source, "@" .. mod.path .. "/gen2/main.lua")
+    if not chunk then error("potato_voxel: Gold bridge did not compile: " .. tostring(err), 0) end
+    return chunk(mod)
+  end
+end
+
 -- ------- the mod namespace
 --
 -- lib/ modules require each other through V rather than package.path: a
