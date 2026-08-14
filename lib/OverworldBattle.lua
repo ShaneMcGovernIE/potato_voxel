@@ -597,6 +597,49 @@ function OverworldBattle.arena()
   return session and session.arena or nil
 end
 
+-- Optional StadiumBattleFX host path. It reuses PotatoVoxel's arena while
+-- models and all other presentation features remain independently selectable.
+function OverworldBattle.providerAvailable(expectedBattle)
+  return session ~= nil and session.arena ~= nil and not session.arena.discs
+    and (expectedBattle == nil or session.battle == nil
+      or session.battle == expectedBattle)
+end
+
+function OverworldBattle.providerBegin(expectedBattle)
+  if not OverworldBattle.providerAvailable(expectedBattle) then return false end
+  session.apiHosted = true
+  session.shot = nil
+  session.snapped = false
+  return true
+end
+
+function OverworldBattle.providerRender(expectedBattle, drawActors)
+  if not (session and session.apiHosted and type(drawActors) == "function") then
+    return nil
+  end
+  if expectedBattle ~= nil and session.battle ~= nil
+      and session.battle ~= expectedBattle then return nil end
+  session.battle = session.battle or expectedBattle
+  session.token = (session.token or 0) + 1
+  local ok, shot = pcall(BattleScene.render, session.state, session.arena,
+    nil, session.token, drawActors)
+  if not (ok and shot and shot.canvas) then return nil end
+  local y1 = shot.ly + shot.player[2] * shot.scale
+  local y2 = shot.ly + shot.enemy[2] * shot.scale
+  local focusY, band, range = BattleDOF.bandFor(y1, y2, shot.ph)
+  local okDof, blurred = pcall(BattleDOF.apply, shot.canvas,
+    focusY, band, range)
+  if okDof and blurred then shot.canvas = blurred end
+  return shot.canvas
+end
+
+function OverworldBattle.providerFinish()
+  if not session then return end
+  session.apiHosted = false
+  session.shot = nil
+  session.snapped = false
+end
+
 function OverworldBattle.finish()
   if not session then return end
   restoreCast()
@@ -653,6 +696,12 @@ function OverworldBattle.update(dt)
   -- the world pass is hidden behind the battle, so mesh builds get the wide
   -- slice: nothing visible can hitch on them
   ChunkMesher.pump(true)
+
+  if session.apiHosted then
+    session.shot = nil
+    session.snapped = false
+    return
+  end
 
   -- The STADIUM models, ahead of the pics, because what they decide is
   -- WHICH pics are needed: a side a model is standing on gets no billboard

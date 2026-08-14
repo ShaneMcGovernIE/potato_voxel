@@ -80,6 +80,7 @@ local ChunkMesher = V.require("ChunkMesher")
 local VoxelGrid = V.require("VoxelGrid")
 local WorldCurve = V.require("WorldCurve")
 local OverworldBattle = V.require("OverworldBattle")
+local StadiumBattleFxProvider = V.require("StadiumBattleFxProvider")
 local BattleExit = V.require("BattleExit")
 local DayNight = V.require("DayNight")
 local DayTint = V.require("DayTint")
@@ -107,6 +108,10 @@ local MeshCache = V.require("MeshCache")
 local HordeSfx = V.require("HordeSfx")
 local VoxelLoading = V.require("VoxelLoading")
 local publishedLoading
+
+mod.events:on("mods.loaded", function()
+  StadiumBattleFxProvider.register()
+end)
 
 local function publishLoading()
   local loading = Voxel.loading == true
