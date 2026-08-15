@@ -328,7 +328,7 @@ end
 
 local function castShadows(state, arena, terrain, nbMesh, cx, cy, vw, vh,
                            atlasFor, cards, token, host, neighbors,
-                           water, nbWater, groundY, actorShadows)
+                           water, nbWater, groundY, actorShadows, externalActors)
   if not ShadowMap.available() then return end
   local worldSig = shadowSignature(state, arena, terrain, nbMesh)
   local spriteSig = shadowSignature(state, arena, terrain, nbMesh, token)
@@ -344,7 +344,9 @@ local function castShadows(state, arena, terrain, nbMesh, cx, cy, vw, vh,
       pcall(function()
         V.require("StadiumStage").cast(ShadowMap, arena, groundY or 0)
       end)
-      pcall(function() V.require("Stadium").cast(ShadowMap) end)
+      if not externalActors then
+        pcall(function() V.require("Stadium").cast(ShadowMap) end)
+      end
     else
       -- the one shared world-layer run (lib/ShadowCast.lua)
       ShadowCast.terrainAndWater(ShadowMap, ChunkMesher, {
@@ -354,7 +356,9 @@ local function castShadows(state, arena, terrain, nbMesh, cx, cy, vw, vh,
         nbMesh = nbMesh, nbWater = nbWater,
       })
       -- Stadium models are real geometry, not cut-out sprite cards.
-      pcall(function() V.require("Stadium").cast(ShadowMap) end)
+      if not externalActors then
+        pcall(function() V.require("Stadium").cast(ShadowMap) end)
+      end
     end
     ShadowMap.finish(worldSig, false)
   end
@@ -460,7 +464,7 @@ local function tickTiles()
   pcall(require("src.render.TileRenderer").tick)
 end
 
-function BattleScene.render(state, arena, textures, token)
+function BattleScene.render(state, arena, textures, token, drawActors)
   if not (state and state.map and arena) then return nil end
   if not Voxel3D.available() then return nil end
   tickTiles()
@@ -544,9 +548,13 @@ function BattleScene.render(state, arena, textures, token)
   -- and the real one is rebuilt inside the scene below.
   Voxel3D.camera = cam
   Voxel3D.viewProjection(cx, cy, vw, vh)
-  local cards = monCards(arena, groundY, textures)
+  -- A Battle Presentation host supplies its independently selected actor
+  -- renderer. In that mode PotatoVoxel's cards and bundled Stadium models
+  -- must not also enter the scene.
+  local cards = drawActors and {} or monCards(arena, groundY, textures)
   Voxel3D.camera = nil
-  local actorShadows = BrickProfile.battleActorShadowMap(VoxelState.level)
+  local actorShadows = not drawActors
+    and BrickProfile.battleActorShadowMap(VoxelState.level)
   ShadowMap.setSpriteLayerActive(actorShadows)
   -- The SHADOWS row is the last word over the arena too: OFF skips the sun
   -- pass and the contact blobs alike (ShadowMap.off() drops both layers, so
@@ -555,7 +563,7 @@ function BattleScene.render(state, arena, textures, token)
   if battleShadows then
     castShadows(state, arena, terrain, nbMesh, cx, cy, vw, vh, atlasFor,
                 cards, token, host, neighbors, water, nbWater, groundY,
-                actorShadows)
+                actorShadows, drawActors ~= nil)
   else
     ShadowMap.off()
   end
@@ -666,7 +674,7 @@ function BattleScene.render(state, arena, textures, token)
     -- and no glass either: the cards wear the battle screen, not the
     -- tileset atlas, so the mask's coordinates mean nothing on them
     Voxel3D.glass(false)
-    for _, card in ipairs(monCards(arena, groundY, textures)) do
+    for _, card in ipairs(cards) do
       -- the sun stored this card snugged (castShadows), so its own shadow
       -- lookup must read the same snugged transform -- see ShadowMap.snug
       Voxel3D.draw(BattleBillboard.mesh(), card.tex, card.model,
@@ -679,10 +687,12 @@ function BattleScene.render(state, arena, textures, token)
     -- the depth test against the tile. They manage the wireframe and the
     -- glass mask around their own draws (StadiumRig), which is why this
     -- sits outside the pair above rather than inside it.
-    local okStadium, stadiumErr = pcall(function()
-      V.require("Stadium").draw(BattleBillboard.PULL)
-    end)
-    if not okStadium then V.require("Stadium").report(stadiumErr) end
+    if not drawActors then
+      local okStadium, stadiumErr = pcall(function()
+        V.require("Stadium").draw(BattleBillboard.PULL)
+      end)
+      if not okStadium then V.require("Stadium").report(stadiumErr) end
+    end
     if flashing then Voxel3D.flatten(nil) end
     -- grass and flowers ride the same camera-ward pull the free-roam pass
     -- gives them, measured against THIS camera's pitch rather than the
@@ -703,6 +713,14 @@ function BattleScene.render(state, arena, textures, token)
                      Mat4.translate(nb.ox, 0, nb.oy), fpull,
                      ShadowMap.snug(Mat4.translate(nb.ox, 0, nb.oy)))
       end
+    end
+    if drawActors then
+      drawActors({
+        vp = Voxel3D.vp,
+        groundY = groundY,
+        width = pw,
+        height = ph,
+      })
     end
     local canvas = AntiAlias.resolve(Voxel3D.endScene(), sceneW, sceneH, "battle")
     if renderScale < 1 then
