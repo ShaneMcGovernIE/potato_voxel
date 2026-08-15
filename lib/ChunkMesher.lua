@@ -115,7 +115,8 @@ end
 -- pre-sandbox table build used.
 -- Slice a table upload across frames: the mesh is created with the full
 -- vertex count, then vertices and the index map land in budgeted pieces
--- (setVertices/setVertexMap accept a start index). The old ffi sink
+-- (setVertices accepts a start index; setVertexMap does NOT, so the
+-- index map is applied in one call). The old ffi sink
 -- sliced exactly this way; a one-shot newMesh(rows) on a 500k-vertex
 -- map is a 100-500ms hitch in pure Lua, which is what the sliced path
 -- exists to avoid. Budget.check() is a no-op outside the build
@@ -140,16 +141,20 @@ local function uploadTableMesh(rows, indices)
     Budget.check()
   end
   if indices and #indices > 0 then
-    local m = #indices
-    local k = 0
-    while k < m do
-      local c = math.min(UPLOAD_CHUNK * 2, m - k)
-      local slice = {}
-      for j = 1, c do slice[j] = indices[k + j] end
-      pcall(mesh.setVertexMap, mesh, slice, k + 1)
-      k = k + c
-      Budget.check()
+    -- Mesh:setVertexMap has no start-index overload -- LOVE 11.x offers
+    -- setVertexMap(map), setVertexMap(vi1, vi2, ...) and
+    -- setVertexMap(data, datatype) only. Passing (slice, k + 1) matched
+    -- the Data form with a table and a number, so every call threw and
+    -- the pcall swallowed it: the map was never applied and the mesh
+    -- drew unindexed -- "giant cross-quad triangles". Apply it once.
+    local mapped = pcall(mesh.setVertexMap, mesh, indices)
+    if not mapped then
+      -- An unindexed quad stream becomes giant cross-quad triangles, so
+      -- fail loudly rather than shipping scrambled geometry.
+      if mesh.release then pcall(mesh.release, mesh) end
+      return nil
     end
+    Budget.check()
   end
   return mesh
 end
