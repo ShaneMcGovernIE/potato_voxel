@@ -35,6 +35,10 @@ stale render time.
 
 - 1.6.2 — F8 export can send the debug log to the mod's `log_url` (opt-in
   via manifest; no-ops without the engine feature).
+- Pressing F8 sends that diagnostic log over the internet to the PotatoVoxel
+  maintainer through the project's log service, so I can review it directly
+  and help troubleshoot your game. Nothing is uploaded automatically: if you
+  do not press F8, the log stays local to the game.
 - The debugger now records from boot in the background; F9 only shows or
   hides the panel, so support logs include failures that happen before the
   first manual toggle.
