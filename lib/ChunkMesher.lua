@@ -143,14 +143,11 @@ local function uploadTableMesh(rows, indices)
   if indices and #indices > 0 then
     -- Mesh:setVertexMap has no start-index overload -- LOVE 11.x offers
     -- setVertexMap(map), setVertexMap(vi1, vi2, ...) and
-    -- setVertexMap(data, datatype) only. Passing (slice, k + 1) matched
-    -- the Data form with a table and a number, so every call threw and
-    -- the pcall swallowed it: the map was never applied and the mesh
-    -- drew unindexed -- "giant cross-quad triangles". Apply it once.
+    -- setVertexMap(data, datatype) only, so a sliced call threw every
+    -- time and the pcall swallowed it. Apply it once.
     local mapped = pcall(mesh.setVertexMap, mesh, indices)
     if not mapped then
-      -- An unindexed quad stream becomes giant cross-quad triangles, so
-      -- fail loudly rather than shipping scrambled geometry.
+      -- An unindexed quad stream becomes giant cross-quad triangles.
       if mesh.release then pcall(mesh.release, mesh) end
       return nil
     end
