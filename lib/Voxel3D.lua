@@ -440,7 +440,14 @@ function Voxel3D.newMesh(verts, map)
   local ok, mesh = pcall(love.graphics.newMesh, Voxel3D.FORMAT, verts,
                          "triangles", "static")
   if not ok then return nil end
-  if map and #map > 0 then pcall(mesh.setVertexMap, mesh, map) end
+  if map and #map > 0 then
+    local mapped = pcall(mesh.setVertexMap, mesh, map)
+    if not mapped then
+      -- An unindexed quad stream becomes giant cross-quad triangles.
+      if mesh.release then pcall(mesh.release, mesh) end
+      return nil
+    end
+  end
   return mesh
 end
 
