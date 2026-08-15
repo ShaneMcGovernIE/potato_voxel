@@ -1,6 +1,6 @@
 -- DebugOverlay: a realtime activity/error/perf panel for this sandbox
--- build. F9 toggles it on and off; F10 switches verbosity (ALL vs
--- important-only).
+-- build. It records from boot; F9 only toggles panel visibility. F10
+-- switches verbosity (ALL vs important-only).
 --
 -- Everything event-shaped funnels through trace() (noise) or note()
 -- (important): mesh job completions and failures (with durations), cache
@@ -17,6 +17,10 @@
 --      so a healthy session is quiet and a broken one is legible.
 --   3. Session counters + a summary (jobs, hits, slow loads, errors,
 --      worst frame) written on toggle-off and into the stored log.
+--   4. A data-only health snapshot names the pipeline decision, capability
+--      reason, last world path, renderer, storage and session counters.
+--   5. The first boot lines are preserved separately from the recent ring,
+--      so a long cache build cannot evict the original failure.
 --
 -- The panel draws through render.hud over every screen; lines go to the
 -- console and, when scoped storage is reachable, to the bytes key
@@ -31,14 +35,20 @@ local Overlay = {}
 
 local MAX_LINES = 20
 local lines = {}         -- the on-screen ring buffer
-local log = {}           -- every deduped line, bounded, for the stored key
+local log = {}           -- the recent deduped line ring
+local bootLog = {}       -- first boot lines, kept even after the ring rolls
 local LOG_KEEP = 600
-local enabled = false    -- OFF by default: F9 turns the debugger on
+local BOOT_KEEP = 128
+local running = true     -- capture starts at boot, even while hidden
+local visible = false    -- F9 only changes panel visibility
 local verbose = true     -- F10: true = all lines, false = important only
 local game = nil
+local probe = nil
 local lastPersist = 0
+local lastErrorPersist = 0
 local lastMsg = nil
 local lastCount = 0
+local sessionId = os.date("%Y%m%d-%H%M%S")
 
 -- frame/render aggregation, emitted every STATS_EVERY seconds
 local STATS_EVERY = 5
@@ -52,6 +62,27 @@ local statsLast = 0
 local counters = { jobs = 0, jobFails = 0, cacheHits = 0, slowLoads = 0,
                    errors = 0, storageFails = 0 }
 local worstFrame = 0
+
+-- This is deliberately data-only: it can be written through mod.storage's
+-- table surface and exported without exposing a Canvas, shader or game object.
+local health = {
+  frame = 0,
+  session = sessionId,
+  startedAt = os.date("%Y-%m-%dT%H:%M:%S"),
+  pipeline = {
+    id = "voxel", level = 0, updateCalls = 0, drawWorldCalls = 0,
+    rendered = 0, fallbacks = 0, loading = 0, noState = 0,
+    unavailable = 0, availability = nil, reason = nil,
+    detail = {}, lastPath = "never", lastPathFrame = 0,
+    lastAvailabilityFrame = 0,
+  },
+  capabilities = {},
+  renderer = {},
+  storage = { writes = 0, failures = 0, available = nil },
+  probe = { ok = nil },
+  lastEvent = nil,
+  lastError = nil,
+}
 
 local function clock()
   local timer = love and love.timer
@@ -71,57 +102,197 @@ local function stamp(msg)
          math.floor(((clock() % 1) * 1000))) .. " " .. msg
 end
 
+local function dataCopy(value, depth)
+  if depth and depth > 4 then return tostring(value) end
+  if type(value) ~= "table" then
+    if type(value) == "number" or type(value) == "string"
+       or type(value) == "boolean" then
+      return value
+    end
+    return tostring(value)
+  end
+  local out = {}
+  for key, item in pairs(value) do
+    local keyType = type(key)
+    if keyType == "string" or keyType == "number" then
+      out[key] = dataCopy(item, (depth or 0) + 1)
+    end
+  end
+  return out
+end
+
+local function snapshot()
+  return {
+    schema = 2,
+    session = sessionId,
+    startedAt = health.startedAt,
+    frame = health.frame,
+    pipeline = dataCopy(health.pipeline),
+    capabilities = dataCopy(health.capabilities),
+    renderer = dataCopy(health.renderer),
+    storage = dataCopy(health.storage),
+    probe = dataCopy(health.probe),
+    lastEvent = dataCopy(health.lastEvent),
+    lastError = dataCopy(health.lastError),
+    lastPhase = health.lastPhase,
+    counters = dataCopy(counters),
+    worstFrame = worstFrame,
+  }
+end
+
+local function logText()
+  local out = {}
+  if #bootLog > 0 then
+    out[#out + 1] = "-- boot evidence (first lines) --"
+    for _, line in ipairs(bootLog) do out[#out + 1] = line end
+  end
+  if #log > 0 then
+    out[#out + 1] = "-- recent evidence (ring) --"
+    for _, line in ipairs(log) do out[#out + 1] = line end
+  end
+  return table.concat(out, "\n")
+end
+
+local function managerLog(kind, msg)
+  local mod = V.mod
+  local logger = mod and mod.log
+  local fn = logger and logger[kind]
+  if fn then pcall(fn, logger, "%s", msg) end
+end
+
+local function storageFailure(op, code, message)
+  local detail = tostring(code or message or "unknown")
+  if message and code then detail = detail .. ": " .. tostring(message) end
+  health.storage.available = false
+  health.storage.state = tostring(code or "unavailable")
+  health.storage.failures = (health.storage.failures or 0) + 1
+  health.storage.lastError = op .. " " .. detail
+  -- These are normal before a save is selected or while the title facade is
+  -- not bound to a playthrough. Keep the state in the snapshot, but do not
+  -- report expected lifecycle unavailability as a storage fault.
+  if code == "not_in_playthrough" or code == "not_at_title" then
+    health.storage.failures = health.storage.failures - 1
+    health.storage.expectedUnavailable =
+      (health.storage.expectedUnavailable or 0) + 1
+    return
+  end
+  counters.storageFails = counters.storageFails + 1
+  -- Do not call Overlay.error here: persistence is called by emit(), and
+  -- recursively logging a storage failure would create a write loop.
+  pcall(print, "[pv-debug] storage " .. health.storage.lastError)
+end
+
+local function storageWrite(store, method, key, value)
+  local fn = store and store[method]
+  if not fn then return false, "unsupported", method .. " unavailable" end
+  local ok, result, code, message = pcall(fn, store, game, key, value)
+  if not ok then return false, "exception", tostring(result) end
+  if result == false or result == nil then
+    return false, code or "write_failed", message
+  end
+  return true
+end
+
 local function persist(force)
   local c = clock()
   if not force and (c - lastPersist) < 1 then return end
   lastPersist = c
   local mod = V.mod
   if not (mod and mod.storage) then return end
-  pcall(function()
-    local store = mod.storage
-    local okS, selected = pcall(mod.storage.selected, mod.storage, game)
-    if okS and selected then store = selected end
-    if store then
-      if store.writeBytes then
-        pcall(store.writeBytes, store, game, "debug/log",
-              table.concat(log, "\n"))
-      elseif store.write then
-        pcall(store.write, store, game, "debug/log",
-              table.concat(log, "\n"))
-      end
+  local store = mod.storage
+  if mod.storage.selected then
+    local okS, selected, code, message =
+      pcall(mod.storage.selected, mod.storage, game)
+    if okS and selected then
+      store = selected
+    elseif not okS or selected == false then
+      storageFailure("selected", code or "exception", message or selected)
     end
-  end)
+  end
+  if not store then
+    storageFailure("resolve", "storage_unavailable")
+    return
+  end
+  local context = store.context
+  if context then
+    local okC, value = pcall(context, store, game)
+    if okC and type(value) == "table" then
+      health.storage.context = dataCopy(value)
+      health.storage.available = true
+    end
+  end
+  local wrote, code, message
+  if store.writeBytes then
+    wrote, code, message = storageWrite(store, "writeBytes", "debug/log", logText())
+  else
+    wrote, code, message = storageWrite(store, "write", "debug/log", logText())
+  end
+  if not wrote then
+    storageFailure("debug/log", code, message)
+  else
+    health.storage.writes = (health.storage.writes or 0) + 1
+    health.storage.available = true
+  end
+  if store.write then
+    local statusOk, statusCode, statusMessage =
+      storageWrite(store, "write", "debug/status", snapshot())
+    if not statusOk then storageFailure("debug/status", statusCode, statusMessage) end
+  end
 end
 
 local function append(line)
   lines[#lines + 1] = line
   if #lines > MAX_LINES then table.remove(lines, 1) end
+  if #bootLog < BOOT_KEEP then bootLog[#bootLog + 1] = line end
   log[#log + 1] = line
   if #log > LOG_KEEP then
     for i = 1, #log - (LOG_KEEP / 2) do table.remove(log, 1) end
   end
 end
 
+-- Error lines are the support-report artifact: the throttled persist would
+-- otherwise lose up to a second of them on an abrupt exit. Force the write
+-- on the first error, then only again after a quiet gap -- a flood of
+-- errors must not become a per-line fs write loop.
+local function persistFor(kind)
+  local force = kind == "error"
+  if force then
+    local c = clock()
+    if (c - lastErrorPersist) < 0.25 then force = false end
+    if force then lastErrorPersist = c end
+  end
+  persist(force)
+end
+
 local function emit(msg, kind)
+  -- Count every error occurrence, including deduped repeats: the summary's
+  -- "N errors" must match how many errors actually happened.
+  if kind == "error" then
+    counters.errors = counters.errors + 1
+    health.lastError = {
+      message = msg,
+      frame = health.frame,
+      at = os.date("%Y-%m-%dT%H:%M:%S"),
+    }
+    managerLog("error", msg)
+  end
   if msg == lastMsg then
     lastCount = lastCount + 1
     local line = stamp(msg .. (" (x%d)"):format(lastCount))
     lines[#lines] = line
     log[#log] = line
-    persist(false)
+    persistFor(kind)
     return
   end
   lastMsg, lastCount = msg, 1
   local line = stamp(msg)
   append(line)
   pcall(print, "[pv-debug] " .. line)
-  persist(false)
-  if kind == "error" then counters.errors = counters.errors + 1 end
+  persistFor(kind)
 end
 
 -- Important: always shown and stored.
 function Overlay.note(fmt, ...)
-  if not enabled then return end
   local ok, msg = pcall(string.format, fmt, ...)
   if not ok then msg = tostring(fmt) .. " " .. tostring(msg) end
   emit(msg, "note")
@@ -130,40 +301,122 @@ end
 -- Noise: shown in verbose mode, collapsed in important-only mode (still
 -- stored -- the stored log is the support-report artifact).
 function Overlay.trace(fmt, ...)
-  if not enabled then return end
   local ok, msg = pcall(string.format, fmt, ...)
   if not ok then msg = tostring(fmt) .. " " .. tostring(msg) end
   emit(msg, "trace")
 end
 
--- An error that should never be silenced: always on, always counted.
+-- An error that should never be silenced: recorded and counted whether or
+-- not the panel is up -- a support log must not depend on F9 being on when
+-- the failure happened.
 function Overlay.error(fmt, ...)
-  if not enabled then return end
   local ok, msg = pcall(string.format, fmt, ...)
   if not ok then msg = tostring(fmt) .. " " .. tostring(msg) end
   emit(msg, "error")
 end
 
+-- Public, data-only support snapshot. Callers can serialize this through the
+-- table storage API without ever touching a live game or GPU object.
+function Overlay.status()
+  return snapshot()
+end
+
+function Overlay.bindGame(value)
+  if value ~= nil then game = value end
+  health.storage.gameBound = game ~= nil
+end
+
+function Overlay.setProbe(fn)
+  probe = type(fn) == "function" and fn or nil
+end
+
+function Overlay.runProbe()
+  if not probe then
+    health.probe = { ok = true, skipped = true }
+    return dataCopy(health.probe)
+  end
+  local results = { xpcall(probe, function(e) return e end) }
+  if not results[1] then
+    health.probe = { ok = false, error = tostring(results[2]) }
+    Overlay.error("capability probe failed: %s", tostring(results[2]))
+    return dataCopy(health.probe)
+  end
+  health.probe = { ok = true, result = dataCopy(results[2]) }
+  Overlay.note("capability probe complete")
+  return dataCopy(health.probe)
+end
+
+-- Record the engine-visible pipeline heartbeat. The engine's private broken
+-- flag is not exposed by the mod API, so these counters deliberately describe
+-- the observable boundary: update ran, availability answered, and drawWorld
+-- entered or returned a particular path.
+function Overlay.pipelineUpdate(level)
+  local p = health.pipeline
+  p.level = tonumber(level) or 0
+  p.updateCalls = p.updateCalls + 1
+end
+
+function Overlay.pipelineAvailable(ok, reason, detail)
+  local p = health.pipeline
+  local available = ok == true
+  local normalized = reason or (available and "ready" or "unknown")
+  local changed = p.availability ~= available or p.reason ~= normalized
+  p.availability = available
+  p.reason = normalized
+  p.detail = dataCopy(detail or {})
+  p.lastAvailabilityFrame = health.frame
+  health.capabilities.voxel = dataCopy(detail or {})
+  if changed then
+    Overlay.note("pipeline voxel available=%s reason=%s",
+                 tostring(available), tostring(normalized))
+  end
+end
+
+function Overlay.pipelinePath(path, detail)
+  local p = health.pipeline
+  path = tostring(path or "unknown")
+  p.lastPath = path
+  p.lastPathFrame = health.frame
+  if path == "entered" then p.drawWorldCalls = p.drawWorldCalls + 1 end
+  if path == "rendered" then p.rendered = p.rendered + 1 end
+  if path == "fallback" then p.fallbacks = p.fallbacks + 1 end
+  if path == "loading" then p.loading = p.loading + 1 end
+  if path == "no_state" then p.noState = p.noState + 1 end
+  if path == "unavailable" then p.unavailable = p.unavailable + 1 end
+  if detail then p.lastPathDetail = dataCopy(detail) end
+end
+
+function Overlay.event(name, detail)
+  health.lastEvent = { name = tostring(name), detail = dataCopy(detail or {}),
+                       frame = health.frame }
+end
+
+-- Session counters feed the summary and run from boot with the background
+-- recorder. Panel visibility must not change the support report.
 function Overlay.count(name)
   counters[name] = (counters[name] or 0) + 1
 end
 
--- Toggle on F9. Boundary lines always land in storage and the console.
+-- `enabled` is retained as the public visibility query used by the input
+-- bridge; it no longer controls collection.
+function Overlay.enabled()
+  return visible
+end
+
+function Overlay.running()
+  return running
+end
+
+-- Toggle panel visibility on F9 (and the SELECT hold chord). Boundary lines
+-- always land in the background log and the console; hiding does not clear
+-- the ring buffer, so reopening shows what happened while it was hidden.
 function Overlay.toggle()
-  enabled = not enabled
-  local line = "debugger " .. (enabled and "ON" or "OFF")
-  if enabled then
-    lastMsg, lastCount = nil, 0
-    append(stamp(line))
-    pcall(print, "[pv-debug] " .. stamp(line))
-    persist(true)
-  else
-    pcall(print, "[pv-debug] " .. stamp(line))
-    log[#log + 1] = stamp(line)
-    Overlay.summary()
-    persist(true)
-    lines = {}
-  end
+  visible = not visible
+  if not visible then Overlay.summary() end
+  local line = "debugger " .. (visible and "VISIBLE" or "HIDDEN")
+  append(stamp(line))
+  pcall(print, "[pv-debug] " .. stamp(line))
+  persist(true)
 end
 
 -- F10: verbose <-> important-only.
@@ -172,18 +425,61 @@ function Overlay.toggleVerbose()
   Overlay.note("verbosity %s", verbose and "ALL" or "IMPORTANT")
 end
 
+-- F8's loghook companion: ship the stored evidence to the manifest-declared
+-- log_url, one-way.  Engine feature #1363 (mod.postLog); silently no-ops on
+-- engines without it or without a log_url.  Fire-and-forget: the job is
+-- polled once on the next frame and released when it settles, so a hung
+-- endpoint never accumulates in the worker pool.
+local sendHandle = nil
+
+function Overlay.sendLogs()
+  local mod = V.mod
+  if not (mod and type(mod.postLog) == "function") then return false end
+  if not (mod.manifest and mod.manifest.log_url) then return false end
+  -- Keep the remote payload in the same format as the persisted debug/log
+  -- artifact, then append the explicit-send session summary.
+  local body = logText()
+  if body ~= "" then body = body .. "\n" end
+  body = body .. stamp("session: " .. tostring(counters.jobs)
+    .. " jobs, " .. tostring(counters.errors) .. " errors")
+  local ok, handle = pcall(mod.postLog, mod, body, { format = "text" })
+  if not ok or not handle then
+    Overlay.note("log send failed: " .. tostring(handle))
+    return false
+  end
+  sendHandle = handle
+  Overlay.note("log sent to loghook")
+  return true
+end
+
 -- F8: export. Force the storage flush so the on-disk debug/log is
 -- current, dump every line to the console in one block (terminal users
 -- can copy it straight out), and stamp the boundary. Works even while
 -- the debugger is toggled off -- exporting is the retrieval action.
 function Overlay.export()
+  Overlay.runProbe()
   persist(true)
-  pcall(print, "[pv-log] ---- export (" .. #log .. " lines) ----")
+  Overlay.sendLogs()
+  pcall(print, "[pv-log] ---- boot evidence (" .. #bootLog .. " lines) ----")
+  for _, line in ipairs(bootLog) do
+    pcall(print, "[pv-log] " .. line)
+  end
+  pcall(print, "[pv-log] ---- recent evidence (" .. #log .. " lines) ----")
   for _, line in ipairs(log) do
     pcall(print, "[pv-log] " .. line)
   end
+  local current = snapshot()
+  pcall(print, "[pv-status] session=" .. tostring(current.session)
+             .. " frame=" .. tostring(current.frame)
+             .. " pipeline=" .. tostring(current.pipeline.availability)
+             .. " reason=" .. tostring(current.pipeline.reason)
+             .. " updates=" .. tostring(current.pipeline.updateCalls)
+             .. " draws=" .. tostring(current.pipeline.drawWorldCalls)
+             .. " rendered=" .. tostring(current.pipeline.rendered)
+             .. " fallbacks=" .. tostring(current.pipeline.fallbacks))
   pcall(print, "[pv-log] ---- end ----")
-  local line = stamp("log exported: " .. #log .. " lines -> storage debug/log")
+  local line = stamp("log exported: " .. (#bootLog + #log)
+                     .. " lines + status -> storage debug/log")
   append(line)
   pcall(print, "[pv-debug] " .. line)
   persist(true)
@@ -199,13 +495,25 @@ function Overlay.summary()
     worstFrame)
   if not ok then msg = "session summary unavailable" end
   local line = stamp(msg)
-  log[#log + 1] = line
+  append(line)
   pcall(print, "[pv-debug] " .. line)
+  persist(true)
 end
 
 -- Feed the voxel tick every frame.
 function Overlay.frame(dt, renderMs)
-  if not enabled then return end
+  if sendHandle and V.mod and V.mod.fetch
+      and type(V.mod.fetch.poll) == "function" then
+    local ok, st = pcall(V.mod.fetch.poll, V.mod.fetch, sendHandle)
+    if ok and st and st.status ~= "pending" then
+      pcall(V.mod.fetch.release, V.mod.fetch, sendHandle)
+      sendHandle = nil
+    elseif not ok then
+      pcall(V.mod.fetch.release, V.mod.fetch, sendHandle)
+      sendHandle = nil
+    end
+  end
+  health.frame = health.frame + 1
   local frameMs = (dt or 0) * 1000
   if frameMs > worstFrame then worstFrame = frameMs end
   statsFrames = statsFrames + 1
@@ -227,14 +535,19 @@ function Overlay.frame(dt, renderMs)
                   (st.texturememory or 0) / 1048576)
       end
     end
-    Overlay.trace("frame avg %.1fms max %.1fms render avg %.1fms%s%s",
+    local p = health.pipeline
+    Overlay.trace("frame avg %.1fms max %.1fms render avg %.1fms%s%s "
+                  .. "pipeline avail=%s reason=%s updates=%d draws=%d path=%s",
                   avg, statsMax, renderAvg, gpu,
-                  statsMax > 40 and " [HITCH]" or "")
+                  statsMax > 40 and " [HITCH]" or "",
+                  tostring(p.availability), tostring(p.reason),
+                  p.updateCalls, p.drawWorldCalls, tostring(p.lastPath))
     statsFrames, statsTime, statsMax, statsRender = 0, 0, 0, 0
   end
 end
 
 function Overlay.try(label, fn, ...)
+  health.lastPhase = tostring(label)
   local results = { xpcall(fn, function(e) return e end, ...) }
   if not results[1] then
     Overlay.error("ERROR %s: %s", label, tostring(results[2]))
@@ -286,7 +599,6 @@ local function lintSource(name, src)
 end
 
 function Overlay.lint(mod, moduleNames)
-  if not enabled then return end
   Overlay.trace("self-lint: scanning %d modules", 1 + #moduleNames)
   local okM, mainSrc = pcall(mod.read, mod, "main.lua")
   if okM then lintSource("main.lua", mainSrc) end
@@ -297,7 +609,7 @@ function Overlay.lint(mod, moduleNames)
 end
 
 function Overlay.draw()
-  if not enabled or #lines == 0 then return end
+  if not visible or #lines == 0 then return end
   local g = love.graphics
   if not g then return end
   local prevFont, okF = pcall(g.getFont)
@@ -308,7 +620,8 @@ function Overlay.draw()
   for _, line in ipairs(lines) do
     if verbose or line:find(" ERROR ") or line:find("FWD%-LOCAL")
        or line:find("mesh job failed") or line:find("SLOW load")
-       or line:find("storage ") or line:find("prebuild job failed") then
+       or line:find("storage ") or line:find("prebuild job failed")
+       or line:find("pipeline voxel") or line:find("capability probe") then
       shown[#shown + 1] = line
     end
   end
@@ -323,17 +636,54 @@ function Overlay.draw()
   g.setColor(prevColor[1], prevColor[2], prevColor[3], prevColor[4])
 end
 
+function Overlay.captureEnvironment()
+  local g = love and love.graphics
+  local out = {}
+  if love and love.getVersion then
+    local ok, major, minor, revision, codename = pcall(love.getVersion)
+    if ok then
+      out.love = { major = major, minor = minor, revision = revision,
+                   codename = codename }
+    end
+  end
+  if g then
+    if g.getRendererInfo then
+      local ok, info = pcall(g.getRendererInfo)
+      if ok and type(info) == "table" then out.renderer = dataCopy(info) end
+    end
+    if g.getDimensions then
+      local ok, w, h = pcall(g.getDimensions)
+      if ok then out.dimensions = { w = w, h = h } end
+    end
+    if g.getPixelDimensions then
+      local ok, w, h = pcall(g.getPixelDimensions)
+      if ok then out.pixelDimensions = { w = w, h = h } end
+    end
+    if g.getSupported then
+      local ok, caps = pcall(g.getSupported)
+      if ok then out.supported = dataCopy(caps) end
+    end
+    if g.getSystemLimits then
+      local ok, limits = pcall(g.getSystemLimits)
+      if ok then out.systemLimits = dataCopy(limits) end
+    end
+  end
+  health.renderer = out
+  return dataCopy(out)
+end
+
 function Overlay.install()
   if Overlay.installed then return end
   Overlay.installed = true
   local mod = V.mod
   if not (mod and mod.hooks) then return end
+  Overlay.captureEnvironment()
   mod.hooks:wrap("render.hud", function(next, g, viewport)
     next(g, viewport)
-    game = game or g
+    Overlay.bindGame(g)
     Overlay.draw()
   end)
-  Overlay.note("debug overlay on -- F9 off, F10 verbosity (temporary)")
+  Overlay.note("debugger running in background -- F9 shows/hides, F10 verbosity")
 end
 
 return Overlay

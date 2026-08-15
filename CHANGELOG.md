@@ -1,5 +1,61 @@
 # Changelog
 
+## [1.6.2] - 2026-08-15
+
+Prebuild and diagnostics hardening: one bad job no longer fails the whole
+build (and a failed job no longer forces every boot to re-encode every
+payload), the prebuild's multi-second main-thread stalls are gone, and a
+blank-world report now names which path fired instead of freezing on a
+stale render time.
+
+### Cache prebuild (#5, #7)
+
+- A single failed job no longer aborts the build: it is counted, logged
+  with the failure reason, and skipped; the next boot retries exactly
+  that job while its neighbors stay cached. Only an epidemic (more than
+  4, or a tenth, of the jobs failing) aborts, reporting FAILED.
+- The verify step no longer decompresses and fully decodes each finished
+  job's terrain/water. The header (magic, format, fingerprint, bounded
+  lengths) plus the meta commit record is the check; payloads are
+  re-validated when the map actually loads. This removes an un-yieldable
+  multi-second main-thread stall per job.
+- New deflate (zlib) codec. The brick's LÖVE ships only lz4 + zlib, so
+  payloads fell back to lz4 and the engine's table-serialized write then
+  escaped ~2MB of binary per payload. The fallback chain -- zstd where
+  the runtime has it, zlib elsewhere, lz4 last -- writes 3-4x smaller
+  payloads, so the write + verify stall scales down with them.
+- The mesh flatten into the cache wire format is budget-sliced, so the
+  pump coroutine can yield mid-flatten on the biggest maps.
+- Codec byte 3 (zlib) is understood by this release; caches written by
+  1.6.1 (lz4) stay READY and load fine. (The aux payload is optional: a
+  cache with no grass/flowers/figures is valid -- the voxelizer builds
+  them live on load.)
+
+### Diagnostics (#6, #8)
+
+- 1.6.2 — F8 export can send the debug log to the mod's `log_url` (opt-in
+  via manifest; no-ops without the engine feature).
+- The debugger now records from boot in the background; F9 only shows or
+  hides the panel, so support logs include failures that happen before the
+  first manual toggle.
+- Exports now preserve the first boot evidence alongside the recent ring and
+  write a data-only `debug/status` snapshot with renderer, storage, session,
+  pipeline heartbeat, capability reasons and world-render path counters.
+- Scene and shadow shader/canvas gates retain their compiler or allocation
+  reason, and F8 runs a guarded capability probe before exporting.
+- The pipeline heartbeat distinguishes update-only, unavailable, loading,
+  fallback and successful world-render paths, so a silent 2D fallback is
+  immediately identifiable.
+- drawWorld stamps its loading-canvas entry with the pending count,
+  escalates to a durable error when the canvas is stuck past 10 seconds,
+  and stamps the first real scene render; periods where the voxel
+  pipeline is inactive are noted once.
+- Error lines force a throttled storage persist so a support log
+  survives an abrupt exit, and the error counter counts every occurrence
+  including on-screen repeats.
+- The F9/F8 keyboard toggles are mirrored by five-second SELECT/START
+  hold chords for touch-only devices.
+
 ## [1.6.1] - 2026-08-15
 
 This is the sandbox release: PotatoVoxel now runs entirely inside the
