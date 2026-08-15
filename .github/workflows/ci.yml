@@ -1,0 +1,71 @@
+name: CI
+
+# Headless tests + modkit gates on every push to main and every PR, running
+# against a fresh gen1recomp checkout with this mod mounted into mods/.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '.github/**'
+      - '**.md'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout engine
+        uses: actions/checkout@v4
+        with:
+          repository: bryanthaboi/gen1recomp
+          path: engine
+
+      - name: Checkout mod
+        uses: actions/checkout@v4
+        with:
+          path: mod
+
+      - name: Install luajit
+        run: sudo apt-get update && sudo apt-get install -y luajit
+
+      - name: Mount mod into engine
+        run: mkdir -p engine/mods && rsync -a --exclude .git --exclude .github mod/ engine/mods/potato_voxel/
+
+      - name: Cache suite
+        working-directory: engine
+        run: POKEPORT_DATA_DIR=$PWD/tests/fixture_data luajit mods/potato_voxel/tests/potato_voxel_cache_test.lua
+
+      - name: Full suite
+        working-directory: engine
+        run: POKEPORT_DATA_DIR=$PWD/tests/fixture_data luajit mods/potato_voxel/tests/potato_voxel_test.lua
+
+      - name: Sandbox API scan
+        working-directory: mod
+        run: luajit tests/sandbox_api_test.lua
+
+      - name: Loading-cover suite
+        working-directory: mod
+        run: luajit tests/voxel_loading_test.lua
+
+      - name: modkit lint
+        working-directory: engine
+        run: python3 tools/modkit.py lint mods/potato_voxel
+
+      - name: modkit validate
+        working-directory: engine
+        run: python3 tools/modkit.py validate mods/potato_voxel --base auto
+
+      # Shadow-math gates: the cadence probe (fit/snap cadence plus the
+      # full sun-cycle coverage sweep) and the deterministic shadow golden
+      # (the real fit/slack/bias/snug numbers across the cycle). Both are
+      # engine-independent and run in the mod checkout.
+      - name: Shadow cadence probe
+        working-directory: mod
+        run: luajit tests/shadow_cadence_probe.lua
+
+      - name: Shadow golden
+        working-directory: mod
+        run: luajit tests/shadow_golden.lua

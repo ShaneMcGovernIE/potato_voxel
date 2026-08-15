@@ -1,0 +1,59 @@
+name: Triage
+
+# Labels and a triage comment for new issues, driven by the structured bug
+# form (see .github/ISSUE_TEMPLATE/bug_report.yml): symptom/cache dropdowns map
+# to labels, and a crash/cache issue without an error-log block is asked for
+# one so it is resolvable without a round-trip.
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body || '';
+            const labels = [];
+            const map = [
+              ['Crash / app closes or restarts', 'crash'],
+              ['Cache build fails or never completes', 'cache'],
+              ['PREBUILD CACHE build', 'cache'],
+              ['loading / moving between maps', 'cache'],
+              ['Launcher or update issue', 'launcher'],
+              ['Visual glitch', 'visual'],
+              ['Hitch / performance problem', 'performance'],
+            ];
+            for (const [needle, label] of map) {
+              if (body.includes(needle) && !labels.includes(label)) labels.push(label);
+            }
+            if (labels.length) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels,
+              });
+            }
+            const wantsLog = body.includes('Crash / app closes or restarts')
+              || body.includes('Cache build fails or never completes')
+              || body.includes('PREBUILD CACHE build')
+              || body.includes('loading / moving between maps');
+            const hasLog = /\[\d{4}-\d{2}-\d{2}T/.test(body);
+            if (wantsLog && !hasLog) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: 'Thanks for the report. This looks like a crash or cache issue — '
+                  + 'could you paste the **newest** block from `lua-error.log` (on Switch, `switch.log`)? '
+                  + 'It lives at `<save dir>/pokemon-love2d/lua-error.log`. Include the '
+                  + '`gitCommit`/`buildVersion` line, plus the PotatoVoxel version and platform.',
+              });
+            }

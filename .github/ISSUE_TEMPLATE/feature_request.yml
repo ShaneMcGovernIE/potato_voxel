@@ -1,0 +1,40 @@
+name: Feature request
+description: Suggest a feature or improvement for PotatoVoxel.
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: input
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: The scenario or limitation you are hitting.
+      placeholder: e.g. The cache build is slow on my handheld.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed feature
+      description: What should change, and how it should behave.
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Affected platforms
+      description: Which platforms should this apply to?
+      multiple: true
+      options:
+        - Nintendo Switch
+        - Android
+        - Windows
+        - macOS
+        - Linux (desktop)
+        - TrimUI Brick / Linux handheld
+        - All
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Screenshots, links, or anything else that helps.

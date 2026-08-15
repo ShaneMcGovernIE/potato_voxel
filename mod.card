@@ -1,0 +1,53 @@
+-- Sharing metadata (25-community-and-ecosystem.md 3.2).  Read by tooling
+-- and the manager detail pane; never by the loader's merge.
+return {
+  summary = "The overworld as a 3D diorama, and battles fought on it: real occlusion, tilt-shift, over-the-shoulder fights. PotatoVoxel (fork of Dramatic Shape) is retuned for low-end devices: defaults pinned so a quad-A53/PowerVR/998MB handheld keeps its frame budget.",
+  author = "ShaneMcGovernIE",
+  contact = "https://github.com/ShaneMcGovernIE",
+  tags = { "graphics", "3d", "voxel", "render-pipeline", "presentation",
+           "battle", "low-end" },
+  differences = {
+    changed = {
+      "PotatoVoxel (fork of Dramatic Shape Voxel Mod, formerly the TrimUI Brick build): the low-end tuning is the DEFAULT everywhere, and the VOXEL ladder is a set of quality MODES -- OFF / HIGH / MEDIUM / LOW / POTATO / CUSTOM. Picking a mode applies its tuned defaults to every quality knob (WATER, AA, V-CURVE, V-GRID, 3D-BTL, SHADOWS) and to the RENDER SCALE knob (100% / 75% / 50% / 33%, folded back with ordinary canvas filtering; no dedicated upscaling shader or RCAS pass); touching any knob flips the mode to CUSTOM. Desktop HIGH keeps the full two-layer actor shadow map, including moving actor/sprite casters; MEDIUM and lower use contact/blob actor shadows. Every quality knob is tuned for a quad-A53/PowerVR/998MB device and DEFAULTS OFF -- WATER, AA, V-CURVE, V-GRID, 3D-BTL (flat card battles) -- but each is a switchable row on the VOXEL SETTINGS submenu, and the voxel mesh build budget is halved per frame so chunk carving yields to gameplay on four cores. There is one build for every device -- no desktop environment switch; the mesh cache lives in the mod sandbox's scoped storage. 1.6.1 drops what the sandbox forbids: FOREST FX, the frosted battle-HUD glass, the Stadium model import (player-supplied ROM reads are impossible), VR, and the diagnostics panel are gone -- shadows now run on every device that can do them.",
+      "with VOXEL on, the overworld draws as 3D geometry instead of flat tiles",
+      "occlusion comes from a depth buffer rather than a y-sort, so buildings really hide what is behind them",
+      "with 3D-BTL on 2D-3D A, a battle draws over the map's nearest clear ground instead of over a white field",
+      "with 3D-BTL on 2D-3D B, the fight is staged on two discs against the sky with no map drawn at all",
+      "the map's NPCs are culled for the length of a battle, so the wipe plays over an empty map",
+      "the engine's TILT and GBC FX rows are taken OFF the OPTIONS menu and held at off for as long as this mod is installed; uninstalling puts both rows back",
+      "hotkeys 3 and 5 are taken over from those two, which have no key and no row while this is loaded",
+      "SELECT in free roam steps the VOXEL ladder exactly as hotkey 3 does",
+      "on the 1ST and 3RD rungs ONLY (desktop path), the grid walk is replaced by free camera-relative movement; every other rung leaves movement untouched",
+      "on 1ST and 3RD the mouse cursor is captured for free look; left click is A, right click is B",
+      "the BATTLE BG options row is taken OFF the menu and pinned to WHITE for as long as this mod is installed; uninstalling puts the row back",
+      "a staged battle's camera can be steered by the player -- right stick, touch drag or mouse -- and the angle and lens carry into the next battle",
+    },
+    added = {
+      "VOXEL options row and hotkey 3, the quality-mode ladder (OFF / HIGH / MEDIUM / LOW / POTATO / CUSTOM), each mode a tuned preset",
+      "V-GRID on hotkey 5 and V-CURVE on hotkey 7",
+      "WATER on hotkey 9 (FULL / SKY / OFF): the water surface becomes a field of pixel-tall voxel columns, reflecting the sky, the sun, the moon and the cast standing beside it",
+      "3D-BTL on hotkey 8 (2D-3D A / 2D-3D B / OFF): battles fought in 3D, the game's own pics stood up as cards",
+      "BACK SPRITES options row (OFF / ON, off by default), which keeps your own Pokemon on the battle menu in its classic slot",
+      "a day/night clock that reaches the flat 2D overworld as well as the diorama",
+      "an opaque Town Map loading cover for cold asynchronous terrain builds, so the vanilla 2D world never flashes before the voxel mesh is ready",
+      "an over-the-shoulder battle camera on a slow parallax orbit, with a depth-of-field pass that holds both mons sharp",
+      "a sky behind the diorama at the 75-degree rung, outdoor maps only",
+      "a hand-authored tile shape profile (data/voxel_heights.lua) a mod can extend",
+      "HORDE MODE, on the konami code (Up Up Down Down Left Right Left Right B A) standing in the overworld -- the sky drops to a starless violet night, waves of people walk out of the dark, score per kill, no pausing",
+      "the horde's gunshot, dry fire, magazine and slide sounds, synthesized on the game's own emulated Game Boy sound hardware (no audio files ship with the mod)",
+    },
+    known = {
+      "needs shader and depth-canvas support; without them the rows still cycle but the world stays 2D and battles draw plainly",
+      "terrain meshes are cached per map in the mod's scoped storage, so the first frame after entering a large map costs a build",
+      "1ST and 3RD need the 3D pass like every rung; without it the level still persists but the world stays 2D",
+      "rooms have no ceilings, so a first-person look over an interior wall shows the void the diorama always had behind it",
+      "HORDE MODE needs the 3D pass; a run is not saved -- the score and best score ride the save slot, the mode itself has no state to resume",
+    },
+  },
+  credits = {
+    { who = "DramaticShape", for_ = "the upstream Dramatic Shape Voxel Mod (github.com/DramaticShape/DramaticShapeVoxelMod, v1.6.2) this mod is a fork of. Its own code carries no license; PotatoVoxel is a derived work, retuned for low-end devices" },
+    { who = "pret/pokered", for_ = "the tile and sprite data the geometry is derived from" },
+    { who = "AverageConsumer", for_ = "battle UI/sprite interoperability (honouring the engine's visibility seams and composing staged-battle sprite overrides) and the cold mesh-build Town Map loading cover" },
+  },
+  compat = { engine = ">=0.1.37 <1.6.1", modApi = 2 },
+}

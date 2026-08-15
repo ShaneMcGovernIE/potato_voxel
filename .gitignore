@@ -1,0 +1,39 @@
+# macOS and editor metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+*.swp
+*.swo
+*~
+
+# Lua/runtime bytecode and profiling output
+*.luac
+*.ljbc
+*.prof
+
+# Local engine saves, caches, and generated mod data
+save/
+saves/
+mod-derived/
+.cache/
+.cache-*/
+cache/
+logs/
+*.log
+
+# Temporary exports, backups, and comparison artifacts
+*.bak
+*.backup
+*.orig
+*.rej
+*.tmp
+*.temp
+*.old
+*.patch
+
+# Generated packages/build output
+*.modpkg
+*.zip
+build/
+dist/
+out/

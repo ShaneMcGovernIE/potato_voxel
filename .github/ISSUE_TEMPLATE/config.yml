@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Releases
+    url: https://github.com/ShaneMcGovernIE/potato_voxel/releases
+    about: Check the latest release before reporting.

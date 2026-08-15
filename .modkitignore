@@ -1,0 +1,16 @@
+# Files that stay in the repo and out of the distributed package.
+# Exact relative paths, one per line -- modkit matches literally, no globs.
+
+# The SDK suite. A shipped test that requires an engine module reads as a
+# private require against the archive (CONTRIBUTING-mods.md "What the PR
+# must contain", 2).
+tests/potato_voxel_test.lua
+tests/potato_voxel_cache_test.lua
+tests/voxel_loading_test.lua
+tests/shadow_cadence_probe.lua
+tests/shadow_golden.lua
+tests/sandbox_api_test.lua
+tests/goldens/shadow_golden.txt
+
+# Repo-only: issue templates must never ship in the mod zip.
+.github
