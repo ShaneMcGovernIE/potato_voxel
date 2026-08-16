@@ -8,12 +8,11 @@
 -- testable: tests swap the OS the engine module answers (an OS-name
 -- stub plus the engine module's test reset) exactly as the suite does.
 --
--- Only the Switch (NX) answer is exported today. The cache fixes that
--- gate on it exist because the observed failures -- storage deletes that
--- silently no-op, a second boot-time Assets handoff, a zlib-only
--- compress chain -- are Switch-port facts, and desktop builds must keep
--- their historical behavior byte for byte. (No OS API is named here;
--- the engine answers NX when the console reports itself as such.)
+-- Switch (NX) and iOS answers are exported. The cache fixes gate on Switch
+-- because the observed failures there are port-specific, while the packed
+-- shadow canvas has an iOS-only color-pipeline workaround. Other platforms
+-- keep their historical behavior byte for byte. (No OS API is named here;
+-- the engine answers both facts.)
 
 local P = {}
 
@@ -31,6 +30,13 @@ function P.isSwitch()
   local okD, info = pcall(Engine.detect)
   if not okD or type(info) ~= "table" then return false end
   return not not info.nx
+end
+
+function P.isIOS()
+  local Engine = enginePlatform()
+  if not Engine then return false end
+  local ok, info = pcall(Engine.detect)
+  return ok and type(info) == "table" and info.os == "iOS"
 end
 
 -- Tests swap the OS the engine module answers between cases; the engine

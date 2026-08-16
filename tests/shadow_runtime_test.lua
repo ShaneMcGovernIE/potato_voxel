@@ -20,6 +20,9 @@ end
 
 local bound = nil
 local binds = {}
+local canvasKinds = {}
+local canvasFormats = {}
+local ios = true
 local rejectExplicit = false
 local rejectImplicit = true
 local oldLove = _G.love
@@ -27,8 +30,10 @@ _G.love = { graphics = {} }
 local g = _G.love.graphics
 
 function g.newCanvas(w, h, opts)
+  canvasKinds[#canvasKinds + 1] = opts and opts.format or "default"
   if opts and opts.format then
-    if rejectExplicit then
+    canvasFormats[#canvasFormats + 1] = opts.format
+    if rejectExplicit and opts.format ~= "rgba8" then
       error("explicit depth format rejected by test backend")
     end
     return canvas(w, h, opts.format)
@@ -61,6 +66,9 @@ local V = {
     if name == "Mat4" then return Mat4 end
     if name == "VoxelState" then return Voxel end
     if name == "ShadowSettings" then return ShadowSettings end
+    if name == "Platform" then
+      return { isIOS = function() return ios end }
+    end
     if name == "PixelCanvas" then
       return assert(loadfile(root .. "/lib/PixelCanvas.lua"))(V)
     end
@@ -81,6 +89,8 @@ local function check(condition, name)
 end
 
 check(ShadowMap.available(), "shadow capability accepts explicit depth target")
+check(canvasFormats[1] == "rgba8" and canvasFormats[2] == "rgba8",
+      "packed shadow layers use a raw rgba8 canvas format")
 check(ShadowMap.begin(0, 0, 160, 144, false),
       "world pass begins when implicit depth binding is unavailable")
 local worldDiagnostics = ShadowMap.diagnostics()
@@ -117,6 +127,19 @@ check(ShadowMap.diagnostics().depth.binding == "internal",
 ShadowMap.finish("world-fallback", false)
 check(ShadowMap.diagnostics().worldReady,
       "internal depth fallback produces a ready world layer")
+
+-- Non-iOS platforms retain the historical default color canvas. Only iOS
+-- needs the explicit raw format because that is where the packed depth was
+-- observed being altered by the display color pipeline.
+ShadowMap.invalidate()
+ios = false
+rejectExplicit = false
+rejectImplicit = false
+local beforeNonIOS = #canvasKinds
+check(ShadowMap.available(), "non-iOS shadow capability remains available")
+check(canvasKinds[beforeNonIOS + 1] == "default"
+      and canvasKinds[beforeNonIOS + 2] == "default",
+      "non-iOS shadow layers keep the default canvas format")
 
 _G.love = oldLove
 io.write(("shadow runtime: %d passed, %d failed\n"):format(passed, failed))

@@ -30,6 +30,8 @@ local V = ...
 local Mat4 = V.require("Mat4")
 local Voxel = V.require("VoxelState")
 local ShadowSettings = V.require("ShadowSettings")
+local Platform = V.require("Platform")
+local PixelCanvas = V.require("PixelCanvas")
 
 local ShadowMap = {}
 
@@ -243,6 +245,11 @@ local passCounts = { begins = 0, finishes = 0, aborts = 0 }
 -- are optional in GLES; probing the actual canvas is the capability test.
 local DEPTH_FORMATS = { "depth24", "depth24stencil8", "depth32f", "depth16" }
 
+local function shadowColorFormat()
+  local ok, ios = pcall(Platform.isIOS)
+  return ok and ios and "rgba8" or nil
+end
+
 local IDENTITY = Mat4.identity()
 
 -- world -> [0,1] cube, applied on top of the clip matrix: the main pass
@@ -410,7 +417,11 @@ local function getCanvas(res)
     getDepthCanvas(res)
     return canvas
   end
-  local ok, c, err = V.require("PixelCanvas").new(res, res)
+  -- iOS/Metal's gamma-correct color path can alter the packed depth bytes.
+  -- Keep the workaround platform-scoped; every other platform retains the
+  -- historical default color canvas while all targets keep dpiscale = 1.
+  local format = shadowColorFormat()
+  local ok, c, err = PixelCanvas.new(res, res, format)
   if not (ok and c) then
     canvasError = err or "newCanvas returned nil"
     canvas = false
@@ -428,7 +439,7 @@ local function getCanvas(res)
     pcall(spriteCanvas.release, spriteCanvas)
   end
   if ShadowMap.SPRITE_LAYER then
-    local okS, sc, errS = V.require("PixelCanvas").new(res, res)
+    local okS, sc, errS = PixelCanvas.new(res, res, format)
     if okS and sc then
       spriteCanvasError = nil
       sc:setFilter("nearest", "nearest")
