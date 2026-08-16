@@ -1,5 +1,71 @@
 # Changelog
 
+## [1.6.4] - 2026-08-16
+
+The map-corruption and cold-cache release: the two most-reported issues
+on 15-16 August are fixed here, plus the F8 pipeline now tells us why.
+
+### Fixed: broken/black terrain meshes
+
+- The budgeted index-map upload called Mesh:setVertexMap with a start
+  index LOVEs API does not have, and the error was swallowed -- every
+  slice replaced the whole map, so meshes kept only the final chunk's
+  indices ("giant cross-quad triangles", black ground with the map
+  visible in slivers, MT MOON/Cerulean reports). Indices now upload in
+  one call; vertices stay budget-sliced.
+
+### Fixed: cache rebuilt on every launch
+
+- The engine's boot asset handoff invalidated the whole mesh cache
+  (manifest dropped, cache marked dirty), forcing a full 444-job
+  prebuild every boot -- the "choppy boot loads" and "fails the
+  prebuild every time" reports. The first asset invalidation after boot
+  is now a no-op; restarts stay warm, and fingerprint protection still
+  covers real changes.
+
+### Debugger / support
+
+- F8 payload now carries an identity header (mod, engine, love, session,
+  frame) and a status excerpt (counters, pipeline, voxel, shadows,
+  cache, prebuild, worst frame, storage) so a received log is
+  attributable and self-diagnosing.
+- Send results are recorded: "log send confirmed" or "log send failed:
+  <engine error>" -- the engine's rejection reason is shown instead of a
+  bare failure.
+- Payloads are trimmed to the engine ceiling (newest lines kept), with a
+  conservative retry for engines that still cap at 64 KiB.
+- Blank-world reports name the exit path; a loading canvas stuck over
+  10s escalates to a durable error; pipeline availability carries the
+  reason.
+- Hold chords: five seconds of SELECT toggles the debug panel, five
+  seconds of START exports the log (touch/pad F9/F8). The SELECT chord
+  is gated off mobile so gameplay cannot summon the panel.
+- VOXEL SETTINGS gains a DEBUGGER toggle and a SEND LOGS action row.
+
+### Cache/prebuild
+
+- zlib joins the codec ladder (zstd -> zlib -> lz4): 3-4x smaller
+  payloads on runtimes without zstd, shorter writes and loads.
+- Payload verification is header-only (no full decode stall).
+- A single failed prebuild job no longer aborts the build; the next
+  boot resumes exactly the missing jobs (scan-based resume).
+- The slow-load counter is wired (it was declared but never counted).
+
+### Shadows / rendering
+
+- Shadow and voxel shaders pin effect parameters to mediump first with
+  a bare-precision retry for mobile compilers; shader errors and the
+  precision chosen are retained for diagnostics.
+- A failed shadow sprite pass can no longer erase an already-finished
+  world map.
+
+## [1.6.3] - 2026-08-15
+
+- Add opt-in F8 debug log uploads: pressing F8 sends the diagnostic log
+  to the PotatoVoxel log service (desktop, engine v0.1.95+). Nothing is
+  uploaded automatically.
+
+
 ## [1.6.2] - 2026-08-15
 
 Prebuild and diagnostics hardening: one bad job no longer fails the whole

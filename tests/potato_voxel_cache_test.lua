@@ -273,6 +273,34 @@ if MeshCache.available() then
   T.eq(MeshCache.codec(), "zstd",
        "cache status identifies the zstd codec")
 
+  -- A runtime WITHOUT zstd but WITH zlib (the TrimUI brick's LÖVE ships
+  -- lz4 + zlib only): packPayload falls through to zlib before lz4, and
+  -- the codec-aware decoder + status report it as codec byte 3 / "zlib".
+  testLove.data.compress = function(_, format, body)
+    if format ~= "zlib" then return nil end
+    serial = serial + 1
+    local key = "zlib" .. serial
+    packed[key] = body
+    return key
+  end
+  MeshCache.saveTerrain(fakeMap, "body", vertices, 128)
+  MeshCache.saveWater(fakeMap, "body", nil, 0)
+  MeshCache.saveAux(fakeMap, "body", { figures = {} })
+  local zlibbed = fakeStore.peekBytes()["maps/A/body/terrain"]
+  local zlibCodec = zlibbed
+    and zlibbed:byte(9 + (zlibbed:byte(5) + zlibbed:byte(6) * 256
+                         + zlibbed:byte(7) * 65536 + zlibbed:byte(8) * 16777216))
+    or nil
+  T.eq(zlibCodec, 3,
+       "cache writes codec byte 3 when only zlib is available")
+  local zl = MeshCache.loadTerrain(fakeMap, "body")
+  T.check(zl ~= nil and zl.n == 128,
+          "zlib-compressed payload loads through the codec-aware decoder")
+  T.check(MeshCache.ready({ { id = "A", slot = "body" } }),
+          "zlib cache reports READY from summaries")
+  T.eq(MeshCache.codec(), "zlib",
+       "cache status identifies the zlib codec")
+
   testLove.data = oldData
   _G.love = oldLove
   MeshCache.wipe({ { id = "A", slot = "body" } })

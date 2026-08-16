@@ -449,7 +449,15 @@ local RAW_FORMAT = 1
 local COMPRESSED_FORMAT = 2
 local LZ4_CODEC = 1
 local ZSTD_CODEC = 2
-local CODEC_NAMES = { [LZ4_CODEC] = "lz4", [ZSTD_CODEC] = "zstd" }
+local ZLIB_CODEC = 3
+-- zstd where the runtime has it (desktop LÖVE), else zlib/deflate, else
+-- lz4. The engine's table-storage writes serialize byte values as escaped
+-- Lua source (~4-6x the payload), so the payload size directly drives the
+-- write+verify stall: zlib's better ratio on quantized mesh data is worth
+-- its slower compress here (the compress is one bounded call, the write it
+-- saves is seconds).
+local CODEC_NAMES = { [LZ4_CODEC] = "lz4", [ZSTD_CODEC] = "zstd",
+                      [ZLIB_CODEC] = "zlib" }
 local MAX_PAYLOAD = 512 * 1024 * 1024
 
 -- ffi is sandbox-banned and this engine's love.data ByteData carries no
@@ -564,6 +572,11 @@ local function packPayload(fp, body)
     local ok, packed = pcall(data.compress, "string", "zstd", body)
     if ok and type(packed) == "string" and #packed < #body then
       return header(fp, COMPRESSED_FORMAT, #body, #packed, 0, ZSTD_CODEC)
+             .. packed
+    end
+    ok, packed = pcall(data.compress, "string", "zlib", body)
+    if ok and type(packed) == "string" and #packed < #body then
+      return header(fp, COMPRESSED_FORMAT, #body, #packed, 0, ZLIB_CODEC)
              .. packed
     end
     ok, packed = pcall(data.compress, "string", "lz4", body)
@@ -870,31 +883,6 @@ local function repackRaw(key, mkey, fp, body, meta)
   end
 end
 
-local function payloadFingerprint(key, mkey, fp, kind)
-  local ok, s = pcall(readBytes, key)
-  if not ok or not s then return nil end
-  local got, off, meta = parseHeader(s)
-  if not got then return nil end
-  if got ~= fp then return nil end
-  local body = unpackPayload(s, off, meta)
-  if not body then return nil end
-  if kind ~= "aux" then
-    return decodeQuant(body) and got or nil
-  end
-  local grass = decodeIndexed(body)
-  if not grass then return nil end
-  local flowerPos = 4 + grass.n * 24 + 4 + grass.m * 4
-  local flowers = decodeIndexed(body:sub(1 + flowerPos))
-  if not flowers then return nil end
-  local figurePos = flowerPos + 4 + flowers.n * 24 + 4 + flowers.m * 4
-  return decodeFigures(body:sub(1 + figurePos)) and got or nil
-end
-
-local function safeValidPayload(key, mkey, fp, kind)
-  local ok, valid = pcall(payloadFingerprint, key, mkey, fp, kind)
-  return ok and valid
-end
-
 -- A meta record's fingerprint, validated against the live identity
 -- prefix for the job. nil when missing or stale.
 local function metaFingerprint(mkey, prefix)
@@ -909,6 +897,28 @@ end
 local function safeMetaFingerprint(mkey, prefix)
   local ok, got = pcall(metaFingerprint, mkey, prefix)
   return ok and got or nil
+end
+
+-- A payload is VERIFIED without decoding it. parseHeader bounds the body
+-- (magic, format, fingerprint, packed length against the stored bytes),
+-- the meta record is the write's commit marker, and the engine's storage
+-- write already round-tripped the bytes (stage tmp, verify decode, write
+-- main, verify again). The full decodeQuant was pure-Lua over every
+-- vertex and ran OUTSIDE the build coroutine -- Budget.check() is a no-op
+-- there -- so verifying one job's terrain+water this way was one of the
+-- multi-second main-thread stalls during the prebuild. Payloads are
+-- re-validated the moment a map actually loads (loadTerrain/loadWater).
+local function payloadShape(key, mkey, fp)
+  local ok, s = pcall(readBytes, key)
+  if not ok or not s then return nil end
+  local got = parseHeader(s)
+  if not got or got ~= fp then return nil end
+  return safeMetaFingerprint(mkey, fp) and got or nil
+end
+
+local function safeValidPayload(key, mkey, fp)
+  local ok, valid = pcall(payloadShape, key, mkey, fp)
+  return ok and valid
 end
 
 local function updateCompression(records)
@@ -964,9 +974,12 @@ function MeshCache.jobRecord(map, slot)
   }
 end
 
--- A record whose three payload metas all exist under the live identity.
--- NOTE the record carries META keys (the boot scan's bounded reads);
--- payload bytes are validated when a map actually loads.
+-- A record whose terrain and water payload metas exist under the live
+-- identity. The aux meta is OPTIONAL: a job whose aux save failed still
+-- has complete terrain/water (fillAux builds the aux live), and treating
+-- it as required made a stale-aux job fail the boot scan and re-trigger a
+-- full rebuild every launch. NOTE the record carries META keys (the boot
+-- scan's bounded reads); payload bytes are validated when a map loads.
 local function scanJob(job)
   local map = { id = job.id }
   local slot = tostring(job.slot)
@@ -976,17 +989,24 @@ local function scanJob(job)
   local waterMeta = safeMetaFingerprint(
     metaKey(map, slot, "water"),
     identity() .. "|" .. tostring(job.id) .. "|" .. slot .. "Water|")
+  if not (terrainMeta and waterMeta) then return nil end
   local auxMeta = safeMetaFingerprint(
     metaKey(map, slot, "aux"),
     identity() .. "|" .. tostring(job.id) .. "|" .. slot .. "Aux|")
-  if not (terrainMeta and waterMeta and auxMeta) then return nil end
   return { key = tostring(job.id) .. "/" .. slot,
            terrain = metaKey(map, slot, "terrain"),
            terrainFp = terrainMeta.fp, water = metaKey(map, slot, "water"),
-           waterFp = waterMeta.fp, aux = metaKey(map, slot, "aux"),
-           auxFp = auxMeta.fp }
+           waterFp = waterMeta.fp,
+           aux = auxMeta and metaKey(map, slot, "aux") or nil,
+           auxFp = auxMeta and auxMeta.fp or nil }
 end
 
+-- A job's critical payloads are terrain + water: the aux (grass/flowers/
+-- figures) is optional because fillAux already falls back to building it
+-- live when the cache has none. Requiring all three made a single aux
+-- write failure fail the job -- and CachePrebuild then aborted the whole
+-- build -- so a platform whose aux save failed rebuilt every job each
+-- boot. Terrain/water remain mandatory: without them the map has nothing.
 function MeshCache.verifyJob(map, slot)
   if not MeshCache.available() then return false end
   local record = MeshCache.jobRecord(map, slot)
@@ -995,8 +1015,6 @@ function MeshCache.verifyJob(map, slot)
                           record.terrain, record.terrainFp, "mesh")
      and safeValidPayload(payloadKey(mapSlot, slot, "water"),
                           record.water, record.waterFp, "mesh")
-     and safeValidPayload(payloadKey(mapSlot, slot, "aux"),
-                          record.aux, record.auxFp, "aux")
 end
 
 -- --------------------------------------------------------------- manifest
@@ -1082,7 +1100,8 @@ function MeshCache.ready(jobs)
     local ok = record ~= nil
            and safeMetaFingerprint(record.terrain, record.terrainFp) ~= nil
            and safeMetaFingerprint(record.water, record.waterFp) ~= nil
-           and safeMetaFingerprint(record.aux, record.auxFp) ~= nil
+           and (record.aux == nil
+                or safeMetaFingerprint(record.aux, record.auxFp) ~= nil)
     if ok then done = done + 1 end
   end
   if done == #jobs then
@@ -1269,6 +1288,7 @@ function MeshCache.loadTerrain(map, slot)
       Overlay.trace("cache hit terrain %s/%s (%dms, %d verts)",
                    tostring(map.id), tostring(slot), ms, mesh.n or 0)
       if ms and ms > 250 then
+        Overlay.count("slowLoads")
         Overlay.error("SLOW load terrain %s/%s: %dms", tostring(map.id),
                      tostring(slot), ms)
       end

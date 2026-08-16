@@ -114,8 +114,9 @@ end
 -- finish() uploads through Voxel3D.newMesh, the exact path the
 -- pre-sandbox table build used.
 -- Slice a table upload across frames: the mesh is created with the full
--- vertex count, then vertices and the index map land in budgeted pieces
--- (setVertices/setVertexMap accept a start index). The old ffi sink
+-- vertex count, then vertices land in budgeted pieces. The vertex map must
+-- be uploaded in one call: setVertexMap replaces the complete map and has no
+-- ranged-update form. The old ffi sink
 -- sliced exactly this way; a one-shot newMesh(rows) on a 500k-vertex
 -- map is a 100-500ms hitch in pure Lua, which is what the sliced path
 -- exists to avoid. Budget.check() is a no-op outside the build
@@ -140,16 +141,7 @@ local function uploadTableMesh(rows, indices)
     Budget.check()
   end
   if indices and #indices > 0 then
-    local m = #indices
-    local k = 0
-    while k < m do
-      local c = math.min(UPLOAD_CHUNK * 2, m - k)
-      local slice = {}
-      for j = 1, c do slice[j] = indices[k + j] end
-      pcall(mesh.setVertexMap, mesh, slice, k + 1)
-      k = k + c
-      Budget.check()
-    end
+    pcall(mesh.setVertexMap, mesh, indices)
   end
   return mesh
 end
@@ -177,6 +169,7 @@ local function newTableSink()
     buffer = function()
       local flat = {}
       for i, row in ipairs(verts) do
+        if (i % 4096) == 0 then Budget.check() end
         local b = (i - 1) * 6 + 1
         flat[b] = row[1]
         flat[b + 1] = row[2]
@@ -186,7 +179,10 @@ local function newTableSink()
         flat[b + 5] = row[6]
       end
       local imap = {}
-      for i, v in ipairs(indices) do imap[i] = v end
+      for i, v in ipairs(indices) do
+        if (i % 65536) == 0 then Budget.check() end
+        imap[i] = v
+      end
       return flat, #verts, imap, #indices
     end,
     finish = function()
@@ -1651,6 +1647,23 @@ function ChunkMesher.invalidate(mapId)
   end
 end
 
-Assets.register(function() ChunkMesher.invalidate() end)
+-- The engine fires every registered invalidator at boot too: the mod
+-- loader's Assets.installLoader -> Assets.invalidate handoff runs on
+-- every launch.  That first call is an asset-search-path handoff, not a
+-- geometry change -- no map has loaded yet -- and a full
+-- MeshCache.invalidate() there would drop the manifest and force a cold
+-- 444-job prebuild on every boot (observed: 162s rebuilds on Linux).
+-- The runtime mesh cache is empty at that point, and the disk cache is
+-- fingerprint-protected, so skipping exactly the first callback keeps
+-- restarts warm while real asset changes (dev hot reload) still empty
+-- the mesh cache.
+local bootAssetsHandedOff = false
+Assets.register(function()
+  if not bootAssetsHandedOff then
+    bootAssetsHandedOff = true
+    return
+  end
+  ChunkMesher.invalidate()
+end)
 
 return ChunkMesher

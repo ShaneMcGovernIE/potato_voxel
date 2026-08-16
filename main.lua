@@ -82,6 +82,7 @@ end
 
 local Voxel = V.require("VoxelState")
 local Voxel3D = V.require("Voxel3D")
+local ShadowMap = V.require("ShadowMap")
 local VoxelScene = V.require("VoxelScene")
 local ChunkMesher = V.require("ChunkMesher")
 local VoxelGrid = V.require("VoxelGrid")
@@ -111,7 +112,33 @@ local HordeSfx = V.require("HordeSfx")
 local VoxelLoading = V.require("VoxelLoading")
 local DebugOverlay = V.require("DebugOverlay")
 DebugOverlay.install()
+DebugOverlay.setProbe(function()
+  local done, total, running, eta = CachePrebuild.progress()
+  return {
+    voxel = Voxel3D.diagnostics(),
+    shadows = ShadowMap.diagnostics(),
+    cache = {
+      identity = MeshCache.identity(),
+      build = MeshCache.buildInfoSnapshot(),
+      lastFailure = MeshCache.getLastFailure(),
+      saveFailures = MeshCache.saveFailureCount(),
+    },
+    prebuild = {
+      status = CachePrebuild.status(), done = done, total = total,
+      running = running, eta = eta,
+    },
+  }
+end)
+-- The hold chords: five seconds of SELECT toggles debug visibility,
+-- and five seconds of START while the background debugger is running exports its log --
+-- the touch/pad versions of F9 and F8 (see lib/HoldChord.lua). Polled
+-- on the always-running update tick below, because the engine's Input is
+-- the one place every road into a button -- touch overlay, pad, keyboard
+-- aliases -- converges.
+local HoldChord = V.require("HoldChord")
 local publishedLoading
+-- Last DEBUGGER-option value applied to the overlay; see the tick below.
+local lastDebuggerSetting = false
 
 local function publishLoading()
   local loading = Voxel.loading == true
@@ -188,6 +215,14 @@ end
 -- The last drawWorld's render duration, fed into the debug overlay's
 -- frame aggregation by the update tick (drawn before the next update).
 local renderMs = 0
+-- drawWorld diagnostics (finding #6): every early-return path leaves
+-- renderMs frozen at its last real value, so a blank-world report cannot
+-- tell which path fired. These one-shot stamps put the path in the stored
+-- log: the loading canvas (and whether it STAYS stuck), the first real
+-- scene render, and the periods where voxel is inactive (drawWorld never
+-- runs at all).
+local worldDiag = { loadingEntered = 0, loadingReported = false,
+                    inactiveNoted = false, firstRender = false }
 
 function voidFill.check()
   local TileRenderer = require("src.render.TileRenderer")
@@ -224,7 +259,9 @@ mod.content.render_pipelines:register("voxel", {
   -- answer false here, and the engine keeps the vanilla 2D path -- which
   -- is why no caller ever has to guard for a missing 3D pass.
   available = function()
-    return Voxel3D.available()
+    local caps = Voxel3D.diagnostics()
+    DebugOverlay.pipelineAvailable(caps.available, caps.reason, caps)
+    return caps.available
   end,
 
   -- the engine hands over the live level; we ease the camera toward it.
@@ -240,6 +277,7 @@ mod.content.render_pipelines:register("voxel", {
   update = function(dt, level)
     return DebugOverlay.try("voxel-update", function()
     DebugOverlay.frame(dt, renderMs)
+    DebugOverlay.pipelineUpdate(level)
     -- FULL is a preset, so it is applied ON THE PRESS rather than held every
     -- frame: it SETS the other rows and then leaves them alone. Holding them
     -- would make the zoom keys and the wheel dead while the mode was on, and
@@ -306,10 +344,57 @@ mod.content.render_pipelines:register("voxel", {
     -- The cache prebuilder is deliberately independent of the active display
     -- mode: an Options-menu press must keep progressing while VOXEL is OFF.
     DebugOverlay.try("prebuild-tick", CachePrebuild.update)
+    -- The DEBUGGER row (and the mod manager's page) write the stored
+    -- option; F9 and the SELECT chord flip visibility directly, so the
+    -- stored value is only re-applied here when it CHANGES -- never
+    -- fighting a manual toggle, and never hiding a panel the player just
+    -- called up. On Android this option is the only toggle (see the
+    -- SELECT chord gate below).
+    local debuggerOn = false
+    local optMod = V.mod
+    if optMod and optMod.options then
+      local okG, got = pcall(optMod.options.get, optMod.options, "debugger")
+      debuggerOn = okG and got == true
+    end
+    if debuggerOn ~= lastDebuggerSetting then
+      lastDebuggerSetting = debuggerOn
+      DebugOverlay.setVisible(debuggerOn)
+    end
+    -- The hold chords ride the same always-running tick: five seconds
+    -- held fires a chord wherever the cursor is, exactly like the F9 and
+    -- F8 keys. Same guard as F9's too: a screen with its own key handler
+    -- (a text field) never arms a chord. The engine's Input answers for
+    -- every road into a button at once -- the touch overlay's buttons, a
+    -- pad's back/start, and the keyboard aliases. SELECT toggles the
+    -- debugger visibility; START exports its background log -- exporting is
+    -- the retrieval half of the pair.
+    local Input = require("src.core.Input")
+    local holdGame = require("src.core.Game")
+    local holdTop = holdGame.stack and holdGame.stack:top()
+    local chordable = not (holdTop and holdTop.onKeyPressed)
+    -- On mobile the touch overlay's SELECT is a real game button (it feeds
+    -- the same Input state as a pad), so a five-second hold while playing
+    -- must not summon the debug overlay.  The START chord -- the support-log
+    -- export half of the pair -- still works there.
+    local Platform = require("src.core.Platform")
+    local selectChordable = chordable
+      and not (Platform.detect and Platform.detect().mobile)
+    if HoldChord.update("select", dt, selectChordable and Input:isDown("select")) then
+      DebugOverlay.toggle()
+    end
+    if HoldChord.update("start", dt, chordable and DebugOverlay.running()
+                                               and Input:isDown("start")) then
+      DebugOverlay.export()
+    end
     if not Voxel.active() then
+      if not worldDiag.inactiveNoted then
+        worldDiag.inactiveNoted = true
+        DebugOverlay.note("voxel inactive: drawWorld not running")
+      end
       publishLoading()
       return
     end
+    worldDiag.inactiveNoted = false
     local Game = require("src.core.Game")
     local ow = Game and Game.overworld
     if ow and ow.map and ow.camera then
@@ -327,12 +412,18 @@ mod.content.render_pipelines:register("voxel", {
   end,
 
   drawWorld = function(ctx)
+    local function renderWorld()
+    DebugOverlay.pipelinePath("entered")
     if not ctx.state then
+      DebugOverlay.pipelinePath("no_state")
       DebugOverlay.error("drawWorld: no world state to draw")
       return nil
     end
     if not Voxel3D.available() then
-      DebugOverlay.error("drawWorld: 3D unavailable (canvas/shader gate)")
+      local caps = Voxel3D.diagnostics()
+      DebugOverlay.pipelinePath("unavailable", caps)
+      DebugOverlay.error("drawWorld: 3D unavailable (%s): %s",
+                         tostring(caps.reason), tostring(caps.error or ""))
       return nil
     end
     -- the palette closure, stashed for the VR frame: it renders from the
@@ -346,7 +437,10 @@ mod.content.render_pipelines:register("voxel", {
     if VR.active() then
       local sw, sh = sceneSize(ctx)
       local m = VR.mirror(sw, sh)
-      if m then return m end
+      if m then
+        DebugOverlay.pipelinePath("rendered", { path = "vr_mirror" })
+        return m
+      end
     end
     -- Terrain and characters are geometry; the field FX stay ordinary 2D
     -- draws composited on top, anchored through the same camera the 3D
@@ -356,8 +450,31 @@ mod.content.render_pipelines:register("voxel", {
     -- world-pixel units.
     local sw, sh = sceneSize(ctx)
     if Voxel.loading then
+      -- This path returns WITHOUT setting renderMs -- a blank-world report
+      -- with renderMs frozen is drawWorld stuck here. Stamp the entry and,
+      -- if the loading canvas outlives 10s, escalate to a durable error
+      -- naming the pending count.
+      local now = love and love.timer and love.timer.getTime
+                 and love.timer.getTime() or 0
+      if worldDiag.loadingEntered == 0 then
+        worldDiag.loadingEntered = now
+        worldDiag.loadingReported = false
+        DebugOverlay.note("drawWorld: loading canvas (%d pending)",
+                          ChunkMesher.pending())
+      elseif not worldDiag.loadingReported and now > 0
+             and now - worldDiag.loadingEntered > 10 then
+        worldDiag.loadingReported = true
+        DebugOverlay.error("drawWorld: stuck loading %.0fs (%d pending)",
+                           now - worldDiag.loadingEntered,
+                           ChunkMesher.pending())
+      end
+      DebugOverlay.pipelinePath("loading", {
+        pending = ChunkMesher.pending(),
+      })
       return VoxelLoading.draw(sw, sh, ChunkMesher.pending())
     end
+    worldDiag.loadingEntered = 0
+    worldDiag.loadingReported = false
     -- With AA on, the whole pass runs into a canvas BIGGER than the window
     -- and is folded back down at the end (see AntiAlias).  Nothing between
     -- these two lines knows: every pass in the frame measures itself in the
@@ -383,7 +500,14 @@ mod.content.render_pipelines:register("voxel", {
       renderMs = (love.timer.getTime() - t0) * 1000
     end
     if not canvas then
-      DebugOverlay.error("drawWorld: scene returned no canvas (2D fallback)")
+      local reason = Voxel3D.beginFailure or "scene returned no canvas"
+      DebugOverlay.pipelinePath("fallback", { reason = reason })
+      DebugOverlay.error("drawWorld: scene returned no canvas (2D fallback): %s",
+                         reason)
+    end
+    if not worldDiag.firstRender and canvas then
+      worldDiag.firstRender = true
+      DebugOverlay.note("drawWorld: first scene render (%.0fms)", renderMs)
     end
     if not canvas then return nil end   -- fall back to the 2D path
     if Voxel3D.beginOverlay() then
@@ -413,7 +537,14 @@ mod.content.render_pipelines:register("voxel", {
       -- HIGH (or the desktop path): the AA fold only.
       canvas = AntiAlias.resolve(canvas, sw, sh, "world")
     end
+    DebugOverlay.pipelinePath("rendered", {
+      width = crw, height = crh, renderMs = renderMs,
+    })
     return canvas
+    end
+    local ok, result = DebugOverlay.try("voxel-drawWorld", renderWorld)
+    if not ok then error(result, 0) end
+    return result
   end,
 
   invalidate = function()
@@ -650,6 +781,15 @@ local SETTINGS = {
       "fixed rung costs",
       "fill rate and RAM." },
     full = true },
+  -- Debug/support rows: the DEBUGGER panel toggle (Android has no F9 key,
+  -- and its SELECT hold chord is gated off mobile, so this row is the
+  -- touch access) -- SEND LOGS lives with the other actions in
+  -- voxelSettingsRows, as the F8 chord's menu equivalent.
+  { DebugOverlay.setting,
+    { "Show the debug",
+      "panel. OFF hides",
+      "it; the background",
+      "log still records." } },
 }
 
 -- The mod manager's page lists this mod's settings from the same schema:
@@ -1052,6 +1192,17 @@ local function voxelSettingsRows(game)
     value = function() return "DELETE" end,
     activate = confirmCacheWipe,
   }
+  -- F8's touch access: ship the background log right now.  The START hold
+  -- chord does the same on pads/mobile; this row works everywhere the
+  -- VOXEL SETTINGS screen does.
+  rows[#rows + 1] = {
+    id = "potato_voxel:send_logs",
+    label = "SEND LOGS",
+    value = function() return "SEND" end,
+    activate = function()
+      DebugOverlay.export()
+    end,
+  }
   return rows
 end
 
@@ -1222,11 +1373,23 @@ end
 -- new colours land on the diorama already on screen, in one frame, which is
 -- what a palette toggle should look like from inside voxel mode.
 mod.events:on("map.reloaded", function(payload)
+  DebugOverlay.event("map.reloaded", {
+    mapId = payload and payload.mapId,
+    reason = payload and payload.reason,
+  })
   DebugOverlay.trace("event map.reloaded %s (%s)",
                     tostring(payload and payload.mapId), tostring(payload and payload.reason))
   if payload and payload.reason == "colors" then return end
   local mapId = payload and (payload.mapId or (payload.map and payload.map.id))
   if mapId then ChunkMesher.invalidate(mapId) end
+end)
+
+mod.events:on("map.entered", function(payload)
+  DebugOverlay.event("map.entered", {
+    mapId = payload and (payload.mapId or payload.id),
+  })
+  DebugOverlay.trace("event map.entered %s",
+                    tostring(payload and (payload.mapId or payload.id)))
 end)
 
 -- ------- rows come and go, so the menu has to notice
@@ -1425,15 +1588,23 @@ DayTint.install()
 -- save with no clock in it starts at day; that is DayNight.restore's
 -- fallback, and also the DAYTIME row's own default.
 mod.events:on("game.ready", function(payload)
-  if payload and payload.game then CachePrebuild.bootstrap(payload.game) end
+  if payload and payload.game then
+    DebugOverlay.bindGame(payload.game)
+    DebugOverlay.event("game.ready")
+    CachePrebuild.bootstrap(payload.game)
+  end
 end)
 
-mod.events:on("save.writing", function()
+mod.events:on("save.writing", function(payload)
+  DebugOverlay.event("save.writing")
+  if payload and payload.game then DebugOverlay.bindGame(payload.game) end
   DebugOverlay.trace("event save.writing")
   DayNight.store()
 end)
 
-mod.events:on("save.loaded", function()
+mod.events:on("save.loaded", function(payload)
+  DebugOverlay.event("save.loaded")
+  if payload and payload.game then DebugOverlay.bindGame(payload.game) end
   DebugOverlay.trace("event save.loaded")
   DayNight.restore()
   -- a save written before this mod was installed can carry TILT or GBC FX
@@ -1443,7 +1614,9 @@ mod.events:on("save.loaded", function()
   pinEngineFx()
 end)
 
-mod.events:on("save.created", function()
+mod.events:on("save.created", function(payload)
+  DebugOverlay.event("save.created")
+  if payload and payload.game then DebugOverlay.bindGame(payload.game) end
   DebugOverlay.trace("event save.created")
   DayNight.restore()
   pinEngineFx()
@@ -1467,3 +1640,6 @@ mod.exports.lib = V
 -- the Brick tuner, exposed so tests and tooling can probe isBrick() and
 -- the pinned ladders without a device
 mod.exports.brick = BrickProfile
+-- Public support seam: data-only status and export/probe controls without
+-- exposing the live renderer objects themselves.
+mod.exports.debug = DebugOverlay

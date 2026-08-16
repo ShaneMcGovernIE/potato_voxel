@@ -69,9 +69,12 @@ only one may run at a time.
 
 ## Diagnostics (hidden)
 
-F9 toggles a debug overlay (off by default), F10 switches its detail
-level, F8 exports its log. It exists for support reports and is silent
-unless turned on.
+The debugger records diagnostics in the background from boot. F9 shows or
+hides its panel, F10 switches its detail level, and F8 exports its log plus a
+capability probe. The export preserves early boot evidence, recent runtime
+lines, and a data-only `debug/status` record containing pipeline eligibility,
+shader/canvas reasons, renderer information, cache/storage state, and world
+render-path counters. It does not add a visible panel until you press F9.
 
 ## Develop & test
 

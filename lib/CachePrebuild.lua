@@ -321,15 +321,34 @@ function Prebuild.update()
   local jobStatus = ChunkMesher.jobStatus(job.id, bodyOnly)
   if jobStatus == "pending" then return end
   if jobStatus ~= "complete" or not MeshCache.verifyJob(state.slot, job.slot) then
-    state.failed = true
-    state.error = jobStatus
-      or MeshCache.saveError()
+    -- A single bad job must not abort the whole build: record it, release
+    -- the map, and move on. writeProgress has already left a manifest
+    -- naming every job that survived, so the next boot's resume set
+    -- retries exactly this job -- the ones around it are NOT rebuilt from
+    -- scratch (this was a full rebuild every boot when one aux save
+    -- failed). Only an epidemic aborts: a platform-wide storage failure is
+    -- better reported as FAILED than ground through job by job.
+    state.failedJobs = (state.failedJobs or 0) + 1
+    local maxFailures = math.max(4, math.floor(state.total / 10))
+    local reason = jobStatus or MeshCache.saveError()
       or "cache verification failed"
     local okD, Overlay = pcall(V.require, "DebugOverlay")
     if okD and Overlay then
-      Overlay.error("prebuild job failed: %s", tostring(state.error))
+      Overlay.error("prebuild job failed (%d/%d): %s -- %s/%s",
+                    state.failedJobs, state.total, tostring(reason),
+                    tostring(job.id), tostring(job.slot))
     end
-    finish(false)
+    if state.failedJobs > maxFailures then
+      state.failed = true
+      state.error = ("%d jobs failed"):format(state.failedJobs)
+      finish(false)
+      return
+    end
+    releaseMap(job.id, state.game)
+    state.done = state.done + 1
+    state.index = state.index + 1
+    state.slot = nil
+    if state.done >= state.total then finish(false) end
     return
   end
   state.completed[tostring(job.id) .. "/" .. tostring(job.slot)] =

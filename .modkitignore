@@ -14,3 +14,4 @@ tests/goldens/shadow_golden.txt
 
 # Repo-only: issue templates must never ship in the mod zip.
 .github
+tests/shadow_runtime_test.lua

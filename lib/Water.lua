@@ -409,7 +409,7 @@ Water.EDGE_FADE = 0.14         -- reflection eased off over this much of the fra
 -- stage applies and therefore lands in the same place the geometry did.
 local SHADER_SRC = [[
 varying float vShade;
-varying vec3 vSun;
+varying LOVE_HIGHP_OR_MEDIUMP vec3 vSun;
 // World position, as drawn -- and a varying that cannot ride GLSL ES's
 // mediump fragment default: everything below floors it into columns and
 // marches it through the frame's matrices, and a route's coordinates run

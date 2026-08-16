@@ -9,7 +9,7 @@ local function exists(path)
   return true
 end
 
-local root = exists("main.lua") and "." or "mods/potato_voxel"
+local root = exists("manifest.json") and "." or "mods/potato_voxel"
 local files = { root .. "/main.lua" }
 local listing = assert(io.popen(("find %q/lib %q/data -type f -name '*.lua' | sort")
                               :format(root, root)))

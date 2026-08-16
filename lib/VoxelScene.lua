@@ -922,7 +922,7 @@ local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
       ShadowMap.finish(worldSig, false)
     end)
     if not ok then
-      ShadowMap.abort()
+      ShadowMap.abort(false, err)
       pcall(print, "[PotatoVoxel] shadow world pass aborted: " .. tostring(err))
     end
   end
@@ -930,7 +930,7 @@ local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
   -- sprite layer: posed characters + battle cards, snugged and marked as
   -- the cast so water declines them. Only when a sprite actually moved.
   if spriteLayer and (spriteStale or worldStale) then
-    local ok = pcall(function()
+    local ok, err = pcall(function()
       if not ShadowMap.begin(cx, cy, vw, vh, true) then return end
       ShadowMap.sprites(true)
       for _, p in ipairs(posed) do
@@ -958,7 +958,10 @@ local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
       ShadowMap.sprites(false)
       ShadowMap.finish(spriteSig, true)
     end)
-    if not ok then ShadowMap.abort() end
+    if not ok then
+      ShadowMap.abort(true, err)
+      pcall(print, "[PotatoVoxel] shadow sprite pass aborted: " .. tostring(err))
+    end
   end
 end
 
