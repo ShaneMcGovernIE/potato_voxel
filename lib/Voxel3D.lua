@@ -258,7 +258,7 @@ local SHADER = [[
   uniform float glassGlint;   // and its strength: 0 while standing still
   uniform float glassOn;      // 0 for sprite-sheet draws (see Voxel3D.glass)
 
-  vec4 effect(EFFECT_PREC vec4 color, Image tex, EFFECT_PREC vec2 tc,
+  EFFECT_PREC vec4 effect(EFFECT_PREC vec4 color, Image tex, EFFECT_PREC vec2 tc,
               EFFECT_PREC vec2 sc) {
     vec4 p = Texel(tex, tc);
     // sprite sheets key GB OBJ color 0 to alpha 0; discarding rather than

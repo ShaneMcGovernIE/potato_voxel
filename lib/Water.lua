@@ -948,7 +948,7 @@ vec2 waveUV(vec2 tc, vec2 col) {
 // the Lua side fills in, and Water.shader compiles the pinned form first
 // and the bare one only if that is refused. Whichever prototype a runtime
 // brought, one of the two agrees with it.
-vec4 effect(EFFECT_PREC vec4 color, Image tex, EFFECT_PREC vec2 tc,
+EFFECT_PREC vec4 effect(EFFECT_PREC vec4 color, Image tex, EFFECT_PREC vec2 tc,
             EFFECT_PREC vec2 sc) {
   // THE DEPTH TEST, done here because the buffer that would have done it is
   // detached for the length of this pass so it can be READ (see the header).

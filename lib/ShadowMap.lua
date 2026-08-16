@@ -182,7 +182,7 @@ local SHADER = [[
 #endif
 #endif
   uniform float sprite;   // 1 while the CAST is being drawn; see ShadowMap.sprites
-  vec4 effect(EFFECT_PREC vec4 color, Image tex, EFFECT_PREC vec2 tc,
+  EFFECT_PREC vec4 effect(EFFECT_PREC vec4 color, Image tex, EFFECT_PREC vec2 tc,
               EFFECT_PREC vec2 sc) {
     // the same alpha discard the main pass uses: a sprite card casts its
     // silhouette, not its 16x16 bounding box
