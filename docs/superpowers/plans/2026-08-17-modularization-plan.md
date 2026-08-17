@@ -47,8 +47,8 @@
 
 - [ ] Characterize current hook registration order and the exact settings row/preset/hotkey behavior.
 - [ ] Extract engine-facing wrappers and hook installation into `RuntimeHooks` without changing callback order or error handling.
-- [ ] Extract settings schema, row construction, preset application, and hotkey synchronization into `SettingsFeature`.
-- [ ] Pass explicit context tables from `main.lua`; keep module loading and exports unchanged.
+- [x] Extract settings schema, live settings summary, and settings-row ownership into `SettingsFeature`.
+- [x] Pass an explicit context table from `main.lua`; keep module loading and exports unchanged.
 - [ ] Verify settings, loading, runtime seam, and shadow suites before and after extraction.
 
 ## Task 4: Extract cache readiness and prebuild gating

@@ -112,6 +112,7 @@ local HordeSfx = V.require("HordeSfx")
 local MapAtmos = V.require("MapAtmos")
 local Weather = V.require("Weather")
 local VoxelLoading = V.require("VoxelLoading")
+local SettingsFeature = V.require("SettingsFeature")
 local DebugOverlay = V.require("DebugOverlay")
 local PlayerId = V.require("PlayerId")
 DebugOverlay.install()
@@ -790,188 +791,28 @@ stagedBattles = function()
   return OverworldBattle.enabled()
 end
 
-local SETTINGS = {
-  { QualityMode.renderSetting,
-    { "Draws 3D world",
-      "small, scales up.",
-      "Biggest framerate",
-      "lever. The modes",
-      "set it; moving",
-      "it makes the mode",
-      "CUSTOM." },
-    full = true },
-  { VoxelGrid.setting,
-    { "Wireframe along",
-      "every voxel edge." } },
-  { WorldCurve.setting,
-    { "Bends the world",
-      "down over the",
-      "horizon." } },
-  { Water.setting,
-    { "Reflects the world",
-      "on water. FULL",
-      "adds the shore;",
-      "SKY is sun and",
-      "moon alone." },
-    -- Off on Android: the reflective pass's stripes on Mali GPUs are
-    -- unresolved (see Water.onAndroid), so the row is hidden rather than
-    -- offered broken -- Android draws flat water until the fix lands.
-    when = function() return not Water.onAndroid() end },
-  -- `full` marks a row FULL does not take away. FULL owns the diorama's own
-  -- knobs; what a battle is drawn over, and how it is framed, are not that.
-  -- Off the OPTIONS menu while VR is on: the headset REQUIRES staged
-  -- battles (OverworldBattle.enabled answers true regardless of this row)
-  -- and forbids back sprites (backPinned answers false), so both rows
-  -- decide nothing there and a dead switch on the menu reads as broken.
-  { OverworldBattle.setting,
-    { "Battles in 3D,",
-      "shot over the",
-      "shoulder. A stages",
-      "on the map, B on",
-      "discs in the sky." },
-    when = function() return not VR.enabled() end, full = true },
-  -- Only offered while a fight can actually be staged on the map: with 3D-BTL
-  -- off the engine draws the classic screen, which is this row's ON already,
-  -- and a row that no longer decides anything is worse than no row.
-  { OverworldBattle.backSetting,
-    { "Keep your own mon",
-      "on the battle",
-      "menu, seen from",
-      "behind." },
-    when = function() return stagedBattles() and not VR.enabled() end,
-    full = true },
-  { DayNight.setting,
-    { "Pin the sky to",
-      "DAY, NIGHT, DUSK",
-      "or DAWN, run it",
-      "on CYCLE, or SYNC",
-      "to the wall clock." } },
-  { MapAtmos.setting,
-    { "Map haze on the",
-      "weather maps (the",
-      "forest, the caves).",
-      "OFF keeps clear",
-      "air everywhere." } },
-  { Weather.setting,
-    { "Falling rain and",
-      "snow on the maps",
-      "that have them.",
-      "OFF keeps clear",
-      "skies everywhere." } },
-  -- Marked `full` for the opposite reason the battle rows are: this is not a
-  -- knob on the look at all, it is what the look COSTS. FULL is a preset for
-  -- the diorama, not a licence to spend four times the fill rate on the
-  -- machine it happens to be running on, so it neither sets this nor takes
-  -- the row away -- the player decides what their hardware can carry, from
-  -- inside FULL like anywhere else.
-  { AntiAlias.setting,
-    { "Smooths 3D edges",
-      "by rendering big",
-      "and folding down.",
-      "2X/4X cost real",
-      "fill rate." },
-    full = true },
-  -- `full` for the same reason as AA: not a knob on the look, a question
-  -- about the hardware on the desk.
-  { VR.setting,
-    { "PCVR through",
-      "OpenXR: the map",
-      "as a tabletop",
-      "model. Windows",
-      "runtime needed." },
-    -- on Windows the row stays even when a runtime is missing (the console
-    -- says why); off Windows -- mobile above all -- there is no VR to have
-    -- and the row does not exist
-    when = function() return VR.supported() end, full = true },
-  -- Under the VR row and only while it is ON: a comfort setting for a
-  -- device that is not plugged in decides nothing, and this one is read
-  -- exclusively by the headset's right stick.
-  { VR.smoothTurn,
-    { "Turn smoothly in",
-      "VR instead of",
-      "45-degree snaps.",
-      "OFF until you",
-      "have your sea",
-      "legs." },
-    when = function() return VR.enabled() end, full = true },
-  -- Marked `full` for the same reason as AA: not knobs on the look, what the
-  -- look COSTS, so FULL neither sets them nor takes the rows away -- the
-  -- player decides what their hardware can carry, from inside FULL like
-  -- anywhere else.
-  { ShadowSettings.enabledSetting,
-    { "Real cast shadows",
-      "across the map.",
-      "OFF is the flat",
-      "lit model." },
-    full = true },
-  { ShadowSettings.qualitySetting,
-    { "Shadow map size",
-      "in texels. AUTO",
-      "fits the view; a",
-      "fixed rung costs",
-      "fill rate and RAM." },
-    full = true },
-  -- Debug/support rows: the DEBUGGER panel toggle (Android has no F9 key,
-  -- and its SELECT hold chord is gated off mobile, so this row is the
-  -- touch access) -- SEND LOGS lives with the other actions in
-  -- voxelSettingsRows, as the F8 chord's menu equivalent.
-  { DebugOverlay.setting,
-    { "Show the debug",
-      "panel. OFF hides",
-      "it; the background",
-      "log still records." } },
-  -- The opt-out send toggle: ON by default, ships the log automatically
-  -- every 15 minutes of game time and on every manual export. OFF stops
-  -- all sends until it is turned back on.
-  { DebugOverlay.sendSetting,
-    { "Send logs to the",
-      "developer over the",
-      "internet. OFF stops",
-      "all sends." } },
-}
-
--- The mod manager's page lists this mod's settings from the same schema:
--- each row is the documented options shape -- { key, label, default,
--- help } -- so the page carries one row per setting at its default rung;
--- the full ladders live on the mod's own VOXEL SETTINGS screen. The VR
--- rows are the one omission -- they are absent from the manager's page
--- wherever the platform cannot do VR at all (the OPTIONS menu's `when`
--- gates are situational, a row hidden for now; this one is existential).
--- The VOXEL row still lives on the OPTIONS menu, through the
--- render-pipelines registry, as the quality ladder (OFF / HIGH / MEDIUM /
--- LOW / POTATO).
-local schema = {}
-for _, entry in ipairs(SETTINGS) do
-  local vrOnly = entry[1] == VR.setting or entry[1] == VR.smoothTurn
-  if not vrOnly or VR.supported() then
-    schema[#schema + 1] = entry[1]:schema(entry[2])
-  end
-end
-mod.options:define(schema)
+local Settings = SettingsFeature.new({
+  mod = mod,
+  QualityMode = QualityMode,
+  VoxelGrid = VoxelGrid,
+  WorldCurve = WorldCurve,
+  Water = Water,
+  OverworldBattle = OverworldBattle,
+  DayNight = DayNight,
+  MapAtmos = MapAtmos,
+  Weather = Weather,
+  AntiAlias = AntiAlias,
+  VR = VR,
+  ShadowSettings = ShadowSettings,
+  DebugOverlay = DebugOverlay,
+  stagedBattles = stagedBattles,
+})
+Settings.defineSchema()
 
 -- Mint the per-install support token early so the PLAYER ID row and the
--- debugger show the real id from the title screen (options are live from
--- load; a missing store leaves the session without an id, never errors).
+-- debugger show the real id from the title screen.
 PlayerId.ensure()
-
--- The VOXEL SETTINGS summary the debugger ships: the voxel rung plus every
--- live setting row as `key=label`, so a received log shows exactly what the
--- session ran with. Read live at send time through the same paths the rows
--- use, and gated rows are omitted exactly as the menu omits them.
-DebugOverlay.setSettingsReader(function()
-  local Pipelines = require("src.render.Pipelines")
-  local out = { "voxel=" .. tostring(Pipelines.levelLabel("voxel")) }
-  for _, entry in ipairs(SETTINGS) do
-    if not entry.when or entry.when() then
-      local setting = entry[1]
-      local i = setting:read()
-      if not setting:allows(i) then i = 1 end
-      out[#out + 1] = tostring(setting.key) .. "="
-                      .. tostring(setting.labels[i] or "?")
-    end
-  end
-  return table.concat(out, " ")
-end)
+DebugOverlay.setSettingsReader(Settings.settingsSummary)
 
 -- ------- this mod's hotkeys
 --
@@ -1317,7 +1158,7 @@ local function voxelSettingsRows(game)
   -- SHADOW QUALITY). The only gates are the situational `when`s -- VR
   -- rows, and BACK SPRITES needing a staged fight -- so nothing a device
   -- can carry is hidden from it.
-  for _, entry in ipairs(SETTINGS) do
+  for _, entry in ipairs(Settings.entries) do
     if not entry.when or entry.when() then
       rows[#rows + 1] = entry[1]:row()
     end
