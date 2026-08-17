@@ -98,8 +98,8 @@ Everything downstream reads one record per map (Structures.lua:249-253):
 
 ```lua
 S = {
-  shapeAt   -- keyOf(tx,ty) -> shape record (resolved, post-overrides)
-  tileAt    -- keyOf(tx,ty) -> tile id (post-repaint: figures/mounted/doors)
+  shapeAt   -- GridKey.of(tx,ty) -> shape record (resolved, post-overrides)
+  tileAt    -- GridKey.of(tx,ty) -> tile id (post-repaint: figures/mounted/doors)
   runs      -- key -> volume run record {front, north, extent, unit,
             --        fromRepeat, door, roofRows, rise, peak, h}
   skip      -- key -> true: claimed by a special builder (object/hull/
@@ -116,6 +116,6 @@ S = {
 }
 ```
 
-`keyOf(tx, ty) = (ty + 64) * 4096 + (tx + 64)` — a packed key, fine
-within a ±64-tile range. The same function is duplicated in Structures,
-Buildings, and ChunkMesher (keep them in sync when porting).
+`GridKey.of(tx, ty) = (ty + 64) * 4096 + (tx + 64)` — a packed key, fine
+within a ±64-tile range. The contract lives in `lib/GridKey.lua` and is
+shared by Structures, Buildings, ShapeDebug, and ChunkMesher.

@@ -54,12 +54,29 @@ if brick then
   local AntiAlias = exports.lib.require("AntiAlias")
   local WorldCurve = exports.lib.require("WorldCurve")
   local VoxelGrid = exports.lib.require("VoxelGrid")
+  local GridKey = exports.lib.require("GridKey")
+  local VR = exports.lib.require("VR")
   local Structures = exports.lib.require("Structures")
   local OverworldBattle = exports.lib.require("OverworldBattle")
   local QualityMode = exports.lib.require("QualityMode")
   local DayNight = exports.lib.require("DayNight")
   local MapAtmos = exports.lib.require("MapAtmos")
   T.eq(MapAtmos.setting:get(), false, "ATMOS defaults OFF")
+  T.eq(GridKey.of(-64, -64), 0,
+       "grid keys keep the lower supported coordinate at zero")
+  T.eq(GridKey.of(0, 0), 262208,
+       "grid keys use the shared 4096-wide packed coordinate")
+  T.eq(GridKey.of(63, 63), (63 + 64) * 4096 + (63 + 64),
+       "grid keys preserve the upper supported coordinate")
+  T.eq(VR.supported(), false, "removed VR reports unsupported")
+  T.eq(VR.enabled(), false, "removed VR never enables")
+  T.eq(VR.active(), false, "removed VR never activates")
+  VR.update(1 / 60)
+  T.eq(VR.mirror(320, 240), nil, "removed VR has no mirror surface")
+  VR.invalidate()
+  T.eq(VR.paletteFor, nil, "removed VR has no palette callback")
+  T.check(type(VR.cycleVoxel) == "function",
+          "the composition root keeps the view-cycle compatibility callback")
   local fakeMap = { id = "VIRIDIAN_FOREST" }
   T.eq(MapAtmos.fogFor(fakeMap), nil, "ATMOS OFF: clear air even on a weather map")
   MapAtmos.setting:setValue(true, fakeGame)

@@ -50,10 +50,7 @@
 local V = ...
 
 local Budget = V.require("BuildBudget")
--- Perf died with the diagnostics panel (see the removals ADR); the
--- counters it fed are gone, so the instrumentation call sites became
--- no-ops.
-local Perf = { enabled = false, count = function() end }
+local GridKey = V.require("GridKey")
 
 local Buildings = {}
 
@@ -113,10 +110,6 @@ local function runCap(a)
   return CELL - a % CELL
 end
 
-local function keyOf(tx, ty)
-  return (ty + 64) * 4096 + (tx + 64)
-end
-
 local function shadeOf(r, g, b, a)
   if a == 0 then return WHITE end
   local v = math.min(r, g, b)
@@ -170,7 +163,6 @@ local function read(t, data, perRow)
   -- changing any classification or UV source coordinates.
   local sampled = {}
   local atlasStride = perRow * 8
-  local atlasSamples, atlasHits = 0, 0
   for sy = 0, H - 1 do
     Budget.tick()
     local row = tiles[math.floor(sy / 8) + 1]
@@ -188,16 +180,9 @@ local function read(t, data, perRow)
         local r, g, b, a = data:getPixel(px, py)
         shade = shadeOf(r, g, b, a)
         sampled[sampleKey] = shade
-        atlasSamples = atlasSamples + 1
-      else
-        atlasHits = atlasHits + 1
       end
       col[i] = shade
     end
-  end
-  if Perf.enabled then
-    Perf.count("buildings.atlas_samples", atlasSamples)
-    Perf.count("buildings.atlas_cache_hits", atlasHits)
   end
 
   local outside = {}
@@ -1254,7 +1239,7 @@ local function matches(S, t, tx, ty)
   for r = 1, #tiles do
     local row = tiles[r]
     for c = 1, #row do
-      if S.tileAt[keyOf(tx + c - 1, ty + r - 1)] ~= row[c] then
+      if S.tileAt[GridKey.of(tx + c - 1, ty + r - 1)] ~= row[c] then
         return false
       end
     end
@@ -1286,7 +1271,7 @@ function Buildings.build(S, map, data, perRow)
   for ty = 0, th - 1 do
     Budget.tick()
     for tx = 0, tw - 1 do
-      local tile = S.tileAt[keyOf(tx, ty)]
+      local tile = S.tileAt[GridKey.of(tx, ty)]
       if tile ~= nil then
         local row = anchors[tile]
         if not row then
@@ -1298,8 +1283,6 @@ function Buildings.build(S, map, data, perRow)
       end
     end
   end
-  if Perf.enabled then Perf.count("buildings.anchor_cells", tw * th) end
-
   for index, t in ipairs(list) do
     if type(t.tiles) == "table" and #t.tiles > 0 then
       local bh, bw = #t.tiles, #t.tiles[1]
@@ -1319,11 +1302,10 @@ function Buildings.build(S, map, data, perRow)
           -- list order below is the priority order -- the tower's own
           -- templates come first precisely so they take those cells.
           if tx <= tw - bw and ty <= th - bh then
-            if Perf.enabled then Perf.count("buildings.candidate_checks") end
             local free = true
             for r = 0, bh - 1 do
               for c = 0, bw - 1 do
-                if S.skip[keyOf(tx + c, ty + r)] then
+                if S.skip[GridKey.of(tx + c, ty + r)] then
                   free = false
                   break
                 end
@@ -1331,7 +1313,6 @@ function Buildings.build(S, map, data, perRow)
               if not free then break end
             end
             if free and matches(S, t, tx, ty) then
-              if Perf.enabled then Perf.count("buildings.matches") end
               if not built then
                 local key = tileset.id .. ":" .. index
                 if not models[key] then
@@ -1384,7 +1365,7 @@ function Buildings.stamp(S, map, quads, tx, ty, bw, bh, t)
   -- feet, so a house on a path keeps its path
   local votes, best, bestN = {}, nil, 0
   local function vote(x, y)
-    local k = keyOf(x, y)
+    local k = GridKey.of(x, y)
     local ns = S.shapeAt[k]
     if ns and ns.flat and ns.class ~= "void" then
       local tile = S.tileAt[k]
@@ -1403,7 +1384,7 @@ function Buildings.stamp(S, map, quads, tx, ty, bw, bh, t)
 
   for r = 0, bh - 1 do
     for c = 0, bw - 1 do
-      local k = keyOf(tx + c, ty + r)
+      local k = GridKey.of(tx + c, ty + r)
       if keep and keep[S.tileAt[k]] then
         -- unclaimed by request: the tile keeps its pin (the plant's
         -- cutout pool) and the standee scan finds it there. Only the

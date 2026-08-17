@@ -16,6 +16,7 @@
 
 -- the mod namespace (see main.lua): V.require loads a sibling module
 local V = ...
+local GridKey = V.require("GridKey")
 
 local ShapeDebug = {}
 
@@ -66,12 +67,6 @@ local CLASS_COLORS = {
 
 local DEFAULT = { 0.5, 0.5, 0.5 }
 
--- same packed key the analysis uses (Structures/ChunkMesher keep their
--- own copies; this file's is one more of the family)
-local function keyOf(tx, ty)
-  return (ty + 64) * 4096 + (tx + 64)
-end
-
 -- The class colour for a shape, or nil for no shape.
 function ShapeDebug.colorFor(s)
   if not s then return nil end
@@ -117,7 +112,7 @@ local function build(map)
     local data = love.image.newImageData(tw, th)
     for ty = 0, th - 1 do
       for tx = 0, tw - 1 do
-        local c = ShapeDebug.pixelFor(S, keyOf(tx, ty))
+        local c = ShapeDebug.pixelFor(S, GridKey.of(tx, ty))
         data:setPixel(tx, ty, c[1], c[2], c[3], 1)
       end
     end

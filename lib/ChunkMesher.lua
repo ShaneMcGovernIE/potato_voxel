@@ -56,6 +56,7 @@ local TileShape = V.require("TileShape")
 local Voxel3D = V.require("Voxel3D")
 local Budget = V.require("BuildBudget")
 local MeshCache = V.require("MeshCache")
+local GridKey = V.require("GridKey")
 
 -- ffi is gone (sandbox) and this engine's love.data ByteData carries no
 -- accessors, so the native float buffers are gone with them: the table
@@ -100,10 +101,6 @@ local SIDES = {
   { 0, 1, 5 },    -- +Z south
   { 0, -1, 6 },   -- -Z north
 }
-
-local function keyOf(tx, ty)
-  return (ty + 64) * 4096 + (tx + 64)
-end
 
 -- ------------------------------------------------------------ vertex sinks
 
@@ -254,7 +251,7 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
   local atlasH = tileset.imageHeight or 48
 
   local function heightAt(tx, ty)
-    local k = keyOf(tx, ty)
+    local k = GridKey.of(tx, ty)
     if S.skip[k] then return 0 end
     local run = S.runs[k]
     if run then return run.h end
@@ -480,7 +477,7 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
       -- build -- billboard cards, side bands, shoreline faces -- and a
       -- sampled tick let a single cell overshoot the whole slice
       Budget.check()
-      local k = keyOf(tx, ty)
+      local k = GridKey.of(tx, ty)
       local s, tile = S.shapeAt[k], S.tileAt[k]
       local inBody = tx >= 0 and ty >= 0 and tx < tw and ty < th
       if not inBody and masked(tx * 8, ty * 8, tx * 8 + 8, ty * 8 + 8) then
@@ -591,7 +588,7 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
             -- northmost row.
             local north, front = ty, ty
             while ty - north < 6 do
-              local bs = S.shapeAt[keyOf(tx, north - 1)]
+              local bs = S.shapeAt[GridKey.of(tx, north - 1)]
               if bs and bs.authored and bs.class == s.class then
                 north = north - 1
               else
@@ -599,7 +596,7 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
               end
             end
             while front - ty < 6 do
-              local bs = S.shapeAt[keyOf(tx, front + 1)]
+              local bs = S.shapeAt[GridKey.of(tx, front + 1)]
               if bs and bs.authored and bs.class == s.class then
                 front = front + 1
               else
@@ -612,11 +609,11 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
               -- row just above it when that row is furniture too (a
               -- bookcase wearing its shelf-top trim), else with the
               -- run's own top row
-              local above = S.shapeAt[keyOf(tx, north - 1)]
+              local above = S.shapeAt[GridKey.of(tx, north - 1)]
               row = (above and above.authored and above.art == "upright")
                     and (north - 1) or north
             end
-            topTile = S.tileAt[keyOf(tx, row)]
+            topTile = S.tileAt[GridKey.of(tx, row)]
           end
           -- water's surface, and only water's: the recessed sheet itself,
           -- never the ground's shoreline bands around it. A cell an object
@@ -673,14 +670,14 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
                   if d == 5 then shade = 1 end
                   local front = ty
                   while front < ty + 6 do
-                    local fs2 = S.shapeAt[keyOf(tx, front + 1)]
+                    local fs2 = S.shapeAt[GridKey.of(tx, front + 1)]
                     if fs2 and fs2.authored and fs2.class == s.class then
                       front = front + 1
                     else
                       break
                     end
                   end
-                  local fk = keyOf(tx, front - band)
+                  local fk = GridKey.of(tx, front - band)
                   local fs = S.shapeAt[fk]
                   if fs and fs.authored and fs.class == s.class then
                     src = S.tileAt[fk]

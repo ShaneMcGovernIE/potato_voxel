@@ -51,10 +51,10 @@ A companion mod can rebuild/refresh meshes off the same events, or read
    fall back to volumes; the profile fixes the art the detector reads
    wrong. Improvement = better segmentation (more shade-aware floods,
    texture continuity), less authoring per tileset.
-2. **Key collisions**: `keyOf` is a packed int with a ±64-tile
+2. **Key collisions**: `GridKey.of` is a packed int with a ±64-tile
    assumption (fine for Gen 1 maps); a port with bigger maps needs a
-   real hash. Three copies of `keyOf` (Structures, Buildings,
-   ChunkMesher) must stay in sync.
+   real hash. The coordinate contract now lives in `lib/GridKey.lua`, so
+   Structures, Buildings, ShapeDebug, and ChunkMesher cannot drift apart.
 3. **`roundCache` is global and never LRU'd** — bounded in practice by
    tileset art variety, but a tileset-heavy session grows it. A cap or
    per-neighbourhood eviction would harden it.

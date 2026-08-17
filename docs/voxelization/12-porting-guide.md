@@ -60,8 +60,9 @@ adapters, not the algorithms.**
 
 ## Porting steps
 
-1. **Adapters** — write the map/tileset/atlas shim above. Keep
-   `keyOf` (the same packed key in three files).
+1. **Adapters** — write the map/tileset/atlas shim above. Keep the
+   `GridKey.of` coordinate contract in one shared module; widen that module
+   before porting maps beyond the supported ±64-tile range.
 2. **TileShape** — point `V.data` at your profile loader; keep the
    fallback heights table as the no-profile floor.
 3. **Structures** — run `forMap` per map; cache by map id. The

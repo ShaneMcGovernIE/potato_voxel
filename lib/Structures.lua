@@ -49,6 +49,7 @@ local Map = require("src.world.Map")
 local Buildings = V.require("Buildings")
 local TileShape = V.require("TileShape")
 local Budget = V.require("BuildBudget")
+local GridKey = V.require("GridKey")
 
 local Structures = {}
 
@@ -152,10 +153,6 @@ end
 
 local DIRS4 = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
 
-local function keyOf(tx, ty)
-  return (ty + 64) * 4096 + (tx + 64)
-end
-
 function Structures.forMap(map)
   local S = cache[map.id]
   if S then return S end
@@ -223,7 +220,7 @@ function Structures.forMap(map)
       Budget.tick()
       local tile = tileLookup(tx, ty)
       if tile then
-        local k = keyOf(tx, ty)
+        local k = GridKey.of(tx, ty)
         local s = TileShape.at(map, shapes, tile, tx, ty)
         if s and void and void[tile] and not s.authored then
           s = shapes.classes.void
@@ -272,12 +269,12 @@ function Structures.forMap(map)
   for cy = math.floor(y0 / 2), math.floor(y1 / 2) do
     for cx = math.floor(x0 / 2), math.floor(x1 / 2) do
       if map.doorTiles[map:cellTile(cx, cy)] then
-        local northK = keyOf(cx * 2, cy * 2 - 1)
+        local northK = GridKey.of(cx * 2, cy * 2 - 1)
         local ns = shapeAt[northK]
         if ns and ns.art == "upright" then
           for dy = 0, 1 do
             for dx = 0, 1 do
-              local dk = keyOf(cx * 2 + dx, cy * 2 + dy)
+              local dk = GridKey.of(cx * 2 + dx, cy * 2 + dy)
               local ds = shapeAt[dk]
               if not (ds and ds.authored) then
                 shapeAt[dk] = shapes.classes.wall
@@ -347,7 +344,7 @@ function Structures.forMap(map)
   local regions = {}
   for ty = y0, y1 do
     for tx = x0, x1 do
-      local k = keyOf(tx, ty)
+      local k = GridKey.of(tx, ty)
       if structural(k) and not seen[k] then
         local region = { tiles = {}, minX = tx, maxX = tx,
                          minY = ty, maxY = ty }
@@ -365,7 +362,7 @@ function Structures.forMap(map)
           for _, d in ipairs(DIRS4) do
             local nx, ny = cx + d[1], cy + d[2]
             if nx >= x0 and nx <= x1 and ny >= y0 and ny <= y1 then
-              local nk = keyOf(nx, ny)
+              local nk = GridKey.of(nx, ny)
               if structural(nk) and not seen[nk] then
                 seen[nk] = true
                 queue[#queue + 1] = { nx, ny }
@@ -396,7 +393,7 @@ function Structures.forMap(map)
     local seenB = {}
     for ty = y0, y1 do
       for tx = x0, x1 do
-        local k = keyOf(tx, ty)
+        local k = GridKey.of(tx, ty)
         local s = shapeAt[k]
         if s and s.art == "billboard" and not seenB[k] then
           local reg = { tiles = {}, minX = tx, maxX = tx,
@@ -412,7 +409,7 @@ function Structures.forMap(map)
             reg.minY = math.min(reg.minY, c[2])
             reg.maxY = math.max(reg.maxY, c[2])
             for _, d in ipairs(DIRS4) do
-              local nk = keyOf(c[1] + d[1], c[2] + d[2])
+              local nk = GridKey.of(c[1] + d[1], c[2] + d[2])
               local ns = shapeAt[nk]
               -- same CLASS, not just billboard art: `billboard` and
               -- `prop` are two pools precisely so touching drawings (a TV
@@ -441,9 +438,9 @@ function Structures.forMap(map)
     local postCells = {}
     for ty = y0, y1 do
       for tx = x0, x1 do
-        local s = shapeAt[keyOf(tx, ty)]
+        local s = shapeAt[GridKey.of(tx, ty)]
         if s and s.art == "post" then
-          local ck = keyOf(math.floor(tx / 2), math.floor(ty / 2))
+          local ck = GridKey.of(math.floor(tx / 2), math.floor(ty / 2))
           postCells[ck] = postCells[ck] or {}
           local list = postCells[ck]
           list[#list + 1] = { tx, ty }
@@ -468,7 +465,7 @@ function Structures.forMap(map)
     local seenR = {}
     for ty = y0, y1 do
       for tx = x0, x1 do
-        local k = keyOf(tx, ty)
+        local k = GridKey.of(tx, ty)
         local s = shapeAt[k]
         if s and s.art == "relief" and not seenR[k] then
           local reg = { tiles = {}, minX = tx, maxX = tx,
@@ -484,7 +481,7 @@ function Structures.forMap(map)
             reg.minY = math.min(reg.minY, c[2])
             reg.maxY = math.max(reg.maxY, c[2])
             for _, d in ipairs(DIRS4) do
-              local nk = keyOf(c[1] + d[1], c[2] + d[2])
+              local nk = GridKey.of(c[1] + d[1], c[2] + d[2])
               local ns = shapeAt[nk]
               if ns and ns.art == "relief" and ns.class == s.class
                  and not seenR[nk] then
@@ -494,7 +491,7 @@ function Structures.forMap(map)
             end
           end
           for _, c in ipairs(reg.tiles) do
-            local ck = keyOf(c[1], c[2])
+            local ck = GridKey.of(c[1], c[2])
             S.skip[ck] = true
             S.ground[ck] = false
           end
@@ -645,7 +642,7 @@ local function roundTemplate(S, map, data, cx, cy, groundTiles, N, capRows,
 
   -- cell-space art access (NX x NY, row 0 = top), anchored at cell (cx, cy)
   local function tileOf(px, py)
-    return S.tileAt[keyOf(cx * 2 + math.floor(px / 8),
+    return S.tileAt[GridKey.of(cx * 2 + math.floor(px / 8),
                           cy * 2 + math.floor(py / 8))]
   end
   local function texel(px, py)
@@ -1467,7 +1464,7 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
     for cx = math.floor(x0 / 2), math.floor(x1 / 2) do
       Budget.tick()
       local ckey = cy * 8192 + cx
-      local k = keyOf(cx * 2, cy * 2)
+      local k = GridKey.of(cx * 2, cy * 2)
       local s = (not grouped[ckey]) and S.shapeAt[k] or nil
       local near = cx * 2 >= -Structures.ROUND_RING and cx * 2 < tw + Structures.ROUND_RING
                and cy * 2 >= -Structures.ROUND_RING and cy * 2 < th + Structures.ROUND_RING
@@ -1478,7 +1475,7 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
         -- alone rather than carved into a half-empty giant.
         local whole = true
         for _, d in ipairs({ { 1, 0 }, { 0, 1 }, { 1, 1 } }) do
-          local ps = S.shapeAt[keyOf((cx + d[1]) * 2, (cy + d[2]) * 2)]
+          local ps = S.shapeAt[GridKey.of((cx + d[1]) * 2, (cy + d[2]) * 2)]
           if not (ps and (ps.art == "cylinder" or ps.art == "canopy")) then
             whole = false
           end
@@ -1489,7 +1486,7 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
             local ids = {}
             for dy = 0, 3 do
               for dx = 0, 3 do
-                ids[#ids + 1] = S.tileAt[keyOf(cx * 2 + dx, cy * 2 + dy)]
+                ids[#ids + 1] = S.tileAt[GridKey.of(cx * 2 + dx, cy * 2 + dy)]
               end
             end
             local sig = tsid .. "|g32|"
@@ -1509,7 +1506,7 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
           end
           for dy = 0, 3 do
             for dx = 0, 3 do
-              local tk = keyOf(cx * 2 + dx, cy * 2 + dy)
+              local tk = GridKey.of(cx * 2 + dx, cy * 2 + dy)
               S.skip[tk] = true
               S.ground[tk] = ground
             end
@@ -1532,14 +1529,14 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
         -- the two cells leaves the drawing partial (a map edit, a mod's
         -- stray tile), so the anchor is left alone rather than carved into
         -- half a plant.
-        local below = S.shapeAt[keyOf(cx * 2, (cy + 1) * 2)]
+        local below = S.shapeAt[GridKey.of(cx * 2, (cy + 1) * 2)]
         if below and below.art == "planter" then
           local ground = false
           if data then
             local ids = {}
             for dy = 0, 3 do
               for dx = 0, 1 do
-                ids[#ids + 1] = S.tileAt[keyOf(cx * 2 + dx, cy * 2 + dy)]
+                ids[#ids + 1] = S.tileAt[GridKey.of(cx * 2 + dx, cy * 2 + dy)]
               end
             end
             local sig = tsid .. "|p32|"
@@ -1560,7 +1557,7 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
           end
           for dy = 0, 3 do
             for dx = 0, 1 do
-              local tk = keyOf(cx * 2 + dx, cy * 2 + dy)
+              local tk = GridKey.of(cx * 2 + dx, cy * 2 + dy)
               S.skip[tk] = true
               S.ground[tk] = ground
             end
@@ -1587,9 +1584,9 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
             .. (taper and ("|t" .. taper) or "")
             .. (Structures.HULL_BILLBOARDS and "|bb|" or "") .. "|"
             .. gsig .. "|" .. table.concat({
-            S.tileAt[k], S.tileAt[keyOf(cx * 2 + 1, cy * 2)],
-            S.tileAt[keyOf(cx * 2, cy * 2 + 1)],
-            S.tileAt[keyOf(cx * 2 + 1, cy * 2 + 1)] }, ":")
+            S.tileAt[k], S.tileAt[GridKey.of(cx * 2 + 1, cy * 2)],
+            S.tileAt[GridKey.of(cx * 2, cy * 2 + 1)],
+            S.tileAt[GridKey.of(cx * 2 + 1, cy * 2 + 1)] }, ":")
           local tpl = roundCache[sig]
           if not tpl then
             local tq, tbg = roundTemplate(S, map, data, cx, cy,
@@ -1608,7 +1605,7 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
         -- falls to the commonest-ground pass below.
         for dy = 0, 1 do
           for dx = 0, 1 do
-            local tk = keyOf(cx * 2 + dx, cy * 2 + dy)
+            local tk = GridKey.of(cx * 2 + dx, cy * 2 + dy)
             S.skip[tk] = true
             S.ground[tk] = ground
           end
@@ -1636,13 +1633,13 @@ function Structures.buildRelief(S, map, region, data, perRow, h)
   local bw = (region.maxX - region.minX + 1) * 8
   local bh = (region.maxY - region.minY + 1) * 8
   local member = {}
-  for _, c in ipairs(region.tiles) do member[keyOf(c[1], c[2])] = true end
+  for _, c in ipairs(region.tiles) do member[GridKey.of(c[1], c[2])] = true end
 
   local cls, srcU, srcV = {}, {}, {}
   for py = 0, bh - 1 do
     for px = 0, bw - 1 do
       local i = py * bw + px
-      local k = keyOf(region.minX + math.floor(px / 8),
+      local k = GridKey.of(region.minX + math.floor(px / 8),
                       region.minY + math.floor(py / 8))
       if member[k] then
         local tile = S.tileAt[k]
@@ -1867,7 +1864,7 @@ local function bookcaseRank(S, map, perRow, run, i, j, k, pane, srcU, srcV,
   -- does the neighbouring column continue this shelf? (flanks only cap
   -- the ends of a run of bookcases standing side by side)
   local function joined(nx)
-    local ns = S.shapeAt[keyOf(nx, frontTy)]
+    local ns = S.shapeAt[GridKey.of(nx, frontTy)]
     return ns ~= nil and ns.art == "bookcase"
   end
 
@@ -2011,12 +2008,12 @@ function Structures.buildBookcases(S, map, x0, x1, y0, y1, data, perRow)
   for tx = x0, x1 do
     local ty = y1
     while ty >= y0 do
-      local s = S.shapeAt[keyOf(tx, ty)]
+      local s = S.shapeAt[GridKey.of(tx, ty)]
       if s and s.art == "bookcase" then
         -- the contiguous pinned run above this front row
         local north = ty
         while north > y0 do
-          local ns = S.shapeAt[keyOf(tx, north - 1)]
+          local ns = S.shapeAt[GridKey.of(tx, north - 1)]
           if ns and ns.art == "bookcase" then north = north - 1 else break end
         end
         -- ranks of at most four drawn rows, southmost first
@@ -2028,7 +2025,7 @@ function Structures.buildBookcases(S, map, x0, x1, y0, y1, data, perRow)
           -- because the same trim tiles cap other furniture too
           local capTile = nil
           if top == north then
-            local ck = keyOf(tx, north - 1)
+            local ck = GridKey.of(tx, north - 1)
             local cs = S.shapeAt[ck]
             if cs and not cs.flat and not S.skip[ck] and not S.runs[ck]
                and (not cs.authored or cs.class == "table") then
@@ -2042,10 +2039,10 @@ function Structures.buildBookcases(S, map, x0, x1, y0, y1, data, perRow)
           -- the cell above the run instead, shape and art, so a wall cut into
           -- a terrace has more terrace behind it rather than a trench.
           local covered = math.min(2, front - top + 1)
-          local srcK = keyOf(tx, top - 1)
+          local srcK = GridKey.of(tx, top - 1)
           local src = backfill == "above" and S.shapeAt[srcK] or nil
           for cy = top, front do
-            local tk = keyOf(tx, cy)
+            local tk = GridKey.of(tx, cy)
             if src and cy <= front - covered then
               S.shapeAt[tk] = src
               S.tileAt[tk] = S.tileAt[srcK]
@@ -2130,7 +2127,7 @@ local function stairCell(S, map, data, cx, cy, s)
   local function uv(px, py)
     px = math.max(0.05, math.min(15.95, px))
     py = math.max(0.05, math.min(15.95, py))
-    local tile = S.tileAt[keyOf(cx * 2 + (px >= 8 and 1 or 0),
+    local tile = S.tileAt[GridKey.of(cx * 2 + (px >= 8 and 1 or 0),
                                 cy * 2 + (py >= 8 and 1 or 0))]
     return ((tile % perRow) * 8 + px % 8) / atlasW,
            (math.floor(tile / perRow) * 8 + py % 8) / atlasH
@@ -2259,7 +2256,7 @@ function Structures.buildStairs(S, map, x0, x1, y0, y1)
   local data = pixels(map.tileset)
   for cy = math.floor(y0 / 2), math.floor(y1 / 2) do
     for cx = math.floor(x0 / 2), math.floor(x1 / 2) do
-      local s = S.shapeAt[keyOf(cx * 2, cy * 2)]
+      local s = S.shapeAt[GridKey.of(cx * 2, cy * 2)]
       if s and s.art == "stair" then
         -- claim the cell whichever way the quads go: the mesher must not
         -- box or floor it.  A rising flight stands on the map's common
@@ -2267,7 +2264,7 @@ function Structures.buildStairs(S, map, x0, x1, y0, y1)
         local down = s.class == "stair_down_e" or s.class == "stair_down_w"
         for dy = 0, 1 do
           for dx = 0, 1 do
-            local tk = keyOf(cx * 2 + dx, cy * 2 + dy)
+            local tk = GridKey.of(cx * 2 + dx, cy * 2 + dy)
             S.skip[tk] = true
             if not down then S.ground[tk] = false end
           end
@@ -2342,7 +2339,7 @@ function Structures.buildVolume(S, map, tiles)
       end
       local isDoor = false
       for ty = north, front do
-        if S.doorFold[keyOf(tx, ty)] then
+        if S.doorFold[GridKey.of(tx, ty)] then
           isDoor = true
           break
         end
@@ -2416,7 +2413,7 @@ function Structures.buildVolume(S, map, tiles)
     run.peak = h
     run.h = h - run.rise               -- facade height: what sides build to
     for ty = run.north, run.front do
-      S.runs[keyOf(r.tx, ty)] = run
+      S.runs[GridKey.of(r.tx, ty)] = run
     end
   end
 end
@@ -2450,7 +2447,7 @@ function Structures.extractObjects(S, map, region, data, perRow, force)
   local bh = (region.maxY - region.minY + 1) * 8
 
   local member = {}
-  for _, c in ipairs(region.tiles) do member[keyOf(c[1], c[2])] = true end
+  for _, c in ipairs(region.tiles) do member[GridKey.of(c[1], c[2])] = true end
 
   -- Image over the region bbox plus a 1px ground apron. Pixel states:
   --   solid   opaque member art (non-white, or white that survives)
@@ -2478,7 +2475,7 @@ function Structures.extractObjects(S, map, region, data, perRow, force)
       local px, py = ix - 1, iy - 1
       local tx = region.minX + math.floor(px / 8)
       local ty = region.minY + math.floor(py / 8)
-      local k = keyOf(tx, ty)
+      local k = GridKey.of(tx, ty)
       local inside = px >= 0 and px < bw and py >= 0 and py < bh
       -- a forced (pinned) prop floods from every apron even when the
       -- neighbours are solid: the pin itself declares the art a prop
@@ -2535,7 +2532,7 @@ function Structures.extractObjects(S, map, region, data, perRow, force)
   if force and force ~= "opaque" then
     local strict = false
     do
-      local fs = S.shapeAt[keyOf(region.tiles[1][1], region.tiles[1][2])]
+      local fs = S.shapeAt[GridKey.of(region.tiles[1][1], region.tiles[1][2])]
       strict = fs ~= nil and fs.class == "cutout"
     end
     -- The rim vote reads the shades on the DRAWING'S OWN bounding box, so a
@@ -2555,7 +2552,7 @@ function Structures.extractObjects(S, map, region, data, perRow, force)
       local named = TileShape.propBg(map.tileset.id)
       if named then
         for _, c in ipairs(region.tiles) do
-          local rule = named[S.tileAt[keyOf(c[1], c[2])]]
+          local rule = named[S.tileAt[GridKey.of(c[1], c[2])]]
           if rule then
             for shadeName in pairs(rule) do bg[shadeName] = true end
             break
@@ -2633,7 +2630,7 @@ function Structures.extractObjects(S, map, region, data, perRow, force)
   for _, c in ipairs(region.tiles) do
     Budget.tick()
     if force then
-      sprite[keyOf(c[1], c[2])] = true
+      sprite[GridKey.of(c[1], c[2])] = true
     else
       local bx = (c[1] - region.minX) * 8
       local by = (c[2] - region.minY) * 8
@@ -2643,7 +2640,7 @@ function Structures.extractObjects(S, map, region, data, perRow, force)
           if flooded[(by + py + 1) * W + (bx + px + 1)] then bg = bg + 1 end
         end
       end
-      if bg / 64 >= TILE_BG_RATIO then sprite[keyOf(c[1], c[2])] = true end
+      if bg / 64 >= TILE_BG_RATIO then sprite[GridKey.of(c[1], c[2])] = true end
     end
   end
 
@@ -2652,7 +2649,7 @@ function Structures.extractObjects(S, map, region, data, perRow, force)
   local clusterSeen = {}
   for _, c in ipairs(region.tiles) do
     Budget.tick()
-    local k = keyOf(c[1], c[2])
+    local k = GridKey.of(c[1], c[2])
     if sprite[k] and not clusterSeen[k] then
       local cluster = { tiles = {}, minX = c[1], maxX = c[1],
                         minY = c[2], maxY = c[2] }
@@ -2666,7 +2663,7 @@ function Structures.extractObjects(S, map, region, data, perRow, force)
         cluster.minY = math.min(cluster.minY, cc[2])
         cluster.maxY = math.max(cluster.maxY, cc[2])
         for _, d in ipairs(DIRS4) do
-          local nk = keyOf(cc[1] + d[1], cc[2] + d[2])
+          local nk = GridKey.of(cc[1] + d[1], cc[2] + d[2])
           if sprite[nk] and not clusterSeen[nk] then
             clusterSeen[nk] = true
             queue2[#queue2 + 1] = { cc[1] + d[1], cc[2] + d[2] }
@@ -2676,14 +2673,14 @@ function Structures.extractObjects(S, map, region, data, perRow, force)
       if Structures.buildObject(S, map, region, cluster,
                                 state, flooded, srcU, srcV, W, force) then
         for _, cc in ipairs(cluster.tiles) do
-          claimed[keyOf(cc[1], cc[2])] = true
+          claimed[GridKey.of(cc[1], cc[2])] = true
         end
       end
     end
   end
 
   for _, c in ipairs(region.tiles) do
-    if not claimed[keyOf(c[1], c[2])] then leftover[#leftover + 1] = c end
+    if not claimed[GridKey.of(c[1], c[2])] then leftover[#leftover + 1] = c end
   end
   return leftover
 end
@@ -2706,7 +2703,7 @@ function Structures.buildObject(S, map, region, cluster,
     local touchesGround = false
     for _, c in ipairs(cluster.tiles) do
       for _, d in ipairs(dirs) do
-        local ss = S.shapeAt[keyOf(c[1] + d[1], c[2] + d[2])]
+        local ss = S.shapeAt[GridKey.of(c[1] + d[1], c[2] + d[2])]
         if ss and ss.flat and ss.class ~= "void" then
           touchesGround = true
           break
@@ -2738,7 +2735,7 @@ function Structures.buildObject(S, map, region, cluster,
   end
 
   local memberC = {}
-  for _, c in ipairs(cluster.tiles) do memberC[keyOf(c[1], c[2])] = true end
+  for _, c in ipairs(cluster.tiles) do memberC[GridKey.of(c[1], c[2])] = true end
 
   -- solid pixels of this cluster (art minus flooded background)
   local solidPx, count, bgCount = {}, 0, 0
@@ -2774,7 +2771,7 @@ function Structures.buildObject(S, map, region, cluster,
   -- a body, standing at the cluster's south row, base on the ground plane
   local depth = OBJECT_DEPTH
   if force then
-    local cs = S.shapeAt[keyOf(cluster.tiles[1][1], cluster.tiles[1][2])]
+    local cs = S.shapeAt[GridKey.of(cluster.tiles[1][1], cluster.tiles[1][2])]
     depth = (cs and PINNED_DEPTH[cs.class]) or PINNED_DEPTH.billboard
   end
   local wx0 = cluster.minX * 8
@@ -2805,7 +2802,7 @@ function Structures.buildObject(S, map, region, cluster,
   -- they were hoisted to stand on the clifftop instead of the path.
   local baseY, support = 0, nil
   if force and force ~= "opaque" then
-    local bs = S.shapeAt[keyOf(cluster.minX, cluster.maxY + 1)]
+    local bs = S.shapeAt[GridKey.of(cluster.minX, cluster.maxY + 1)]
     local blocked = not map:isWalkableCell(math.floor(cluster.minX / 2),
                                            math.floor(cluster.maxY / 2))
     -- `bookcase` supports as well as `upright`.  A prop drawn above an
@@ -2888,7 +2885,7 @@ function Structures.buildObject(S, map, region, cluster,
   -- cluster (two stools side by side, a leaf beside a vase), so this
   -- cannot be the default.
   if force then
-    local cs = S.shapeAt[keyOf(cluster.tiles[1][1], cluster.tiles[1][2])]
+    local cs = S.shapeAt[GridKey.of(cluster.tiles[1][1], cluster.tiles[1][2])]
     if cs and (cs.class == "cutout" or cs.class == "console")
        and #comps > 1 then
       local biggest = comps[1]
@@ -2944,7 +2941,7 @@ function Structures.buildObject(S, map, region, cluster,
   local votes, best, bestN = {}, nil, 0
   for _, c in ipairs(cluster.tiles) do
     for _, d in ipairs(DIRS4) do
-      local nk = keyOf(c[1] + d[1], c[2] + d[2])
+      local nk = GridKey.of(c[1] + d[1], c[2] + d[2])
       local ns = S.shapeAt[nk]
       if ns and ns.flat and ns.class ~= "void" and not memberC[nk] then
         local t = S.tileAt[nk]
@@ -2954,7 +2951,7 @@ function Structures.buildObject(S, map, region, cluster,
     end
   end
   for _, c in ipairs(cluster.tiles) do
-    local k = keyOf(c[1], c[2])
+    local k = GridKey.of(c[1], c[2])
     if support and (support.class == "wall" or support.class == "cliff"
                     or support.art == "bookcase"
                     or support.class == "building") then
@@ -2986,10 +2983,10 @@ function Structures.buildObject(S, map, region, cluster,
       -- trim row stays trim); only when the whole row is the prop does
       -- it fall back to the row below
       S.shapeAt[k] = support
-      local src = keyOf(c[1], cluster.maxY + 1)
+      local src = GridKey.of(c[1], cluster.maxY + 1)
       for dx = 1, 3 do
         for _, sx in ipairs({ c[1] - dx, c[1] + dx }) do
-          local nk = keyOf(sx, c[2])
+          local nk = GridKey.of(sx, c[2])
           local ns = S.shapeAt[nk]
           if not memberC[nk] and ns and ns.authored
              and ns.class == support.class then
@@ -2997,7 +2994,7 @@ function Structures.buildObject(S, map, region, cluster,
             break
           end
         end
-        if src ~= keyOf(c[1], cluster.maxY + 1) then break end
+        if src ~= GridKey.of(c[1], cluster.maxY + 1) then break end
       end
       S.tileAt[k] = S.tileAt[src]
     else
@@ -3239,7 +3236,7 @@ local function buildFigure(S, map, fig, tx, ty, perRow)
                                          math.floor((ty + fig.h - 1) / 2))
   if blocked then
     for dx = 0, fig.w - 1 do
-      local bs = S.shapeAt[keyOf(tx + dx, ty + fig.h)]
+      local bs = S.shapeAt[GridKey.of(tx + dx, ty + fig.h)]
       if bs and bs.authored and bs.art == "upright"
          and (bs.h or 0) > baseY then
         baseY = bs.h
@@ -3327,7 +3324,7 @@ local function buildFigure(S, map, fig, tx, ty, perRow)
   -- so nothing has to be synthesized or repainted from a neighbour vote.
   for i = 1, #fig.tiles do
     local dx, dy = (i - 1) % fig.w, math.floor((i - 1) / fig.w)
-    S.tileAt[keyOf(tx + dx, ty + dy)] = fig.under[i]
+    S.tileAt[GridKey.of(tx + dx, ty + dy)] = fig.under[i]
   end
 end
 
@@ -3349,7 +3346,7 @@ function Structures.buildFigures(S, map, x0, x1, y0, y1)
         local hit = true
         for i = 1, #fig.tiles do
           local dx, dy = (i - 1) % fig.w, math.floor((i - 1) / fig.w)
-          if S.tileAt[keyOf(tx + dx, ty + dy)] ~= fig.tiles[i] then
+          if S.tileAt[GridKey.of(tx + dx, ty + dy)] ~= fig.tiles[i] then
             hit = false
             break
           end
@@ -3401,7 +3398,7 @@ local function buildMountedAt(S, map, m, tx, ty, perRow)
   -- because they ARE the wall.
   for i = 1, #m.tiles do
     local dx, dy = (i - 1) % m.w, math.floor((i - 1) / m.w)
-    S.tileAt[keyOf(tx + dx, ty + dy)] = m.under[i]
+    S.tileAt[GridKey.of(tx + dx, ty + dy)] = m.under[i]
   end
 end
 
@@ -3421,7 +3418,7 @@ function Structures.buildMounted(S, map, x0, x1, y0, y1)
         local hit = true
         for i = 1, #m.tiles do
           local dx, dy = (i - 1) % m.w, math.floor((i - 1) / m.w)
-          if S.tileAt[keyOf(tx + dx, ty + dy)] ~= m.tiles[i] then
+          if S.tileAt[GridKey.of(tx + dx, ty + dy)] ~= m.tiles[i] then
             hit = false
             break
           end
@@ -3610,7 +3607,7 @@ function Structures.buildGrass(S, map, x0, x1, y0, y1, data)
   for ty = y0, y1 do
     for tx = x0, x1 do
       Budget.tick()
-      local k = keyOf(tx, ty)
+      local k = GridKey.of(tx, ty)
       local s = S.shapeAt[k]
       -- tufts only where the CELL is tall grass by the engine's own rule
       -- (isGrassCell: the cell's collision tile). The grass GRAPHIC also
@@ -3826,7 +3823,7 @@ function Structures.buildFlowers(S, map, tw, th, x0, x1, y0, y1, data)
   for ty = y0, y1 do
     for tx = x0, x1 do
       Budget.tick()
-      local k = keyOf(tx, ty)
+      local k = GridKey.of(tx, ty)
       local s = S.shapeAt[k]
       if s and s.art == "flower" then
         -- the tile's atlas slot carries only the standing cutout now, so
@@ -3837,7 +3834,7 @@ function Structures.buildFlowers(S, map, tw, th, x0, x1, y0, y1, data)
         S.skip[k] = true
         local votes, best, bestN = {}, nil, 0
         for _, d in ipairs(DIRS4) do
-          local nk = keyOf(tx + d[1], ty + d[2])
+          local nk = GridKey.of(tx + d[1], ty + d[2])
           local ns = S.shapeAt[nk]
           if ns and ns.flat and ns.class ~= "void"
              and ns.class ~= "flower" then
