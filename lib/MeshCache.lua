@@ -35,6 +35,7 @@
 local V = ...
 
 local CacheIdentity = V.require("CacheIdentity")
+local CacheManifest = V.require("CacheManifest")
 local Budget = V.require("BuildBudget")
 local Platform = V.require("Platform")
 
@@ -281,6 +282,13 @@ local function sortedKeys(table_)
   table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
   return keys
 end
+
+local Manifest = CacheManifest.new({
+  available = function() return MeshCache.available() end,
+  readTable = readTable,
+  writeTable = writeTable,
+  identity = identity,
+})
 
 function MeshCache.configure(data)
   Identity.configure(data)
@@ -977,25 +985,6 @@ end
 
 -- --------------------------------------------------------------- manifest
 
--- Returns (manifest, failReason, manifestIdentity) where failReason is
--- nil on success, or one of "no_store", "missing", "format", "identity",
--- "records". The manifest is a TABLE now (the file-era text format died
--- with the filesystem).
-local function readManifest()
-  if not MeshCache.available() then return nil, "no_store" end
-  local manifest = readTable(MANIFEST_KEY)
-  if not manifest then return nil, "missing" end
-  if manifest.format ~= "PVMC1" then return nil, "format" end
-  if manifest.identity ~= identity() then
-    return nil, "identity", manifest.identity
-  end
-  if type(manifest.records) ~= "table"
-     or type(manifest.total) ~= "number" then
-    return nil, "records"
-  end
-  return manifest
-end
-
 local function setLastFailure(reason, detail)
   lastFailure = { reason = reason, expected = identity() }
   if detail then
@@ -1015,7 +1004,7 @@ function MeshCache.ready(jobs)
     setLastFailure(buildIdentity and "dirty" or "unavailable")
     return false, 0
   end
-  local manifest, failReason, manifestIdentity = readManifest()
+  local manifest, failReason, manifestIdentity = Manifest.read()
   if not manifest then
     if failReason == "identity" then
       setLastFailure("identity_mismatch", {
@@ -1105,61 +1094,19 @@ function MeshCache.scanComplete(jobs)
   return records, done
 end
 
--- The build.info record: the identity (and its components) that the
--- cache was actually built with, plus a timestamp.
-local function writeBuildInfo(id, parts)
-  if not MeshCache.available() then return end
-  local info = {
-    identity = id,
-    format = parts.format,
-    version = tostring(parts.version),
-    activeVersion = tostring(parts.activeVersion),
-    profile = parts.profile,
-    dataKey = parts.dataKey,
-    voidFill = parts.voidFill,
-    builtAt = os.time and os.time() or 0,
-  }
-  writeTable(BUILD_INFO_KEY, info)
-end
-
--- The shared manifest writer: records keyed by job key, `total` the full
--- job count. writeProgress lets a build UPDATE the manifest after every
--- completed job, so a build interrupted before finish() still leaves a
--- manifest naming exactly the jobs whose payloads survived.
-local function writeManifestLines(records, total)
-  if not MeshCache.available() or type(records) ~= "table" then
-    return false
-  end
-  local keys = sortedKeys(records)
-  if #keys > total then return false end
-  local id = dirty and buildIdentity or identity()
-  local manifest = { format = "PVMC1", identity = id, total = total,
-                     records = {} }
-  for _, key in ipairs(keys) do
-    local record = records[key]
-    manifest.records[key] = { key = record.key,
-                              terrain = record.terrain,
-                              terrainFp = record.terrainFp,
-                              water = record.water,
-                              waterFp = record.waterFp,
-                              aux = record.aux, auxFp = record.auxFp }
-  end
-  return writeTable(MANIFEST_KEY, manifest), id
-end
-
 function MeshCache.writeProgress(records, total)
-  local ok, id = writeManifestLines(records, total)
+  local ok, id = Manifest.write(records, total, dirty and buildIdentity or nil)
   if ok then
-    writeBuildInfo(id, buildParts or identityParts())
+    Manifest.writeBuildInfo(id, buildParts or identityParts())
   end
   return ok
 end
 
 function MeshCache.writeManifest(records, total)
   if not records or #sortedKeys(records) ~= total then return false end
-  local ok, id = writeManifestLines(records, total)
+  local ok, id = Manifest.write(records, total, dirty and buildIdentity or nil)
   if ok then
-    writeBuildInfo(id, buildParts or identityParts())
+    Manifest.writeBuildInfo(id, buildParts or identityParts())
     dirty = false
     buildIdentity = nil
     buildParts = nil

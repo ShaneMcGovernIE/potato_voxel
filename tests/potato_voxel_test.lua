@@ -14,6 +14,9 @@ T.check(type(CacheFeature.new) == "function",
 local CacheIdentity = exports.lib.require("CacheIdentity")
 T.check(type(CacheIdentity.new) == "function",
         "cache identity exposes an explicit boundary")
+local CacheManifest = exports.lib.require("CacheManifest")
+T.check(type(CacheManifest.new) == "function",
+        "cache manifest exposes an explicit boundary")
 do
   local target = { run = function(_, value) return value end }
   local installs = 0

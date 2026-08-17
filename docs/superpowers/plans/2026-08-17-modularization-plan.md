@@ -68,7 +68,7 @@
 - [x] Characterize cache file names, metadata, compression, validation, fingerprints, and incomplete-build resume records.
 - [ ] Move filesystem/codec operations into `CacheStorage`.
 - [x] Move build identity and invalidation rules into `CacheIdentity`.
-- [ ] Move manifest and resume-record handling into `CacheManifest`.
+- [x] Move manifest and resume-record handling into `CacheManifest`.
 - [x] Keep `MeshCache` as the stable façade and compare serialized outputs against the baseline fixtures.
 
 ## Task 6: Split geometry, queue policy, and GPU ownership behind `ChunkMesher`
