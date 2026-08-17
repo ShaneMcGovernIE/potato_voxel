@@ -36,6 +36,7 @@ local V = ...
 
 local CacheIdentity = V.require("CacheIdentity")
 local CacheManifest = V.require("CacheManifest")
+local CacheStorage = V.require("CacheStorage")
 local Budget = V.require("BuildBudget")
 local Platform = V.require("Platform")
 
@@ -80,184 +81,18 @@ local Identity = CacheIdentity.new({
 })
 
 -- ------------------------------------------------------------- storage
---
--- The storage facade is resolved lazily and re-probed after a failure,
--- because a session moves through states where no playthrough exists:
--- boot at the title screen has selected(game) at best (and only when a
--- save exists to select), NEW GAME has nothing until save.created, and
--- in-game has the plain facade. `false` is deliberately NOT cached.
 
-local store = nil
-local storeSource = nil
-
-local function liveGame()
-  local ok, Game = pcall(require, "src.core.Game")
-  return ok and Game or nil
-end
-
-local function resolveStore()
-  local mod = V.mod
-  if not (mod and mod.storage) then return nil end
-  local game = liveGame()
-  local ok, ctx = pcall(mod.storage.context, mod.storage, game)
-  if ok and ctx and ctx.playthroughId then
-    return mod.storage
-  end
-  if mod.storage.selected then
-    local okS, selected = pcall(mod.storage.selected, mod.storage, game)
-    if okS and selected then
-      local okC, ctx2 = pcall(selected.context, selected)
-      if okC and ctx2 and ctx2.playthroughId then
-        return selected
-      end
-    end
-  end
-  return nil
-end
-
-local function facade()
-  local mod = V.mod
-  local source = mod and mod.storage or nil
-  if store and storeSource == source then return store end
-  store = resolveStore()
-  storeSource = source
-  return store
-end
-
--- Drop a facade that a storage call reported unusable (not_in_playthrough
--- mid-session, a wiped playthrough) so the next call re-resolves.
-local function facadeFailed()
-  store = nil
-end
-
--- Storage failure codes worth surfacing: every write/read returns
--- (ok, code, message); a code other than nil is the WHY. The failing key
--- is named so a support log points at the record, not just the code.
-local function callFail(op, key, code, message)
-  if code == "not_in_playthrough" or code == "not_at_title" then
-    facadeFailed()
-  end
-  -- not_found (and a nil code from a stub) is the normal empty-cache
-  -- case, not a failure worth logging; invalid_key reads are legacy
-  -- records an older build wrote under an unsanitised key -- the cache
-  -- treats them as absent and logs them once at warning so the triage
-  -- stream names the key without alarming the session.
-  if code ~= nil and code ~= "not_found" then
-    local level = (op:find("^read") and code == "invalid_key")
-                  and "warn" or "error"
-    local okD, Overlay = pcall(V.require, "DebugOverlay")
-    if okD and Overlay then
-      if level == "warn" then
-        Overlay.count("storageWarns")
-        Overlay.warn("storage %s %q: %s (%s)", tostring(op),
-                     tostring(key), tostring(code), tostring(message))
-      else
-        Overlay.count("storageFails")
-        Overlay.error("storage %s %q: %s (%s)", tostring(op),
-                      tostring(key), tostring(code), tostring(message))
-      end
-    end
-  end
-  return false
-end
-
--- The docs' byte surface (writeBytes/readBytes, PR #1304) is not present
--- in every engine build: when the methods are missing, payload bytes fall
--- back to TABLE storage with the string as the value -- strings are
--- data-only and legal table values, and the meta/manifest/buildinfo
--- records are tables already. One storage type per key is preserved
--- either way (payloads and metas live under different keys).
-local function readBytes(key)
-  local store_ = facade()
-  if not store_ then return nil end
-  if store_.readBytes then
-    local ok, data, code, message = pcall(store_.readBytes, store_,
-                                          liveGame(), key)
-    if ok and data then return data end
-    -- not_found and type conflicts both fall through: the table shape
-    -- may hold what the byte read could not see.
-    callFail("readBytes", key, code, message)
-  end
-  local ok, data, code, message = pcall(store_.read, store_,
-                                        liveGame(), key)
-  if not ok or not data then callFail("read", key, code, message) end
-  if type(data) == "table" and data.bytes ~= nil then return data.bytes end
-  if type(data) == "string" then return data end
-  return nil
-end
-
-local function writeBytes(key, bytes)
-  local store_ = facade()
-  if not store_ then return false end
-  if store_.writeBytes then
-    local ok, result, code, message = pcall(store_.writeBytes, store_,
-                                            liveGame(), key, bytes)
-    if ok and result then return true end
-    callFail("writeBytes", key, code, message)
-    -- Fall through to the table shape: a playthrough whose keys were
-    -- written by an engine without byte storage still has table-typed
-    -- values, and a byte write over one is a type conflict -- the table
-    -- write below replaces it in the same type.
-  end
-  local ok, result, code, message = pcall(store_.write, store_,
-                                          liveGame(), key,
-                                          { bytes = bytes })
-  if ok and result then return true end
-  -- A key written as bytes by a newer engine is a type conflict for the
-  -- table write. Cache payload keys are disposable -- a delete + one
-  -- retry clears the conflict without ever touching a live map.
-  pcall(store_.delete, store_, liveGame(), key)
-  local ok2, result2, code2, message2 = pcall(store_.write, store_,
-                                              liveGame(), key,
-                                              { bytes = bytes })
-  if not ok2 or not result2 then
-    callFail("write", key, code2, message2)
-  end
-  return ok2 and result2 and true or false
-end
-
-local function writeTable(key, value)
-  local store_ = facade()
-  if not store_ or not store_.write then return false end
-  local ok, result, code, message = pcall(store_.write, store_,
-                                          liveGame(), key, value)
-  if not ok or not result then callFail("write", key, code, message) end
-  return ok and result and true or false
-end
-
-local function readTable(key)
-  local store_ = facade()
-  if not store_ or not store_.read then return nil end
-  local ok, data, code, message = pcall(store_.read, store_, liveGame(), key)
-  if not ok or not data then callFail("read", key, code, message) end
-  return ok and data or nil
-end
-
-local function listKeys(prefix)
-  local store_ = facade()
-  if not store_ or not store_.list then return {} end
-  local ok, keys, code, message = pcall(store_.list, store_, liveGame(),
-                                        prefix)
-  if not ok then callFail("list", prefix, code, message) end
-  return (ok and keys) or {}
-end
-
-local function deleteKey(key)
-  local store_ = facade()
-  if not store_ or not store_.delete then return false end
-  -- Return the storage call's real outcome instead of swallowing it: the
-  -- Switch scoped-storage delete has been observed to no-op while this
-  -- function still reported true, which hid the wipe bug (callers that
-  -- relied on the old unconditional true are unchanged -- they just do
-  -- not trust the result yet; MeshCache.wipe verifies by read-back).
-  local ok = pcall(store_.delete, store_, liveGame(), key)
-  return ok
-end
+local Storage = CacheStorage.new()
+local function storageAvailable() return Storage.available() end
+local function readBytes(key) return Storage.readBytes(key) end
+local function writeBytes(key, bytes) return Storage.writeBytes(key, bytes) end
+local function writeTable(key, value) return Storage.writeTable(key, value) end
+local function readTable(key) return Storage.readTable(key) end
+local function listKeys(prefix) return Storage.listKeys(prefix) end
+local function deleteKey(key) return Storage.deleteKey(key) end
 
 function MeshCache.dir()
-  -- Kept for callers that want a one-word "is there anywhere to put it"
-  -- answer; the engine owns the real path now.
-  return facade() and "storage" or nil
+  return Storage.dir()
 end
 
 -- Compatibility forwards. MeshCache remains the public cache façade while
@@ -318,7 +153,7 @@ MeshCache.identity = identity
 -- ---------------------------------------------------------- availability
 
 function MeshCache.available()
-  return facade() ~= nil
+  return storageAvailable()
 end
 
 function MeshCache.begin()
