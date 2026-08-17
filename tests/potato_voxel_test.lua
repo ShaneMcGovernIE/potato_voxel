@@ -9,13 +9,52 @@ local exports = run.loader.exports.potato_voxel
 T.check(exports ~= nil, "mod exports a table")
 T.eq(exports.version, "1.7.11", "exports the manifest release version")
 local RuntimeHooks = exports.lib.require("RuntimeHooks")
+local InputFeature = exports.lib.require("InputFeature")
+T.check(type(InputFeature.new) == "function",
+        "input feature exposes an explicit boundary")
 local WorldFeature = exports.lib.require("WorldFeature")
 T.check(type(WorldFeature.render) == "function"
-        and type(WorldFeature.updateStall) == "function",
+        and type(WorldFeature.updateStall) == "function"
+        and type(WorldFeature.installLoadingGuard) == "function"
+        and type(WorldFeature.installMapHooks) == "function",
         "world feature owns the render boundary")
+local BattleFeature = exports.lib.require("BattleFeature")
+T.check(type(BattleFeature.new) == "function",
+        "battle feature exposes an explicit boundary")
 local CacheFeature = exports.lib.require("CacheFeature")
 T.check(type(CacheFeature.new) == "function",
         "cache feature exposes an explicit boundary")
+local cacheProbe = CacheFeature.new({})
+T.check(type(cacheProbe.installLifecycle) == "function",
+        "cache feature owns its lifecycle wrappers")
+local SettingsFeature = exports.lib.require("SettingsFeature")
+local function settingStub()
+  return { schema = function() end, read = function() return 1 end,
+           allows = function() return true end, key = "stub",
+           labels = { "ON" } }
+end
+local settingsProbe = SettingsFeature.new({
+  QualityMode = { renderSetting = settingStub() },
+  VoxelGrid = { setting = settingStub() },
+  WorldCurve = { setting = settingStub() },
+  Water = { setting = settingStub(), onAndroid = function() return false end },
+  OverworldBattle = { setting = settingStub(), backSetting = settingStub() },
+  DayNight = { setting = settingStub() },
+  MapAtmos = { setting = settingStub() },
+  Weather = { setting = settingStub() },
+  AntiAlias = { setting = settingStub() },
+  VR = { setting = settingStub(), smoothTurn = settingStub(),
+         supported = function() return false end,
+         enabled = function() return false end },
+  ShadowSettings = { enabledSetting = settingStub(),
+                     qualitySetting = settingStub() },
+  DebugOverlay = { setting = settingStub(), sendSetting = settingStub() },
+  stagedBattles = function() return false end,
+})
+T.check(type(settingsProbe.installMenuRefresh) == "function",
+        "settings feature owns menu lifecycle")
+T.check(type(settingsProbe.installRowsHook) == "function",
+        "settings feature owns options-row integration")
 local CacheIdentity = exports.lib.require("CacheIdentity")
 T.check(type(CacheIdentity.new) == "function",
         "cache identity exposes an explicit boundary")

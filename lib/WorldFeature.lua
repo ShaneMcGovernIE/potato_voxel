@@ -12,6 +12,7 @@ local VR = V.require("VR")
 local VoxelScene = V.require("VoxelScene")
 local ChunkMesher = V.require("ChunkMesher")
 local VoxelLoading = V.require("VoxelLoading")
+local RuntimeHooks = V.require("RuntimeHooks")
 local BrickProfile = V.require("BrickProfile")
 local AntiAlias = V.require("AntiAlias")
 local Upscale = V.require("Upscale")
@@ -28,6 +29,63 @@ function WorldFeature.updateStall(dt, stallSkip)
   stallSkip.count = dt > WorldFeature.STALL_FRAME
     and (stallSkip.count + 1) or 0
   if stallSkip.count == 0 then stallSkip.frames = 0 end
+end
+
+function WorldFeature.installLoadingGuard()
+  local OverworldController = require("src.world.OverworldController")
+  RuntimeHooks.wrapOnce(OverworldController, "update",
+    "potatoVoxelLoadingHook", function(inner)
+      return function(self, dt)
+        if VoxelState.loading then return end
+        return inner(self, dt)
+      end
+    end)
+end
+
+function WorldFeature.installMapHooks(ctx)
+  local mod = ctx.mod
+  local DebugOverlay = ctx.DebugOverlay
+
+  mod.events:on("world.block_replaced", function(payload)
+    local mapId = payload and (payload.mapId
+                  or (payload.map and payload.map.id))
+    DebugOverlay.trace("event block_replaced %s", tostring(mapId))
+    if mapId then ChunkMesher.refresh(mapId) end
+  end)
+
+  local Map = require("src.world.Map")
+  RuntimeHooks.wrapOnce(Map, "setBlock", "dramaticShapeBlockHook",
+    function(setBlock)
+      return function(self, bx, by, block)
+        local before = self:blockAt(bx, by)
+        setBlock(self, bx, by, block)
+        if self.id and self:blockAt(bx, by) ~= before then
+          ChunkMesher.refresh(self.id)
+        end
+      end
+    end)
+
+  mod.events:on("map.reloaded", function(payload)
+    DebugOverlay.event("map.reloaded", {
+      mapId = payload and payload.mapId,
+      reason = payload and payload.reason,
+    })
+    DebugOverlay.trace("event map.reloaded %s (%s)",
+                       tostring(payload and payload.mapId),
+                       tostring(payload and payload.reason))
+    if payload and payload.reason == "colors" then return end
+    local mapId = payload and (payload.mapId
+                  or (payload.map and payload.map.id))
+    if mapId then ChunkMesher.invalidate(mapId) end
+  end)
+
+  mod.events:on("map.entered", function(payload)
+    DebugOverlay.event("map.entered", {
+      mapId = payload and (payload.mapId or payload.id),
+    })
+    DebugOverlay.trace("event map.entered %s",
+                       tostring(payload and (payload.mapId or payload.id)))
+  end)
 end
 
 local function sceneSize(ctx)

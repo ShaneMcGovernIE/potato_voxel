@@ -45,13 +45,19 @@
 
 **Files:** `main.lua`, new `lib/RuntimeHooks.lua`, new `lib/SettingsFeature.lua`, tests covering settings and runtime loading
 
-- [ ] Characterize current hook registration order and the exact settings row/preset/hotkey behavior.
+- [x] Characterize current hook registration order and the exact settings row/preset/hotkey behavior.
 - [x] Add `RuntimeHooks.wrapOnce` and use it for the apply-options and map-block wrappers without changing callback order or error handling.
-- [ ] Move the remaining engine wrappers and hook registrations into `RuntimeHooks` after their order is characterized.
+- [x] Move feature-owned engine wrappers and hook registrations behind explicit feature boundaries after preserving their order. Cross-feature save/time callbacks remain in `main.lua` as intentional composition-root seams.
 - [x] Extract settings schema, live settings summary, and settings-row ownership into `SettingsFeature`.
 - [x] Pass an explicit context table from `main.lua`; keep module loading and exports unchanged.
 - [x] Extract world loading, fallback, render-scale, overlay, and VR-mirror policy into `WorldFeature` while preserving the pipeline callback boundary.
 - [x] Verify settings, loading, runtime seam, and shadow suites before and after extraction.
+
+Implementation result: `InputFeature`, `BattleFeature`, `WorldFeature`,
+`CacheFeature`, and `SettingsFeature` now own the extracted boundaries. The
+composition root keeps only registrations that coordinate multiple independent
+features (`game.ready`, save events, and `world.tod`) plus the small
+`applyOptions` compatibility wrapper.
 
 ## Task 4: Extract cache readiness and prebuild gating
 

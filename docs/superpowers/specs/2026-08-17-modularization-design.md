@@ -11,9 +11,9 @@ runtime composition root or unrelated features.
 The audit covered the shipped Lua modules, data files, tests, architecture
 documents, and recent release history. The main structural risks are:
 
-- `main.lua` is the composition root, hook installer, render-pipeline owner,
-  settings schema, input adapter, cache gate, and diagnostics coordinator in
-  one 1,319-line file; world render policy now lives behind `WorldFeature`.
+- `main.lua` remains the composition root and cross-feature event coordinator,
+  but it is now 833 lines; input, settings, cache lifecycle, battle, and world
+  policy have named feature boundaries.
 - `Structures.lua` combines map analysis, object detection, round/building
   geometry, region extraction, and global template caches in 2,959 lines;
   vegetation, stairs, bookcases, and shared pattern matching now have
@@ -57,11 +57,12 @@ documents, and recent release history. The main structural risks are:
 ```text
 main.lua (composition root)
   ├── RuntimeHooks      lifecycle and engine hook registration
-  ├── SettingsFeature   rows, presets, hotkeys, and option synchronization
-  ├── CacheFeature       cache readiness gate and prebuild screen wiring
-  ├── WorldFeature       voxel pipeline update/draw coordination
+  ├── SettingsFeature   schema, rows, engine pins, and option synchronization
+  ├── CacheFeature       cache readiness gate and save/prebuild lifecycle
+  ├── WorldFeature       voxel draw policy, loading, and map invalidation
+  ├── InputFeature       hotkeys and Game:keypressed policy
   ├── BattleFeature      staged battle and battle-exit hooks
-  └── DiagnosticsFeature overlay lifecycle and log export hooks
+  └── DebugOverlay       diagnostics façade and log export hooks
 
 domain / services
   ├── GridKey            shared coordinate-key contract
@@ -145,8 +146,12 @@ stable while internals move.
 
 ## Implementation status — 2026-08-17
 
-Phases 1–4 are implemented and verified. `WorldFeature` now owns the world
-draw policy while `main.lua` retains update order and engine registration.
+Phases 1–4 are implemented and verified. `WorldFeature` owns world draw,
+loading, and map invalidation policy; `SettingsFeature` owns settings rows and
+menu refresh; `CacheFeature` owns cache lifecycle wrappers; `InputFeature` and
+`BattleFeature` own their respective engine seams. `main.lua` retains update
+order plus the intentionally cross-feature `game.ready`, save, and
+`world.tod` composition callbacks.
 Phase 5 has moved vegetation,
 authored pattern matching, stairs, and bookcases behind the existing
 `Structures` façade. The remaining coupled core is the claim-order

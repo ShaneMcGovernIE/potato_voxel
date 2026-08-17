@@ -89,16 +89,16 @@ u32 vertex map. love.data compress/decompress do the entropy codec
 - Dynamic (never cached): characters, battle cards and effects, shadows,
   water reflections, the sky — they follow live state per frame.
 
-## Invalidation wiring (main.lua:1319-1404)
+## Invalidation wiring (`lib/WorldFeature.lua`)
 
 - `world.block_replaced` → `refresh` (keeps stale mesh visible).
 - `Map.setBlock` is wrapped — Cut, card-key doors and regrowth all write
   the block layer directly without announcing; setBlock is the one
-  choke point (main.lua:1362-1375).
+  choke point (`WorldFeature.installMapHooks`).
 - `map.reloaded` → `invalidate`, EXCEPT reason == "colors": a palette
   switch reloads the map only to rebuild its atlas; geometry is
   colour-independent and the texture is keyed by palette, so dropping
   the mesh would flash the flat 2D world on every palette toggle
-  (main.lua:1394-1404).
+  (`WorldFeature.installMapHooks`).
 - VOID FILL changes invalidate every ring (it's baked into the mesh)
   (main.lua:227-236).

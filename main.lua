@@ -89,6 +89,7 @@ local VoxelGrid = V.require("VoxelGrid")
 local WorldCurve = V.require("WorldCurve")
 local OverworldBattle = V.require("OverworldBattle")
 local BattleExit = V.require("BattleExit")
+local BattleFeature = V.require("BattleFeature")
 local DayNight = V.require("DayNight")
 local DayTint = V.require("DayTint")
 local Water = V.require("Water")
@@ -99,6 +100,7 @@ local Upscale = V.require("Upscale")
 local FirstPerson = V.require("FirstPerson")
 local FreeMove = V.require("FreeMove")
 local CamControl = V.require("CamControl")
+local InputFeature = V.require("InputFeature")
 local VR = V.require("VR")
 -- HORDE MODE: the konami code's minigame. Horde owns the state machine and
 -- every hook; the other four are the gun, the crowd, the readout and the
@@ -482,17 +484,7 @@ mod.content.render_pipelines:register("voxel", {
 
 -- The loading cover hides gameplay, not time: the pipeline update above keeps
 -- pumping mesh jobs while scripts, encounters and invisible movement pause.
-do
-  local OverworldController = require("src.world.OverworldController")
-  if not OverworldController.potatoVoxelLoadingHook then
-    local inner = OverworldController.update
-    function OverworldController:update(dt)
-      if Voxel.loading then return end
-      return inner(self, dt)
-    end
-    OverworldController.potatoVoxelLoadingHook = true
-  end
-end
+WorldFeature.installLoadingGuard()
 
 -- ------- this mod's own settings
 --
@@ -597,8 +589,16 @@ stagedBattles = function()
   return OverworldBattle.enabled()
 end
 
+local Battle = BattleFeature.new({
+  mod = mod,
+  OverworldBattle = OverworldBattle,
+  BattleExit = BattleExit,
+  DebugOverlay = DebugOverlay,
+})
+
 local Settings = SettingsFeature.new({
   mod = mod,
+  Voxel = Voxel,
   QualityMode = QualityMode,
   VoxelGrid = VoxelGrid,
   WorldCurve = WorldCurve,
@@ -627,330 +627,39 @@ Settings.defineSchema()
 PlayerId.ensure()
 DebugOverlay.setSettingsReader(Settings.settingsSummary)
 
--- ------- this mod's hotkeys
+-- ------- input feature
 --
---   3  VOXEL    cycle the camera ladder      (was 6; skips FULL)
---   5  V-GRID   toggle the wireframe         (new)
---   7  V-CURVE  cycle the horizon bend       (new)
---   8  3D-BTL   cycle overworld battles      (new)
---   9  WATER    cycle the water reflections  (new)
---
--- Game:keypressed answers the engine's own display keys FIRST and returns
--- -- 2 COLORS, 3 TILT, 4 ZOOM, 5 GBC FX -- and only then offers the key to
--- Pipelines.hotkey. 3 and 5 are two of those, and 7, 8 and 9 belong to
--- plain mod settings that own no pass and so have no registry to claim a
--- key from at all.
---
--- So this wraps Game:keypressed. It is the invasive option and it is the
--- only one: polling the keyboard in update() would fire alongside the
--- engine's handler rather than instead of it, so 3 would cycle this mode
--- AND the engine's TILT on the same press.
---
--- Consequences worth being explicit about: while this mod is enabled, TILT
--- (3) and GBC FX (5) are unreachable by key -- and unreachable on the OPTIONS
--- menu too, where both rows are taken away and both values held at zero (see
--- pinEngineFx). Nothing is being hidden that still does something: TILT is the
--- flat fake of what this mode does for real, the registry already forces it
--- off whenever a world pipeline takes the pass, and GBC FX is a full-screen
--- present pass over the top of the diorama. Uninstalling puts both back.
---
--- Everything the engine does around a pipeline hotkey has to happen here
--- too, so the work is DELEGATED rather than reimplemented: Pipelines.hotkey
--- applies its own gate and ladder, and the three lines after it are the
--- engine's own (syncOptions, the tilt exclusion, writeOptions).
+-- Input owns the display hotkeys and Game:keypressed wrapper. Keep its
+-- installation here, after the settings context and before the options-row
+-- hook, so the engine-facing registration order remains explicit.
+local Input = InputFeature.new({
+  BrickProfile = BrickProfile,
+  Voxel = Voxel,
+  VoxelGrid = VoxelGrid,
+  WorldCurve = WorldCurve,
+  Water = Water,
+  OverworldBattle = OverworldBattle,
+  Horde = Horde,
+  HordeGun = HordeGun,
+  CamControl = CamControl,
+  DebugOverlay = DebugOverlay,
+  ShapeDebug = ShapeDebug,
+  VR = VR,
+  stagedBattles = stagedBattles,
+})
+Input.install()
 
--- The build is a single quality ladder, so the keys that cycled the removed
--- rungs are left alone: 5/7/9 fall through to the engine. Only "8" stays,
--- stepping OFF -> HIGH -> MEDIUM -> LOW -> POTATO.
-local HOTKEYS = BrickProfile.isBrick()
-  and { ["8"] = "pipeline", ["lshift"] = "pipeline", ["rshift"] = "pipeline" }
-  or {
-  ["8"] = "pipeline",           -- voxel, by its declared hotkey
-  ["lshift"] = "pipeline",
-  ["rshift"] = "pipeline",
-  ["5"] = VoxelGrid.setting,
-  ["7"] = WorldCurve.setting,
-  ["3"] = OverworldBattle.setting,
-  ["9"] = Water.setting,
-}
 
--- One step of the VOXEL angle ladder: everything an "8" press does, named
--- so VR view control can make exactly the same step. The
--- gate is the registry's own; the tilt/GBC FX clearing is the engine work
--- the key has always delegated (see the wrap below for why).
-local function cycleVoxel(game)
-  local Pipelines = require("src.render.Pipelines")
-  -- HORDE MODE holds the rung at 1ST for as long as it runs. Refused HERE
-  -- rather than at each caller because this one function IS every way a
-  -- player can step the ladder: the "8" key and the VR left-stick click
-  -- both come through it.
-  if Horde.viewLocked() then return false end
-  local top = game.stack and game.stack:top()
-  if not Pipelines.canToggle("voxel", top, game.overworld) then return false end
-  Pipelines.setLevel("voxel", Voxel.nextHotkeyLevel(Pipelines.level("voxel")))
-  Pipelines.syncOptions(game.save.options)
-  -- 8 is the key that used to turn TILT on and sits next to the one that
-  -- used to turn GBC FX on, and this mod has taken both away. A player who
-  -- left either running before enabling the mod would otherwise have no
-  -- way back to off, and both fight the diorama -- so the VOXEL step
-  -- clears them on EVERY press, not just the press that switches on.
-  game.save.options.tilt = 0
-  game.save.options.gbcfx = 0
-  require("src.render.GBCFX").setLevel(0)
-  require("src.render.Tilt").setLevel(game.save.options.tilt or 0)
-  game:writeOptions()
-  local Pipelines = require("src.render.Pipelines")
-  DebugOverlay.trace("voxel level -> %s",
-                    tostring(Pipelines.level("voxel")))
-  return true
-end
-
--- The VR stick click makes this same step (VR.stepView): the function is
--- a local of this file, so the handoff is explicit rather than a
--- reimplementation drifting out of date in lib/VR.lua.
-VR.cycleVoxel = cycleVoxel
-
-do
-  local Game = require("src.core.Game")
-  local Pipelines = require("src.render.Pipelines")
-  local inner = Game.keypressed
-
-  function Game:keypressed(key)
-    -- HORDE MODE owns the keyboard's spare keys while it runs: R reloads,
-    -- and the mode keys are swallowed rather than left to change the rung
-    -- or the post-processing out from under a locked camera.
-    if Horde.active then
-      if key == "r" then
-        HordeGun.reload()
-        return
-      end
-      if HOTKEYS[key] then return end
-    end
-    local claim = HOTKEYS[key]
-    local top = self.stack and self.stack:top()
-    -- Q and E work whichever camera is in front of the player -- the
-    -- battle's lens, the third-person boom, or the engine's own survey
-    -- zoom on an orbit rung. CamControl answers which, and answers "none"
-    -- for 1ST and for every screen with no camera of ours behind it, in
-    -- which case the key falls through untouched. Ahead of the hotkey
-    -- table because unlike those it is NOT free-roam only: a staged battle
-    -- is exactly where the zoom is most wanted.
-    if (key == "q" or key == "e")
-       and not (top and top.onKeyPressed) then
-      if CamControl.zoomBy(key == "q" and 1 or -1) then return end
-    end
-    -- F9: the debug overlay's own switch, wherever the cursor is (it has
-    -- no screen of its own to type into).
-    if key == "f9" and not (top and top.onKeyPressed) then
-      DebugOverlay.toggle()
-      return
-    end
-    if key == "f10" and not (top and top.onKeyPressed) then
-      DebugOverlay.toggleVerbose()
-      return
-    end
-    if key == "f8" and not (top and top.onKeyPressed) then
-      DebugOverlay.export(self)
-      return
-    end
-    -- F6: the class-map view -- every tile tinted by its resolved shape
-    -- class (see lib/ShapeDebug.lua). Debug-only, like F9/F10/F8.
-    if key == "f6" and not (top and top.onKeyPressed) then
-      ShapeDebug.toggle()
-      return
-    end
-    -- A screen with its own key handler gets the key first, exactly as the
-    -- engine's first branch does: typing a nickname must not toggle a
-    -- render mode. Only free-roam presses are ours to take.
-    if claim and not (top and top.onKeyPressed) then
-      if claim == "pipeline" then
-        -- 8 walks the ANGLE rungs and steps over FULL (Voxel.HOTKEY_ORDER),
-        -- so the registry's plain "advance one and wrap" is not what it
-        -- wants; 6 still is. The gate is the registry's own either way.
-        -- The whole of 8's step lives in cycleVoxel, so keyboard and VR
-        -- controls share one guarded implementation.
-        if key == "8" or key == "lshift" or key == "rshift" then
-          if cycleVoxel(self) then return end
-        elseif Pipelines.hotkey(key, top, self.overworld) then
-          if cycleVoxel(self) then return end
-        end
-      elseif Pipelines.canToggle("voxel", top, self.overworld) then
-        -- All four answer to the voxel pass's own free-roam gate --
-        -- borrowed from the registry rather than restated, so a press
-        -- mid-warp or mid-cutscene is refused for the wireframe exactly when
-        -- it would be for the mode itself. Three of them parameterise that
-        -- pass; the fourth (3D-BTL) decides what a battle is drawn over, and
-        -- wants the same gate for a different reason: the answer is read
-        -- when the fight starts, so flipping it from inside one would be a
-        -- switch that appeared to do nothing.
-        claim:cycle(self)
-        -- 8 is one of the two ways staged battles get switched on, and they
-        -- pin BATTLE LAYOUT to OG (see the rows hook). The other keys
-        -- parameterise the pass and leave the layout alone; the guard answers
-        -- for all of them, so nothing here has to know which key it was.
-        if stagedBattles() then OverworldBattle.forceOG(self) end
-        return
-      end
-    end
-    return inner(self, key)
-  end
-end
-
--- ------- the mode's rows, kept together
---
--- The engine splices a pipeline's row in beside TILT, because a display mode
--- belongs with the other display modes; a mod's own ui.options.rows
--- additions land at the END of the list. That left this mod's four rows in
--- two places with unrelated engine rows between them, which reads as two
--- unrelated features rather than one mode with settings.
---
--- So the plain settings are inserted directly after the last of this mod's
--- PIPELINE rows instead of appended. Nothing else moves: the block lands
--- where the engine already decided display modes go.
-local function insertGrouped(out, extra)
-  local anchor = nil
-  for i, row in ipairs(out) do
-    local id = type(row) == "table" and row.id
-    if id == "pipeline:voxel" then anchor = i end
-  end
-  if not anchor then
-    for _, row in ipairs(extra) do out[#out + 1] = row end
-    return out
-  end
-  for i, row in ipairs(extra) do table.insert(out, anchor + i, row) end
-  return out
-end
-
--- FULL owns the settings that describe the LOOK, so while it is selected those
--- are taken off the menu rather than left to be changed under it. A row that
--- no longer decides anything is worse than no row.
---
--- The battle rows are the exception and they stay; see the rows hook.
-local function dropRow(out, id)
-  for i = #out, 1, -1 do
-    if type(out[i]) == "table" and out[i].id == id then table.remove(out, i) end
-  end
-  return out
-end
-
--- ------- TILT and GBC FX are gone while this mod is installed
---
--- Both fight the diorama, and both were already half-taken: the mode's own key
--- (3) forces them off on every press, and the registry switches TILT off
--- whenever a world pipeline takes the pass. What was left was two rows the
--- player could set and watch get reverted -- TILT is the flat fake of what
--- this mode does for real, and GBC FX is a full-screen present pass over the
--- top of the whole thing.
---
--- So they come OFF the menu, and are HELD at zero rather than merely dropped.
--- Hiding a live setting is a trap: a save written before the mod was installed
--- can carry TILT 3, and a row that is not there is a row that cannot turn it
--- back off. Pinned wherever the value could have arrived from -- the menu
--- opening, a save being loaded or begun -- so there is no route by which one
--- of them is on and unreachable.
---
--- Everything they did is still reachable: uninstall the mod and both rows are
--- back, at whatever they were last set to.
--- BATTLE BG rides the same reasoning, and comes off for a reason of its own.
--- The row picks what fills the screen AROUND the battle's 160x144 field --
--- WHITE paper, BLACK bars, or the frozen overworld dimmed behind it -- and
--- all three were answers to the same question: what to do with the voids,
--- given the battle is a small picture in the middle of a big window.
---
--- This mod answers that question differently and permanently. A staged fight
--- fills the whole window with the map the fight is standing on, and the
--- flat battle screen it composites over it is drawn on the mode's own
--- surface; there are no voids left for the row to fill. WORLD is the worst
--- of the three under it -- it makes the battle non-opaque so the engine
--- draws the overworld underneath, which is a SECOND copy of the world drawn
--- under the one the arena pass already put there, dimmed and at a different
--- camera. BLACK bars over a diorama read as a letterboxed screenshot.
---
--- So the value is pinned at WHITE, which is the one the mode was composed
--- against, and the row comes off the menu on the same reasoning as TILT and
--- GBC FX: a row that no longer decides anything is worse than no row.
--- Uninstall the mod and it is back, at whatever it was last set to.
-local function pinEngineFx(game)
-  game = game or require("src.core.Game")
-  local opts = game and game.save and game.save.options
-  local Tilt = require("src.render.Tilt")
-  local GBCFX = require("src.render.GBCFX")
-  local changed = false
-  if opts then
-    changed = (opts.tilt or 0) ~= 0 or (opts.gbcfx or 0) ~= 0
-                or (opts.battleBg or "white") ~= "white"
-    opts.tilt, opts.gbcfx = 0, 0
-    opts.battleBg = "white"
-  end
-  pcall(Tilt.setLevel, 0)
-  pcall(GBCFX.setLevel, 0)
-  if changed and game.writeOptions then
-    -- Off the entry frame (BUG-2c): save.loaded/save.created already
-    -- carry restoreSave and the cache gate -- the field logs' map-enter
-    -- freezes -- and the pin holds in memory either way.
-    deferToNextTick(function() pcall(game.writeOptions, game) end)
-  end
-end
-
-local function voxelSettingsRows(game)
-  return Cache.rows(game)
-end
-
--- Keep engine OPTIONS focused: one launcher replaces every PotatoVoxel row.
-mod.hooks:wrap("ui.options.rows", function(next, game, rows)
-  local out = next(game, rows)
-  if type(out) ~= "table" then return out end
-  pinEngineFx(game)
-  dropRow(out, "tilt")
-  dropRow(out, "gbcfx")
-  dropRow(out, "battleBg")
-  if stagedBattles() then
-    OverworldBattle.forceOG(game)
-    dropRow(out, "battleLayout")
-  end
-  for i = #out, 1, -1 do
-    local id = type(out[i]) == "table" and out[i].id or ""
-    id = id or ""
-    if id == "pipeline:voxel"
-       or id:find("^potato_voxel:") then table.remove(out, i) end
-  end
-  out[#out + 1] = {
-    id = "potato_voxel:settings", label = "VOXEL SETTINGS",
-    value = function() return "OPEN" end,
-    activate = function(g)
-      require("src.ui.Screens").push(g, "PotatoVoxelSettings")
-    end,
-  }
-  return out
-end)
-
-mod.content.screens:register("PotatoVoxelSettings", {
-  new = function(game)
-    return V.require("VoxelSettingsMenu").new(game, voxelSettingsRows)
-  end,
+-- SettingsFeature owns the options-row rewrite, the pinned engine options,
+-- and the PotatoVoxel settings screen. The call stays before the cache
+-- lifecycle wrapper, matching the original registration order.
+Settings.installRowsHook({
+  Cache = Cache,
+  deferToNextTick = deferToNextTick,
 })
 
-do
-  local Game = require("src.core.Game")
-  if not Game.dramaticShapeCacheGateHook then
-    local restoreSave = Game.restoreSave
-    function Game:restoreSave(loaded, recovered)
-      restoreSave(self, loaded, recovered)
-      Cache.gate(self)
-    end
-    local makeTitleState = Game.makeTitleState
-    function Game:makeTitleState()
-      local title = makeTitleState(self)
-      local onNewGame = title.onNewGame
-      title.onNewGame = function()
-        onNewGame()
-        Cache.gate(self)
-      end
-      return title
-    end
-    Game.dramaticShapeCacheGateHook = true
-  end
-end
+
+Cache.installLifecycle()
 
 -- The mod manager writes and persists these settings on its own, and the
 -- current API has no options-changed event to announce it -- so there is
@@ -962,154 +671,18 @@ end
 -- from the voxel pipeline's update hook instead (both are guarded no-ops
 -- when already correct).
 
--- ------- keeping the geometry in step with the world
---
--- Terrain meshes are derived from a map's block layer, so anything that
--- rewrites a block (a cut tree, a smashed rock, a script's replaceBlock)
--- has to drop that map's cached mesh or the 3D world keeps showing the
--- tree that is no longer there.  The 2D tile renderer invalidates its own
--- caches off the same edit.
+-- WorldFeature owns map edit/reload hooks and the Map:setBlock invalidation
+-- seam. Installing here preserves their order before settings-menu refresh.
+WorldFeature.installMapHooks({
+  mod = mod,
+  DebugOverlay = DebugOverlay,
+})
 
--- refresh, not invalidate: the stale mesh keeps drawing while the
--- replacement builds in the background, so a one-block edit (Cut, a
--- door stamp, the tree regrowing on re-entry) repopulates in place
--- instead of blinking the whole scene down to the flat 2D path
-mod.events:on("world.block_replaced", function(payload)
-  local mapId = payload and (payload.mapId or (payload.map and payload.map.id))
-  DebugOverlay.trace("event block_replaced %s", tostring(mapId))
-  if mapId then ChunkMesher.refresh(mapId) end
-end)
 
--- The event above is the ANNOUNCED edit -- OverworldState:replaceBlock
--- emits it, which is the path Victory Road's barriers and a script's
--- replaceBlock take. Several edits do not go through it:
---
---   Cut          swaps the tree block and rebuilds the 2D renderer
---   the regrowth restores those blocks when the map is re-entered
---   card-key doors are stamped closed on floor load
---
--- all of them writing the block layer directly. Meshes derived from that
--- layer went stale with no announcement -- the cut tree stayed standing,
--- and after a round trip through a door the stump stayed cut because this
--- map's mesh survives in the cache (that is what prevLive is for).
---
--- The engine could announce each of those, and an earlier cut of this
--- work changed it to. That is the wrong place: it edits the game for one
--- mod's benefit, and every future path that writes a block has to
--- remember to do the same. They all funnel through ONE choke point --
--- Map:setBlock -- so wrap that from here instead. Map is a plain
--- metatable shared by every map instance, so this covers all of them,
--- including paths written after this mod.
---
--- Read back rather than trust the argument: setBlock silently ignores an
--- out-of-bounds write, and a stamp that rewrites a block with the value
--- it already held (the door code guards for this, the regrowth does not)
--- is not a change and must not throw the mesh away.
-do
-  local Map = require("src.world.Map")
-  RuntimeHooks.wrapOnce(Map, "setBlock", "dramaticShapeBlockHook",
-    function(setBlock)
-      return function(self, bx, by, block)
-        local before = self:blockAt(bx, by)
-        setBlock(self, bx, by, block)
-        if self.id and self:blockAt(bx, by) ~= before then
-          ChunkMesher.refresh(self.id)
-        end
-      end
-    end)
-end
-
--- A reloaded map is rebuilt from scratch (warps that re-enter the same map,
--- hot reload), so its mesh is stale for the same reason -- with one
--- exception, and it is the common one.
---
--- A palette switch reloads the map ONLY to rebuild its atlas
--- (PaletteFX.setMode -> reloadMap(id, "colors")). The geometry that comes
--- back is identical: this mesher reads block layout and tile ids and never
--- reads colour, and the palette lives entirely in the texture TerrainAtlas
--- hands back per frame -- which is keyed BY palette, so the new colours are
--- already built by the time the next frame draws.
---
--- Dropping the mesh anyway cost a visible flash of the flat 2D world on
--- every palette toggle. Mesh builds are asynchronous, so the frames between
--- the drop and the first finished mesh have no terrain to draw, and
--- drawWorld returning nil IS the 2D fallback. Keeping the geometry lets the
--- new colours land on the diorama already on screen, in one frame, which is
--- what a palette toggle should look like from inside voxel mode.
-mod.events:on("map.reloaded", function(payload)
-  DebugOverlay.event("map.reloaded", {
-    mapId = payload and payload.mapId,
-    reason = payload and payload.reason,
-  })
-  DebugOverlay.trace("event map.reloaded %s (%s)",
-                    tostring(payload and payload.mapId), tostring(payload and payload.reason))
-  if payload and payload.reason == "colors" then return end
-  local mapId = payload and (payload.mapId or (payload.map and payload.map.id))
-  if mapId then ChunkMesher.invalidate(mapId) end
-end)
-
-mod.events:on("map.entered", function(payload)
-  DebugOverlay.event("map.entered", {
-    mapId = payload and (payload.mapId or payload.id),
-  })
-  DebugOverlay.trace("event map.entered %s",
-                    tostring(payload and (payload.mapId or payload.id)))
-end)
-
--- ------- rows come and go, so the menu has to notice
---
--- OptionsMenu builds its row list ONCE, when it is opened, and then reads
--- that list every frame. So stepping the VOXEL row onto or off FULL changed
--- which rows the hook would return but not which rows were on screen -- the
--- settings FULL owns stayed visible until the menu was closed and reopened,
--- and a player who stepped off FULL could not see the rows come back.
---
--- Rebuilt in place, and only on a step that changes the LIST: crossing FULL,
--- or toggling 3D-BTL, which is the other row that owns one (BATTLE LAYOUT).
--- Every other rung returns the same list, and rebuilding on all of them would
--- rerun every mod's ui.options.rows hook once per keypress. The cursor is
--- clamped rather than reset, so it stays on the row it was just used on
--- instead of jumping to the top when the list below it shortens.
-do
-  local OptionsMenu = require("src.ui.OptionsMenu")
-  if not OptionsMenu.dramaticShapeFullHook then
-    local Pipelines = require("src.render.Pipelines")
-    local inner = OptionsMenu.update
-
-    local function idAt(menu, index)
-      local row = menu.rows and menu.rows[index or 1]
-      return type(row) == "table" and row.id or nil
-    end
-
-    function OptionsMenu:update(dt)
-      local before = Pipelines.level("voxel")
-      local hadBattles = OverworldBattle.enabled()
-      -- the VR row hides the two battle rows while it is on, so stepping
-      -- it changes the LIST exactly the way 3D-BTL does
-      local hadVR = VR.enabled()
-      local wasOn = idAt(self, self.index)
-      inner(self, dt)
-      local after = Pipelines.level("voxel")
-      local crossedFull = after ~= before
-                          and (Voxel.isFull(before) or Voxel.isFull(after))
-      if crossedFull or OverworldBattle.enabled() ~= hadBattles
-         or VR.enabled() ~= hadVR then
-        local rebuilt = OptionsMenu.new(self.game)
-        self.rows = rebuilt.rows
-        -- Follow the row the cursor was ON rather than the slot it was in:
-        -- 3D-BTL takes BATTLE LAYOUT off the list ABOVE itself, which would
-        -- otherwise slide the cursor onto the row under the one just used.
-        for i = 1, #self.rows do
-          if wasOn and idAt(self, i) == wasOn then self.index = i; break end
-        end
-        local cancel = #self.rows + 1
-        if (self.index or 1) > cancel then self.index = cancel end
-      end
-    end
-
-    OptionsMenu.dramaticShapeFullHook = true
-  end
-end
+-- OptionsMenu rebuilds its rows only when FULL, 3D-BTL, or VR changes
+-- the visible list. SettingsFeature owns that lifecycle wrapper; keeping the
+-- call here preserves its registration point before battle installation.
+Settings.installMenuRefresh()
 
 -- ------- battles on the map
 --
@@ -1117,7 +690,7 @@ end
 -- BattleState:drawHUDs -- all live in lib/OverworldBattle.lua, which is
 -- where the reasoning for each one is written down. Installed once, here,
 -- so this file keeps naming every engine seam the mod touches.
-OverworldBattle.install()
+Battle.installCore()
 
 -- ------- the free-roam rungs' inputs and their walk
 --
@@ -1167,71 +740,12 @@ CamControl.install()
 -- eight buttons. See lib/Horde.lua.
 Horde.install()
 
--- The overworld's own pushBattle is the choke point for a wild encounter or
--- a trainer, and it is wrapped. A battle that arrives some other way -- a
--- link battle, a script pushing a BattleState directly -- reaches this
--- instead, which stages the arena from wherever the player is standing.
--- Nothing visible is lost by being late: the cull only has to beat the
--- battle screen, and the wipe those battles skip is where it would have
--- shown.
-mod.events:on("battle.started", function(payload)
-  DebugOverlay.trace("event battle.started")
-  OverworldBattle.ensure(payload and payload.battle)
-end)
+-- BattleFeature owns the staged battle events, sprite override, and exit
+-- transition. These calls stay after Horde's install and before DayTint so the
+-- engine hook/event registration order remains unchanged.
+Battle.installEvents()
+Battle.installExit()
 
--- Both mons face the camera, so the player's side wants its FRONT pic where
--- the battle screen would have used the back one. The engine's own
--- pokemon.sprite hook is the seam for exactly this: it is asked for every
--- battle pic with the side it is resolving, so swapping one side's answer
--- needs no battle code at all -- and every path that builds a battler goes
--- through it, including a Transform mid-fight.
---
--- Ask downstream art mods for their FRONT variant. This hook has to run before
--- them: a complete front pic is what stands on the map, while many back pics
--- end at the text-box edge baked into their artwork.
-mod.hooks:wrap("pokemon.sprite", function(next, path, ctx)
-  if not (ctx and ctx.kind == "battle" and ctx.side == "back") then
-    return next(path, ctx)
-  end
-  -- `battles` is stored in modOptions as the selected ladder value, not a
-  -- boolean. The old truthy check enabled the alternate front-art path even
-  -- when the player had selected OFF, and with the default 2D-3D-A path it
-  -- made the lower-left player battler use the wrong-facing asset. Only the
-  -- explicit staged-map path needs front art; the flat/normal battle keeps the
-  -- engine's canonical back sprite.
-  if not OverworldBattle.wantsFront() then return next(path, ctx) end
-  local def = ctx.data and ctx.data.pokemon and ctx.data.pokemon[ctx.species]
-  local front = {}
-  for key, value in pairs(ctx) do front[key] = value end
-  front.side = "front"
-  local out = next((def and def.spriteFront) or path, front)
-  ctx.trueColor = front.trueColor
-  return out
-end, 1000)
-
--- Every ending path emits this, including a battle skipped before it drew,
--- so this is where the map's cast comes back.
-mod.events:on("battle.ended", function()
-  DebugOverlay.trace("event battle.ended")
-  OverworldBattle.finish()
-end)
-
--- ------- and the way back out
---
--- The engine wipes INTO a battle with one of the original's eight transitions
--- and cuts straight OUT of it. That cut is between two very different cameras
--- in this mode, so while voxel mode is on the battle fades out, closes behind
--- the black, and the map fades up. The two seams it needs -- BattleState:finish
--- and Renderer:endFrame -- and the reasoning for each live in lib/BattleExit.lua.
---
--- Declared as a transitions record rather than a constant in that file, so the
--- fade is retunable in data exactly like the eight wipes it answers, and a total
--- conversion can make it as long or as short as its own pacing wants.
-mod.content.transitions:register(BattleExit.ID, {
-  frames = BattleExit.FRAMES,
-})
-
-BattleExit.install()
 
 -- ------- and the hour on the flat world
 --
@@ -1285,7 +799,7 @@ mod.events:on("save.loaded", function(payload)
   -- switched on, and their rows are not there to switch them back off (see
   -- pinEngineFx). Answered here rather than only when the menu opens, so a
   -- player who never opens it is not left playing under one.
-  pinEngineFx()
+  Settings.pinEngineFx()
 end)
 
 mod.events:on("save.created", function(payload)
@@ -1293,7 +807,7 @@ mod.events:on("save.created", function(payload)
   if payload and payload.game then DebugOverlay.bindGame(payload.game) end
   DebugOverlay.trace("event save.created")
   DayNight.restore()
-  pinEngineFx()
+  Settings.pinEngineFx()
 end)
 
 -- The engine's own time-of-day seam. OverworldState:timeOfDay() is an

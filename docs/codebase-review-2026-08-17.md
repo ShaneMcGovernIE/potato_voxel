@@ -41,13 +41,17 @@ points intact while moving isolated algorithms behind narrow boundaries.
 
 | Module | Lines | Responsibility |
 |---|---:|---|
-| `main.lua` | 1,319 | Composition root, hooks, settings schema, cache gate |
+| `main.lua` | 833 | Composition root, cross-feature event wiring, and update order |
 | `lib/Structures.lua` | 2,959 | Map analysis, claims, remaining authored geometry |
 | `lib/ChunkMesher.lua` | 955 | Mesh orchestration, GPU upload, cache handoff |
 | `lib/MeshCache.lua` | 1,246 | Scoped storage, identity, manifest, payload validation |
 | `lib/Voxel3D.lua` | 1,655 | Camera, shading, fog, wireframe, world draw |
 | `lib/VoxelScene.lua` | 1,328 | Render-pass composition |
-| `lib/WorldFeature.lua` | 151 | World pipeline loading, fallback, scale, and overlay |
+| `lib/InputFeature.lua` | 133 | Hotkeys, voxel ladder, and `Game:keypressed` policy |
+| `lib/BattleFeature.lua` | 65 | Staged battle, sprite, and exit integration |
+| `lib/WorldFeature.lua` | 209 | World render policy, loading, and map invalidation hooks |
+| `lib/SettingsFeature.lua` | 267 | Settings schema, rows, engine pins, and menu refresh |
+| `lib/CacheFeature.lua` | 194 | Cache gate, prebuild UI, and save lifecycle wrappers |
 | `lib/Water.lua` | 1,503 | Water planes, waves, reflections |
 | `lib/DebugOverlay.lua` | 882 | Public diagnostics façade and optional HUD |
 | `lib/DiagnosticsStore.lua` | 154 | Bounded diagnostic state and snapshots |
@@ -74,7 +78,13 @@ points intact while moving isolated algorithms behind narrow boundaries.
   and remote transport from `DebugOverlay`. The overlay still exposes the
   existing `export`, `sendLogs`, `frame`, and status behavior.
 - Extracted world render policy from `main.lua` into `WorldFeature`; the
-  composition root now only wraps the engine callback and owns update order.
+  composition root now only owns update order and calls named world seams.
+- Extracted input policy into `InputFeature`, staged battle integration into
+  `BattleFeature`, cache lifecycle wrappers into `CacheFeature`, and map
+  invalidation/loading hooks into `WorldFeature`.
+- Moved settings-row rewriting, engine FX pinning, the custom settings screen,
+  and options-menu refresh into `SettingsFeature`; save events call its public
+  pinning seam instead of a local helper.
 - Removed a duplicate unreachable pipeline-hotkey branch and synchronized the
   exported release version and community card with `manifest.json`.
 - Extracted vegetation, stairs, and shared authored-pattern matching from
@@ -90,8 +100,10 @@ points intact while moving isolated algorithms behind narrow boundaries.
 
 ## Deliberately retained seams
 
-- `main.lua` remains a large composition root because hook registration,
-  settings schema, and engine-facing callbacks are easier to audit together.
+- `main.lua` remains the composition root because cross-feature event wiring,
+  engine callback order, and update sequencing are easier to audit together.
+  The remaining `game.ready`, save, and `world.tod` callbacks intentionally
+  compose several features and are not hidden behind a generic coordinator.
 - `Structures.lua` still owns cylinders/round hulls, bookcases, relief,
   volume fill, region/object extraction, and the claim-order coordinator.
   These passes share mutable claim state and are not safe copy-and-paste
@@ -122,7 +134,7 @@ tests load the repository copy without modifying the engine checkout:
 
 | Gate | Result |
 |---|---|
-| Main headless suite | 353/353 checks |
+| Main headless suite | 358/358 checks |
 | Cache suite | 194/194 checks |
 | Sandbox API scan | clean |
 | Shadow runtime | 16 passed, 0 failed |

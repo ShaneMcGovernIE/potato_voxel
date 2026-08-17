@@ -3,6 +3,7 @@
 -- the player-facing gate and keeps those UI transitions out of main.lua.
 local V = ...
 
+local RuntimeHooks = V.require("RuntimeHooks")
 local CacheFeature = {}
 
 function CacheFeature.new(ctx)
@@ -93,6 +94,29 @@ function CacheFeature.new(ctx)
         end
       end,
     }))
+  end
+
+  function feature.installLifecycle()
+    local Game = require("src.core.Game")
+    RuntimeHooks.wrapOnce(Game, "restoreSave", "dramaticShapeCacheGateHook",
+      function(restoreSave)
+        RuntimeHooks.wrapOnce(Game, "makeTitleState",
+          "dramaticShapeCacheGateTitleHook", function(makeTitleState)
+            return function(self)
+              local title = makeTitleState(self)
+              local onNewGame = title.onNewGame
+              title.onNewGame = function()
+                onNewGame()
+                feature.gate(self)
+              end
+              return title
+            end
+          end)
+        return function(self, loaded, recovered)
+          restoreSave(self, loaded, recovered)
+          feature.gate(self)
+        end
+      end)
   end
 
   function feature.rows(game)
