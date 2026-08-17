@@ -11,6 +11,9 @@ local RuntimeHooks = exports.lib.require("RuntimeHooks")
 local CacheFeature = exports.lib.require("CacheFeature")
 T.check(type(CacheFeature.new) == "function",
         "cache feature exposes an explicit boundary")
+local CacheIdentity = exports.lib.require("CacheIdentity")
+T.check(type(CacheIdentity.new) == "function",
+        "cache identity exposes an explicit boundary")
 do
   local target = { run = function(_, value) return value end }
   local installs = 0

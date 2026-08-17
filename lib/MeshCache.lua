@@ -34,7 +34,7 @@
 -- the mod namespace (see main.lua): V.require loads a sibling module
 local V = ...
 
-local Brick = V.require("BrickProfile")
+local CacheIdentity = V.require("CacheIdentity")
 local Budget = V.require("BuildBudget")
 local Platform = V.require("Platform")
 
@@ -43,7 +43,6 @@ local Platform = V.require("Platform")
 -- consulted (kept out of the picture deliberately -- see the removals ADR).
 
 local MeshCache = {}
-local dataKey = "unconfigured"
 local dirty = false
 local compression = "unknown"
 local codec = nil          -- "lz4"/"zstd"/"MIX" behind the compressed files
@@ -75,6 +74,9 @@ local saveFailures = 0
 -- headers. The move to scoped storage does NOT bump it -- the new store
 -- starts empty, so every device rebuilds once on its own.)
 MeshCache.GEOMETRY_VERSION = 18
+local Identity = CacheIdentity.new({
+  geometryVersion = MeshCache.GEOMETRY_VERSION,
+})
 
 -- ------------------------------------------------------------- storage
 --
@@ -257,16 +259,22 @@ function MeshCache.dir()
   return facade() and "storage" or nil
 end
 
--- ------------------------------------------------------------ identity
-
-local function hashString(hash, value)
-  value = tostring(value or "")
-  for i = 1, #value do
-    hash = (hash * 31 + value:byte(i)) % 2147483647
-  end
-  return hash
+-- Compatibility forwards. MeshCache remains the public cache façade while
+-- identity calculation lives in a side-effect-free service.
+local function identity()
+  return Identity.identity()
 end
 
+local function identityParts()
+  return Identity.parts()
+end
+
+local function identityDiff(expected, actual)
+  return Identity.identityDiff(expected, actual)
+end
+
+-- Manifest records have their own deterministic ordering; this is storage
+-- serialization policy, not part of build identity.
 local function sortedKeys(table_)
   local keys = {}
   for key in pairs(table_ or {}) do keys[#keys + 1] = key end
@@ -274,109 +282,8 @@ local function sortedKeys(table_)
   return keys
 end
 
-local function hashValues(hash, values)
-  for i, value in ipairs(values or {}) do
-    hash = hashString(hash, i)
-    if type(value) == "table" then
-      hash = hashValues(hash, value)
-    else
-      hash = hashString(hash, value)
-    end
-  end
-  return hash
-end
-
-local function datasetRevision(data)
-  local hash = 17
-  local maps = data and data.maps or {}
-  for _, id in ipairs(sortedKeys(maps)) do
-    local def = maps[id]
-    hash = hashString(hash, id)
-    hash = hashString(hash, def.width)
-    hash = hashString(hash, def.height)
-    hash = hashString(hash, def.tileset)
-    hash = hashString(hash, def.borderBlock)
-    hash = hashValues(hash, def.blocks)
-    local connections = def.connections or {}
-    for _, direction in ipairs(sortedKeys(connections)) do
-      local connection = connections[direction]
-      hash = hashString(hash, direction)
-      hash = hashString(hash, connection.map)
-      hash = hashString(hash, connection.offset)
-      hash = hashString(hash, connection.walkable)
-    end
-  end
-  local tilesets = data and data.tilesets or {}
-  for _, id in ipairs(sortedKeys(tilesets)) do
-    local tileset = tilesets[id]
-    hash = hashString(hash, id)
-    hash = hashString(hash, tileset.image)
-    hash = hashString(hash, tileset.trueColor)
-    hash = hashString(hash, tileset.tilesPerRow)
-    hash = hashValues(hash, tileset.blocks)
-    hash = hashValues(hash, tileset.walkable)
-    hash = hashValues(hash, tileset.counterTiles)
-    hash = hashValues(hash, tileset.doorTiles)
-    hash = hashValues(hash, tileset.warpTiles)
-    hash = hashString(hash, tileset.grassTile)
-  end
-  return tostring(hash)
-end
-
-local GameVersion = nil
-do
-  local ok, mod = pcall(require, "src.core.GameVersion")
-  if ok then GameVersion = mod end
-end
-
-local function activeVersion()
-  if GameVersion and GameVersion.get then return GameVersion.get() end
-  return "red"
-end
-
-local function identityParts()
-  local okTR, TileRenderer = pcall(require, "src.render.TileRenderer")
-  local voidFill = (okTR and TileRenderer and TileRenderer.voidFill) or "trees"
-  local profile = Brick.isBrick() and "b" or "f"
-  return {
-    format = "PVMC1",
-    version = MeshCache.GEOMETRY_VERSION,
-    activeVersion = activeVersion(),
-    profile = profile,
-    dataKey = dataKey,
-    voidFill = tostring(voidFill),
-  }
-end
-
-local function identity()
-  local parts = identityParts()
-  return table.concat({ parts.format, parts.version, parts.activeVersion,
-                        parts.profile, parts.dataKey, parts.voidFill }, "|")
-end
-
-local IDENTITY_COMPONENTS = { "format", "version", "activeVersion", "profile",
-                              "dataKey", "voidFill" }
-
-local function splitIdentity(id)
-  local parts = {}
-  for part in tostring(id):gmatch("([^|]*)") do
-    if part ~= "" then parts[#parts + 1] = part end
-  end
-  return parts
-end
-
-local function identityDiff(expected, actual)
-  local e = splitIdentity(expected)
-  local a = splitIdentity(actual)
-  local diffs = {}
-  for i, name in ipairs(IDENTITY_COMPONENTS) do
-    if e[i] ~= a[i] then diffs[#diffs + 1] = name end
-  end
-  return diffs
-end
-
 function MeshCache.configure(data)
-  dataKey = datasetRevision(data)
+  Identity.configure(data)
   dirty = false
   compression = "unknown"
   codec = nil
