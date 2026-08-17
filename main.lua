@@ -107,6 +107,7 @@ local Horde = V.require("Horde")
 local HordeGun = V.require("HordeGun")
 local HordeHud = V.require("HordeHud")
 local CachePrebuild = V.require("CachePrebuild")
+local CacheFeature = V.require("CacheFeature")
 local MeshCache = V.require("MeshCache")
 local HordeSfx = V.require("HordeSfx")
 local MapAtmos = V.require("MapAtmos")
@@ -264,12 +265,10 @@ local STALL_TRIGGER = 2
 local STALL_MAX_FRAMES = 4
 local stallSkip = { count = 0, frames = 0 }
 
--- The boot gate's "MAP CACHE NOT READY. BUILD NOW?" prompt is a real
--- question: while it is up -- and after a NO answer -- the hands-off
--- auto-start must not override it (field log: the fill started 8s after
--- a decline). Pending blocks the auto-start tick; a NO records a
--- session-wide decline; a wipe re-arms.
-local cacheGatePending = false
+-- The cache feature owns the boot prompt's pending state. It is forward
+-- declared because the always-running pipeline tick is defined before the
+-- settings/context assembly below.
+local Cache
 
 function voidFill.check()
   local TileRenderer = require("src.render.TileRenderer")
@@ -402,7 +401,7 @@ mod.content.render_pipelines:register("voxel", {
       local Game = require("src.core.Game")
       local ow = Game and Game.overworld
       local covered = Game and Game.stack and Game.stack:top() ~= ow
-      if not cacheGatePending then
+      if not Cache.isGatePending() then
         CachePrebuild.autoStart(Game)
       end
       CachePrebuild.update(covered)
@@ -807,6 +806,13 @@ local Settings = SettingsFeature.new({
   DebugOverlay = DebugOverlay,
   stagedBattles = stagedBattles,
 })
+Cache = CacheFeature.new({
+  CachePrebuild = CachePrebuild,
+  MeshCache = MeshCache,
+  DebugOverlay = DebugOverlay,
+  PlayerId = PlayerId,
+  settingsEntries = Settings.entries,
+})
 Settings.defineSchema()
 
 -- Mint the per-install support token early so the PLAYER ID row and the
@@ -1084,148 +1090,8 @@ local function pinEngineFx(game)
   end
 end
 
--- Build the complete PotatoVoxel-owned row set for the dedicated submenu.
-local function cacheReadyLabel(status)
-  if status ~= "READY" then return status end
-  local codec = MeshCache.codec()
-  if codec then return "READY " .. codec:upper() end
-  local mode = MeshCache.compressionStatus()
-  if mode == "mixed" then return "READY MIX" end
-  if mode == "raw" then return "READY RAW" end
-  return "READY"
-end
-
-local function showCacheStatus(game)
-  local TextBox = require("src.render.TextBox")
-  local status = CachePrebuild.status()
-  local label = status
-  if status == "READY" then
-    local codec = MeshCache.codec()
-    if codec then
-      label = "READY (" .. codec:upper() .. ")"
-    else
-      local mode = MeshCache.compressionStatus()
-      label = mode == "mixed" and "READY (MIXED)"
-              or mode == "raw" and "READY (RAW)"
-              or "READY"
-    end
-  end
-  -- The cache lives in the mod's scoped storage (no raw dir exists to
-  -- name), so a support report names the store it lives in.
-  local backendLabel = MeshCache.dir() and "STORAGE" or "NONE"
-  game.stack:push(TextBox.new(game,
-    ("%s\fGEOMETRY %d\fDIR: %s"):format(label, MeshCache.GEOMETRY_VERSION,
-                                          backendLabel)))
-end
-
-local function confirmCacheWipe(game)
-  local _, _, running = CachePrebuild.progress()
-  local TextBox = require("src.render.TextBox")
-  if running then
-    game.stack:push(TextBox.new(game, "CANCEL BUILD\nBEFORE WIPING."))
-    return
-  end
-  game.stack:push(TextBox.new(game, "WIPE CACHE?", nil, {
-    defaultNo = true,
-    choice = function(yes)
-      if yes then CachePrebuild.wipe(game) end
-    end,
-  }))
-end
-
--- The title screen runs its own demo overworld, so game.overworld cannot
--- tell it from play. The engine's own storage does it this way: a
--- TitleState anywhere on the stack means we are at the title.
-local function atTitle(game)
-  local stack = game and game.stack
-  local states = stack and stack.states
-  if type(states) ~= "table" then return false end
-  for _, state in ipairs(states) do
-    if type(state) == "table" and state.screenId == "TitleState" then
-      return true
-    end
-  end
-  return false
-end
-
 local function voxelSettingsRows(game)
-  local Pipelines = require("src.render.Pipelines")
-  local rows = {}
-  for _, row in ipairs(Pipelines.rows(game)) do rows[#rows + 1] = row end
-  -- Every setting row lives here. The potato tuning is the DEFAULT, not a
-  -- lock, so each knob is a switchable row (WATER OFF/SKY/FULL, AA
-  -- OFF/2X/4X, V-CURVE, V-GRID, 3D-BTL, BACK SPRITES, DAY/NIGHT, SHADOWS,
-  -- SHADOW QUALITY). The only gates are the situational `when`s -- VR
-  -- rows, and BACK SPRITES needing a staged fight -- so nothing a device
-  -- can carry is hidden from it.
-  for _, entry in ipairs(Settings.entries) do
-    if not entry.when or entry.when() then
-      rows[#rows + 1] = entry[1]:row()
-    end
-  end
-  -- The prebuild row is an in-game action: it builds against the save's
-  -- live options and needs a playthrough's storage. The title screen's
-  -- OPTIONS menu has neither, so the row is not offered there.
-  if not atTitle(game) then
-  rows[#rows + 1] = {
-    id = "potato_voxel:prebuild",
-    label = "PREBUILD CACHE",
-    value = function() return CachePrebuild.status() end,
-    activate = function(g)
-      local status = CachePrebuild.status()
-      local _, _, running = CachePrebuild.progress()
-      local decision = CachePrebuild.activationDecision(status, running)
-      if decision == "cancel" then CachePrebuild.cancel()
-      elseif decision == "start" then CachePrebuild.start(g)
-      elseif decision == "confirm_rebuild" then
-        local TextBox = require("src.render.TextBox")
-        local ChoiceBox = require("src.ui.ChoiceBox")
-        g.stack:push(TextBox.new(g, "REBUILD CACHE?", function()
-          g.stack:push(ChoiceBox.new(g, function(yes)
-            if yes then CachePrebuild.start(g) end
-          end, { defaultNo = true }))
-        end))
-      end
-    end,
-  }
-  end
-  rows[#rows + 1] = {
-    id = "potato_voxel:player_id",
-    label = "PLAYER ID",
-    -- the 8-digit support token (PlayerId): read-only, shown so a player
-    -- can share it in a support chat; A does nothing
-    value = function() return PlayerId.get() or "--------" end,
-    activate = function() end,
-  }
-  rows[#rows + 1] = {
-    id = "potato_voxel:cache_status",
-    label = "CACHE STATUS",
-    value = function()
-      local status = CachePrebuild.status()
-      return status == "READY"
-             and cacheReadyLabel(status)
-             or ("GEO %d"):format(MeshCache.GEOMETRY_VERSION)
-    end,
-    activate = showCacheStatus,
-  }
-  rows[#rows + 1] = {
-    id = "potato_voxel:wipe_cache",
-    label = "WIPE CACHE",
-    value = function() return "DELETE" end,
-    activate = confirmCacheWipe,
-  }
-  -- F8's touch access: ship the background log right now.  The START hold
-  -- chord does the same on pads/mobile; this row works everywhere the
-  -- VOXEL SETTINGS screen does.
-  rows[#rows + 1] = {
-    id = "potato_voxel:send_logs",
-    label = "SEND LOGS",
-    value = function() return "SEND" end,
-    activate = function(g)
-      DebugOverlay.export(g)
-    end,
-  }
-  return rows
+  return Cache.rows(game)
 end
 
 -- Keep engine OPTIONS focused: one launcher replaces every PotatoVoxel row.
@@ -1262,44 +1128,13 @@ mod.content.screens:register("PotatoVoxelSettings", {
   end,
 })
 
--- The cache build gate, moved OFF the title menu (F1). The game.ready-time
--- readiness check runs under the skeleton save's DEFAULT options, so a
--- player whose save chose another VOID FILL read as "cache stale" on every
--- launch even when the cache matched the save exactly. The READY re-check
--- and the one-time prompt now run AFTER the engine applies the save's own
--- options: CONTINUE lands here from restoreSave, NEW GAME from
--- makeTitleState's onNewGame callback. The prompt is a modal over whatever
--- the save left on top (the overworld, Oak's speech), and an accepted
--- build runs cooperatively in the background exactly like the
--- OPTIONS-menu prebuild.
-local function gateCacheBuild(game)
-  CachePrebuild.refresh(game)
-  if CachePrebuild.isReady() or not CachePrebuild.available() then return end
-  local TextBox = require("src.render.TextBox")
-  cacheGatePending = true
-  game.stack:push(TextBox.new(game, "MAP CACHE\nNOT READY.\fBUILD NOW?", nil, {
-    defaultNo = true,
-    choice = function(yes)
-      cacheGatePending = false
-      if yes then
-        if CachePrebuild.start(game) then
-          local Progress = V.require("CachePrebuildScreen")
-          game.stack:push(Progress.new(game))
-        end
-      else
-        CachePrebuild.decline()
-      end
-    end,
-  }))
-end
-
 do
   local Game = require("src.core.Game")
   if not Game.dramaticShapeCacheGateHook then
     local restoreSave = Game.restoreSave
     function Game:restoreSave(loaded, recovered)
       restoreSave(self, loaded, recovered)
-      gateCacheBuild(self)
+      Cache.gate(self)
     end
     local makeTitleState = Game.makeTitleState
     function Game:makeTitleState()
@@ -1307,7 +1142,7 @@ do
       local onNewGame = title.onNewGame
       title.onNewGame = function()
         onNewGame()
-        gateCacheBuild(self)
+        Cache.gate(self)
       end
       return title
     end

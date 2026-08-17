@@ -56,10 +56,10 @@
 
 **Files:** `main.lua`, `lib/MeshCache.lua`, new `lib/CacheFeature.lua`, relevant cache/prebuild tests
 
-- [ ] Characterize cache readiness states, consent/prebuild screen transitions, and fallback paths.
-- [ ] Move the cache gate and prebuild UI wiring into `CacheFeature` while preserving state transitions and messages.
-- [ ] Keep `MeshCache`'s current public API as a compatibility facade.
-- [ ] Verify cache payloads, manifest/resume behavior, and prebuild status under serial and worker paths.
+- [x] Characterize cache readiness states, consent/prebuild screen transitions, and fallback paths.
+- [x] Move the cache gate and prebuild UI wiring into `CacheFeature` while preserving state transitions and messages.
+- [x] Keep `MeshCache`'s current public API as a compatibility facade.
+- [x] Verify cache payloads, manifest/resume behavior, and prebuild status under serial and worker paths.
 
 ## Task 5: Split cache storage, identity, and manifest services behind `MeshCache`
 

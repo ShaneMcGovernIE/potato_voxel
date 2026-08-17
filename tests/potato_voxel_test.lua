@@ -8,6 +8,9 @@ T.eq(#run.errors, 0, "loads clean")
 local exports = run.loader.exports.potato_voxel
 T.check(exports ~= nil, "mod exports a table")
 local RuntimeHooks = exports.lib.require("RuntimeHooks")
+local CacheFeature = exports.lib.require("CacheFeature")
+T.check(type(CacheFeature.new) == "function",
+        "cache feature exposes an explicit boundary")
 do
   local target = { run = function(_, value) return value end }
   local installs = 0
