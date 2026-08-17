@@ -51,6 +51,7 @@ local TileShape = V.require("TileShape")
 local Budget = V.require("BuildBudget")
 local GridKey = V.require("GridKey")
 local VegetationBuilder = V.require("VegetationBuilder")
+local StructureMatcher = V.require("StructureMatcher")
 
 local Structures = {}
 
@@ -3340,22 +3341,10 @@ function Structures.buildFigures(S, map, x0, x1, y0, y1)
   local figures = TileShape.figures(map.tileset.id)
   if not figures then return end
   local perRow = map.tileset.tilesPerRow or 16
-  for _, fig in ipairs(figures) do
-    for ty = y0, y1 - fig.h + 1 do
-      for tx = x0, x1 - fig.w + 1 do
-        Budget.tick()
-        local hit = true
-        for i = 1, #fig.tiles do
-          local dx, dy = (i - 1) % fig.w, math.floor((i - 1) / fig.w)
-          if S.tileAt[GridKey.of(tx + dx, ty + dy)] ~= fig.tiles[i] then
-            hit = false
-            break
-          end
-        end
-        if hit then buildFigure(S, map, fig, tx, ty, perRow) end
-      end
-    end
-  end
+  StructureMatcher.each(figures, S.tileAt, x0, x1, y0, y1,
+                        function(fig, tx, ty)
+                          buildFigure(S, map, fig, tx, ty, perRow)
+                        end)
 end
 
 -- ---- mounted: a thing drawn INTO a wall band, stood proud of it ----
@@ -3412,22 +3401,10 @@ function Structures.buildMounted(S, map, x0, x1, y0, y1)
   local list = TileShape.mounted(map.tileset.id)
   if not list then return end
   local perRow = map.tileset.tilesPerRow or 16
-  for _, m in ipairs(list) do
-    for ty = y0, y1 - m.h + 1 do
-      for tx = x0, x1 - m.w + 1 do
-        Budget.tick()
-        local hit = true
-        for i = 1, #m.tiles do
-          local dx, dy = (i - 1) % m.w, math.floor((i - 1) / m.w)
-          if S.tileAt[GridKey.of(tx + dx, ty + dy)] ~= m.tiles[i] then
-            hit = false
-            break
-          end
-        end
-        if hit then buildMountedAt(S, map, m, tx, ty, perRow) end
-      end
-    end
-  end
+  StructureMatcher.each(list, S.tileAt, x0, x1, y0, y1,
+                        function(m, tx, ty)
+                          buildMountedAt(S, map, m, tx, ty, perRow)
+                        end)
 end
 
 -- ---- tall grass ----

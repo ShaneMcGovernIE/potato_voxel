@@ -62,6 +62,9 @@ T.check(type(VegetationBuilder.buildGrass) == "function",
         "vegetation builder exposes grass ownership")
 T.check(type(VegetationBuilder.buildFlowers) == "function",
         "vegetation builder exposes flower ownership")
+local StructureMatcher = exports.lib.require("StructureMatcher")
+T.check(type(StructureMatcher.each) == "function",
+        "structure matcher exposes the shared pattern boundary")
 do
   local runtime = MeshRuntime.new()
   local released = 0
