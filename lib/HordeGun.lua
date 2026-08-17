@@ -1,10 +1,9 @@
 -- HORDE MODE: the handgun.
 --
--- A voxel model in the player's right hand, authored here in METRES the
--- way lib/Pokedex authors the device in the left one -- because the VR
--- mapping's scale is what turns metres into world pixels, a mesh built
--- this way is the right size in the hand at every scale the mod has, and
--- the same mesh serves the flat screen's view model.
+-- A voxel model in the player's right hand, authored in METRES because the
+-- VR mapping's scale is what turns metres into world pixels. A mesh built
+-- this way is the right size in the hand at every scale the mod has, and the
+-- same mesh serves the flat screen's view model.
 --
 -- IN VR the gun rides the tracked right hand through VRRig.propMatrix,
 -- pointed by the runtime's AIM pose where one exists (the pose a runtime
@@ -73,9 +72,9 @@ HordeGun.HAND_OFFSET = { 0, -0.012, -0.02 }
 -- them, and it is the whole of the attachment.
 --
 -- Getting this wrong does not read as "slightly off": the first cut
--- copied the Pokedex's quarter-turn about X, which lays a flat slab along
--- the controller's body and is exactly right for a slab -- on a gun it
--- pointed the muzzle at the player's own face.
+-- copied the old left-hand panel's quarter-turn about X, which lays a flat
+-- slab along the controller's body and is exactly right for a slab -- on a
+-- gun it pointed the muzzle at the player's own face.
 HordeGun.HAND_YAW = math.pi
 
 -- AND A PITCH, because a hand is not a tripod. A controller held the way

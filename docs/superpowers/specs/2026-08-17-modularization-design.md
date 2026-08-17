@@ -13,7 +13,7 @@ documents, and recent release history. The main structural risks are:
 
 - `main.lua` is the composition root, hook installer, render-pipeline owner,
   settings schema, input adapter, cache gate, and diagnostics coordinator in
-  one 1,517-line file.
+  one 1,319-line file; world render policy now lives behind `WorldFeature`.
 - `Structures.lua` combines map analysis, object detection, round/building
   geometry, region extraction, and global template caches in 2,959 lines;
   vegetation, stairs, bookcases, and shared pattern matching now have
@@ -29,8 +29,9 @@ documents, and recent release history. The main structural risks are:
 - The packed coordinate key is centralized in `lib/GridKey.lua`; the previous
   independent helpers are gone.
 - VR is explicitly removed and `VR.supported()` is permanently false, while
-  dormant VR camera, battle, scene, input, and Pokedex paths remain in the
-  shipped code. These paths require characterization before deletion.
+  the public VR façade and guarded camera/battle/input compatibility paths
+  remain in the shipped code. The VR-only Pokedex module was characterized and
+  removed because it had no public export or reachable caller.
 - The disabled `Perf` object and its no-op counters were removed after the
   diagnostics surface was characterized.
 
@@ -144,14 +145,16 @@ stable while internals move.
 
 ## Implementation status — 2026-08-17
 
-Phases 1–4 are implemented and verified. Phase 5 has moved vegetation,
+Phases 1–4 are implemented and verified. `WorldFeature` now owns the world
+draw policy while `main.lua` retains update order and engine registration.
+Phase 5 has moved vegetation,
 authored pattern matching, stairs, and bookcases behind the existing
 `Structures` façade. The remaining coupled core is the claim-order
 coordinator plus cylinders/round hulls, relief, volume fill, and region/object
 extraction. Those paths share mutable intermediate grids and remain in
 `Structures` until dedicated characterization makes another extraction
 behaviorally safe. VR compatibility guards also remain reachable and are not
-deleted by this pass.
+deleted by this pass; only the unreachable VR-only Pokedex branch was removed.
 
 ## Verification contract
 

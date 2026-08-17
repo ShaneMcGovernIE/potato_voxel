@@ -11,9 +11,9 @@ claim order remain behaviorally significant.
   Recompilation. It is presentational; collision, warps, and scripts remain
   owned by the engine.
 - **Version:** 1.7.11 (`manifest.json`).
-- **Load model:** `main.lua` is the composition root. Runtime modules load
-  through `V.require`, which keeps the code inside the mod sandbox and works
-  when the mod is mounted from an archive.
+- **Load model:** `main.lua` is the composition root and registers the engine
+  callbacks. Runtime modules load through `V.require`, which keeps the code
+  inside the mod sandbox and works when the mod is mounted from an archive.
 - **Data path:** authored tile/profile data feeds `Structures`, then
   `GeometryBuilder`/`ChunkMesher`, then `VoxelScene` and the render passes.
 - **Cache path:** `MeshCache` owns scoped-storage persistence and identity;
@@ -28,6 +28,7 @@ map blocks → TileShape
       buildings → cylinders → stairs → bookcases → figures → mounted
       → region flood → object extraction → volumes → grass → flowers
   → GeometryBuilder / ChunkMesher
+  → WorldFeature (loading/fallback/scale/overlay policy)
   → VoxelScene (shadow → terrain → water → characters → grass)
 ```
 
@@ -40,12 +41,13 @@ points intact while moving isolated algorithms behind narrow boundaries.
 
 | Module | Lines | Responsibility |
 |---|---:|---|
-| `main.lua` | 1,517 | Composition root, hooks, settings schema, cache gate |
+| `main.lua` | 1,319 | Composition root, hooks, settings schema, cache gate |
 | `lib/Structures.lua` | 2,959 | Map analysis, claims, remaining authored geometry |
 | `lib/ChunkMesher.lua` | 955 | Mesh orchestration, GPU upload, cache handoff |
 | `lib/MeshCache.lua` | 1,246 | Scoped storage, identity, manifest, payload validation |
 | `lib/Voxel3D.lua` | 1,655 | Camera, shading, fog, wireframe, world draw |
-| `lib/VoxelScene.lua` | 1,343 | Render-pass composition |
+| `lib/VoxelScene.lua` | 1,328 | Render-pass composition |
+| `lib/WorldFeature.lua` | 151 | World pipeline loading, fallback, scale, and overlay |
 | `lib/Water.lua` | 1,503 | Water planes, waves, reflections |
 | `lib/DebugOverlay.lua` | 882 | Public diagnostics façade and optional HUD |
 | `lib/DiagnosticsStore.lua` | 154 | Bounded diagnostic state and snapshots |
@@ -71,6 +73,10 @@ points intact while moving isolated algorithms behind narrow boundaries.
 - Extracted diagnostics state, environment capture, optional feature logging,
   and remote transport from `DebugOverlay`. The overlay still exposes the
   existing `export`, `sendLogs`, `frame`, and status behavior.
+- Extracted world render policy from `main.lua` into `WorldFeature`; the
+  composition root now only wraps the engine callback and owns update order.
+- Removed a duplicate unreachable pipeline-hotkey branch and synchronized the
+  exported release version and community card with `manifest.json`.
 - Extracted vegetation, stairs, and shared authored-pattern matching from
   `Structures`; compatibility wrappers preserve its existing call surface.
 - Extracted bookcase detection and relief emission from `Structures`; the
@@ -78,6 +84,9 @@ points intact while moving isolated algorithms behind narrow boundaries.
 - Removed the old `debug.getupvalue` animation fallback from `TerrainAtlas`.
   The sandbox-safe path now uses the exported engine animation counter when
   available, otherwise wall-clock animation.
+- Removed the unreachable VR-only `Pokedex` module and its scene hook after
+  verifying that the permanently disabled VR façade provided no caller,
+  export, or test seam for it.
 
 ## Deliberately retained seams
 
@@ -94,8 +103,9 @@ points intact while moving isolated algorithms behind narrow boundaries.
 - The threaded worker path remains separate from the sandbox-safe runtime
   path. `compute` is declared and worker/thread access is guarded so engines
   without worker support fall back to serial builds.
-- VR and other dormant compatibility guards remain until their public callers
-  are removed and the supported engine matrix is intentionally narrowed.
+- The VR façade and other guarded compatibility paths remain until their public
+  callers are removed and the supported engine matrix is intentionally
+  narrowed.
 
 ## Sandbox constraints
 
@@ -112,7 +122,7 @@ tests load the repository copy without modifying the engine checkout:
 
 | Gate | Result |
 |---|---|
-| Main headless suite | 351/351 checks |
+| Main headless suite | 353/353 checks |
 | Cache suite | 194/194 checks |
 | Sandbox API scan | clean |
 | Shadow runtime | 16 passed, 0 failed |
@@ -121,7 +131,7 @@ tests load the repository copy without modifying the engine checkout:
 | Voxel loading | passed |
 | LuaJIT bytecode compilation | all `main.lua`, `lib/`, `data/`, and `workers/` files passed |
 
-`modkit validate`, `modkit lint`, and `modkit pack` also passed; the release
-package was written to `/private/tmp/potato-voxel-1.7.11.modpkg`. No
+`modkit validate`, `modkit lint`, and `modkit pack` also passed; a
+reproducible release package was written under `/private/tmp`. No
 engine-mount or game-copy sync is assumed by this document; those are separate
 deployment actions.

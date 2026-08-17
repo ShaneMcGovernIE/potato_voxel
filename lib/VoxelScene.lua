@@ -34,7 +34,6 @@ local FirstPerson = V.require("FirstPerson")
 local ShadowSettings = V.require("ShadowSettings")
 local MapAtmos = V.require("MapAtmos")
 local BattleBillboard = V.require("BattleBillboard")
-local Pokedex = V.require("Pokedex")
 local Diagnostics = V.require("DiagnosticsBridge")
 local PaletteFX = require("src.render.PaletteFX")
 local Map = require("src.world.Map")
@@ -1277,20 +1276,6 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
     Voxel3D.draw(ChunkMesher.flowers(nb.map), atlasFor(nb.map),
                  Mat4.translate(nb.ox, 0, nb.oy), fpull,
                  ShadowMap.snug(Mat4.translate(nb.ox, 0, nb.oy)))
-  end
-
-  -- The VR pokedex in the player's left hand, last of all: a prop over
-  -- the world drawn with real depth, so leaning it into a wall still
-  -- occludes honestly. Its frame only exists while a session is live and
-  -- the left hand is tracked (VR.lua sets it), so every flat frame skips
-  -- this in one field read. No wireframe and no glass, like the cast:
-  -- the device is a drawing riding the scene, not part of the terrain.
-  if Pokedex.frame then
-    Voxel3D.glass(false)
-    Voxel3D.seams(false)
-    Pokedex.draw()
-    Voxel3D.seams(true)
-    Voxel3D.glass(true)
   end
 
   -- HORDE MODE's handgun, in the same slot and for the same reasons: a

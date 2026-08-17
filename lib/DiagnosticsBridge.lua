@@ -52,4 +52,8 @@ function DiagnosticsBridge.buildDone(...)
   return call("buildDone", ...)
 end
 
+function DiagnosticsBridge.pipelinePath(...)
+  return call("pipelinePath", ...)
+end
+
 return DiagnosticsBridge

@@ -7,11 +7,10 @@
 -- buttons, and stands there until A.
 --
 -- It draws in the engine's own 160x144 UI canvas with the game's own
--- font, which is what makes it work in VR for free: with a headset live
--- and something other than the overworld on top of the stack, lib/VR
--- already puts the flat screen on the floating panel (or on the Pokedex
--- in the player's left hand). A card drawn the way the game draws cards
--- arrives there with no VR code at all.
+-- font, which is what makes it work in VR for free: with a headset live and
+-- something other than the overworld on top of the stack, lib/VR already
+-- puts the flat screen on the floating panel. A card drawn the way the game
+-- draws cards arrives there with no VR code at all.
 --
 -- A pops it and hands over to Horde.finish, which is what puts the world
 -- back: the map, the cell, the facing, the camera rung, the hour, the

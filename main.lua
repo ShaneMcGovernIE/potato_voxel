@@ -105,13 +105,13 @@ local VR = V.require("VR")
 -- chip-synthesized sounds it fires. See lib/Horde.lua for the whole design.
 local Horde = V.require("Horde")
 local HordeGun = V.require("HordeGun")
-local HordeHud = V.require("HordeHud")
 local CachePrebuild = V.require("CachePrebuild")
 local CacheFeature = V.require("CacheFeature")
 local MeshCache = V.require("MeshCache")
 local HordeSfx = V.require("HordeSfx")
 local MapAtmos = V.require("MapAtmos")
 local Weather = V.require("Weather")
+local WorldFeature = V.require("WorldFeature")
 local VoxelLoading = V.require("VoxelLoading")
 local SettingsFeature = V.require("SettingsFeature")
 local RuntimeHooks = V.require("RuntimeHooks")
@@ -178,33 +178,6 @@ local applyFull
 local stagedBattles
 
 -- The last VOID FILL the terrain was meshed under; see the update hook.
--- The scene canvas's size, in FRAMEBUFFER PIXELS.
---
--- `ctx.width/height` are the window measured in LOVE UNITS
--- (love.graphics.getDimensions), but the engine composites a pipeline's
--- returned canvas with `draw(canvas, 0, 0, 0, 1/dpiX, 1/dpiY)` -- a scale
--- that only covers the window when the canvas is at PIXEL resolution.
--- Sizing it in units costs the DPI scale TWICE: the canvas is that much
--- smaller, then it is drawn that much smaller again, so the diorama lands
--- in the top-left corner at 1/dpi of the screen.  Desktop never sees it --
--- units and pixels are the same thing there -- but on Android the DPI scale
--- is the display density (2.625 on a 420dpi panel), and the world came out
--- a third of the size in each direction.
---
--- So ask for the pixel dimensions rather than trusting the ctx.  That is
--- the number a fixed engine would hand over, so this keeps working either
--- way instead of double-correcting.  It also squares the FX pass: ctx.scale
--- is ALREADY in pixels per world pixel (Zoom.scale over Renderer:fitScale,
--- which measures the drawable), so the closures ctx.drawFx runs were being
--- scaled for a canvas 2.6x bigger than the one they drew into.
-local function sceneSize(ctx)
-  if love.graphics and love.graphics.getPixelDimensions then
-    local pw, ph = love.graphics.getPixelDimensions()
-    if pw and ph and pw > 0 and ph > 0 then return pw, ph end
-  end
-  return ctx.width, ctx.height
-end
-
 local voidFill = {}
 local VoidFillDebounce = V.require("VoidFillDebounce")
 -- Called after the engine applies a save's options (Game:applyOptions):
@@ -260,9 +233,6 @@ end
 -- consecutive stalled frames arm the skip, and drawWorld drops the
 -- voxel pass for up to STALL_MAX_FRAMES so the driver's queue drains
 -- and input stays live (the Deck log's GPU-side crawl).
-local STALL_FRAME = 0.25
-local STALL_TRIGGER = 2
-local STALL_MAX_FRAMES = 4
 local stallSkip = { count = 0, frames = 0 }
 
 -- The cache feature owns the boot prompt's pending state. It is forward
@@ -472,8 +442,7 @@ mod.content.render_pipelines:register("voxel", {
     end
     -- BUG-1: consecutive stalled frames (a GPU/compositor crawl -- the
     -- Deck log's 4s frames) arm the render-skip in drawWorld below.
-    stallSkip.count = dt > STALL_FRAME and (stallSkip.count + 1) or 0
-    if stallSkip.count == 0 then stallSkip.frames = 0 end
+    WorldFeature.updateStall(dt, stallSkip)
     local covered = Game and Game.stack and Game.stack:top() ~= ow
     -- The shared queue pumps with CachePrebuild's own slice budget while
     -- a prebuild runs (BUG-2a): the queue is shared, so the live pump
@@ -489,173 +458,11 @@ mod.content.render_pipelines:register("voxel", {
   end,
 
   drawWorld = function(ctx)
-    local function renderWorld()
-    DebugOverlay.pipelinePath("entered")
-    if not ctx.state then
-      DebugOverlay.pipelinePath("no_state")
-      DebugOverlay.error("drawWorld: no world state to draw")
-      return nil
-    end
-    if not Voxel3D.available() then
-      local caps = Voxel3D.diagnostics()
-      DebugOverlay.pipelinePath("unavailable", caps)
-      DebugOverlay.error("drawWorld: 3D unavailable (%s): %s",
-                         tostring(caps.reason), tostring(caps.error or ""))
-      return nil
-    end
-    -- the palette closure, stashed for the VR frame: it renders from the
-    -- update hook, where no ctx exists to carry one
-    VR.paletteFor = ctx.paletteFor
-    -- With a headset running, the window's world pass becomes the MIRROR
-    -- -- the left eye, fitted to the window -- rather than a third full
-    -- render of the scene. Everything else about the frame (the UI the
-    -- engine composites over this) is unchanged, which is exactly what
-    -- the headset's floating panel photographs.
-    if VR.active() then
-      local sw, sh = sceneSize(ctx)
-      local m = VR.mirror(sw, sh)
-      if m then
-        DebugOverlay.pipelinePath("rendered", { path = "vr_mirror" })
-        return m
-      end
-    end
-    -- Terrain and characters are geometry; the field FX stay ordinary 2D
-    -- draws composited on top, anchored through the same camera the 3D
-    -- pass used (ctx.drawFx below).  The scene renders at the window's
-    -- PIXEL resolution (see sceneSize) so the 3D pass is crisp rather than
-    -- a magnified low-res image, while the FX closures keep drawing in
-    -- world-pixel units.
-    local sw, sh = sceneSize(ctx)
-    if Voxel.loading then
-      -- This path returns WITHOUT setting renderMs -- a blank-world report
-      -- with renderMs frozen is drawWorld stuck here. Stamp the entry and,
-      -- if the loading canvas outlives 10s, escalate to a durable error
-      -- naming the pending count.
-      local now = love and love.timer and love.timer.getTime
-                 and love.timer.getTime() or 0
-      local pendingNow = ChunkMesher.pending()
-      if worldDiag.loadingEntered == 0 then
-        worldDiag.loadingEntered = now
-        worldDiag.loadingReported = false
-        worldDiag.loadingPending = pendingNow
-        DebugOverlay.note("drawWorld: loading canvas (%d pending)",
-                          pendingNow)
-      elseif not worldDiag.loadingReported and now > 0
-             and now - worldDiag.loadingEntered > 10 then
-        -- A slow device legitimately keeps the loading canvas up for
-        -- more than 10s (android 1.7.2 logs: 5 pending builds with a
-        -- 600MB+ texture load at save.loaded). Only a HANG reports:
-        -- pending must make no progress across the window (a finished
-        -- job is progress even if builds remain).
-        if pendingNow >= worldDiag.loadingPending then
-          worldDiag.loadingReported = true
-          DebugOverlay.error("drawWorld: stuck loading %.0fs (%d pending)",
-                             now - worldDiag.loadingEntered, pendingNow)
-        else
-          worldDiag.loadingEntered = now
-          worldDiag.loadingPending = pendingNow
-        end
-      end
-      DebugOverlay.pipelinePath("loading", {
-        pending = ChunkMesher.pending(),
-      })
-      return VoxelLoading.draw(sw, sh, ChunkMesher.pending())
-    end
-    worldDiag.loadingEntered = 0
-    worldDiag.loadingReported = false
-    -- BUG-1 render-skip: while a stall is in progress (see the update
-    -- hook), drop the voxel draw for up to STALL_MAX_FRAMES consecutive
-    -- frames -- the engine's flat 2D path draws instead -- so the
-    -- driver's queue drains and input stays live. The tracker re-arms
-    -- if the stall outlives the window.
-    if worldDiag.firstRender and stallSkip.count >= STALL_TRIGGER then
-      if stallSkip.frames < STALL_MAX_FRAMES then
-        stallSkip.frames = stallSkip.frames + 1
-        DebugOverlay.pipelinePath("stall_skip", {
-          frames = stallSkip.frames,
-        })
-        return nil
-      end
-      stallSkip.frames, stallSkip.count = 0, 0
-    end
-    -- With AA on, the whole pass runs into a canvas BIGGER than the window
-    -- and is folded back down at the end (see AntiAlias).  Nothing between
-    -- these two lines knows: every pass in the frame measures itself in the
-    -- canvas it was handed, so the sky's dither, the water's march and the
-    -- camera itself all come out the same picture at a higher sample rate.
-    local rw, rh = AntiAlias.expand(sw, sh)
-    -- The scene renders SMALLER than the window at the RENDER SCALE the
-    -- quality modes set (100% / 75% / 50% / 33%) -- BrickProfile.renderScale
-    -- reads that knob -- and the same resolve() fold at the end brings it
-    -- back up. Same machinery as AA, opposite direction: the GE8300
-    -- fills a fraction of the pixels for every scene pass and the voxel
-    -- diorama keeps its frame budget without the desktop's fill rate.
-    -- The composite is the only place that knows; everything inside
-    -- measures itself in the canvas it was handed.
-    local rs = BrickProfile.renderScale()
-    local crw = math.max(1, math.floor(rw * rs + 0.5))
-    local crh = math.max(1, math.floor(rh * rs + 0.5))
-    local t0 = love and love.timer and love.timer.getTime
-              and love.timer.getTime() or 0
-    local canvas = VoxelScene.render(ctx.state, crw, crh,
-                                     ctx.vw, ctx.vh, ctx.paletteFor)
-    if love and love.timer and love.timer.getTime then
-      renderMs = (love.timer.getTime() - t0) * 1000
-    end
-    if not canvas then
-      local reason = Voxel3D.beginFailure or "scene returned no canvas"
-      DebugOverlay.pipelinePath("fallback", { reason = reason })
-      DebugOverlay.error("drawWorld: scene returned no canvas (2D fallback): %s",
-                         reason)
-    end
-    if not worldDiag.firstRender and canvas then
-      worldDiag.firstRender = true
-      DebugOverlay.note("drawWorld: first scene render (%.0fms)", renderMs)
-    end
-    if not canvas then return nil end   -- fall back to the 2D path
-    -- the weather field advances on the same clock as the scene: the
-    -- drops fall through menus and dialogs like the hour's light does
-    local wcam = ctx.state and ctx.state.camera
-    if wcam then
-      Weather.update(ctx.state.map, wcam.x + ctx.vw / 2,
-                     wcam.y + ctx.vh / 2, ctx.vw, ctx.vh)
-    end
-    if Voxel3D.beginOverlay() then
-      -- the FX closures are ordinary 2D draws sized in DISPLAY pixels, and
-      -- they are drawing into the supersampled canvas alongside everything
-      -- else -- so the scale goes up with it, or the "!" bubble lands the
-      -- right place at half the size.  project() already answers in canvas
-      -- pixels, so only the scale needs saying.
-      ctx.drawFx(function(wx, wy) return Voxel3D.project(wx, 0, wy) end,
-                 ctx.scale * AntiAlias.factor() * rs)
-      -- the horde's readout rides the same overlay, over the FX: health,
-      -- ammunition, the crosshair and the banners, sized in the same
-      -- supersampled canvas pixels everything else here is drawn in. A
-      -- headset never reaches this line (drawWorld returns the mirror
-      -- above) -- lib/VR draws the same HUD onto each eye instead.
-      HordeHud.drawFlat(crw, crh, ctx.scale * AntiAlias.factor() * rs)
-      -- falling weather, drawn through the same project() seam the FX
-      -- closures use -- world-anchored, in front of everything
-      Weather.draw(ctx.scale * AntiAlias.factor() * rs, Voxel3D.project)
-      Voxel3D.endOverlay()
-    end
-    -- and back to the window's own size, which is what the engine composites
-    -- one canvas pixel to one display pixel.  A pass-through when AA is off.
-    if rs < 1 and canvas then
-      -- LOW / MEDIUM / POTATO fold back with the canvas' ordinary texture
-      -- filtering only. No dedicated upscaling shader or post-process pass is
-      -- used on any VOXEL rung.
-      canvas = Upscale.apply(canvas, sw, sh, "world")
-    else
-      -- HIGH (or the desktop path): the AA fold only.
-      canvas = AntiAlias.resolve(canvas, sw, sh, "world")
-    end
-    DebugOverlay.pipelinePath("rendered", {
-      width = crw, height = crh, renderMs = renderMs,
-    })
-    return canvas
-    end
-    local ok, result = DebugOverlay.try("voxel-drawWorld", renderWorld)
+    local ok, result = DebugOverlay.try("voxel-drawWorld", function()
+      local canvas, elapsed = WorldFeature.render(ctx, worldDiag, stallSkip)
+      if elapsed ~= nil then renderMs = elapsed end
+      return canvas
+    end)
     if not ok then error(result, 0) end
     return result
   end,
@@ -966,11 +773,6 @@ do
           if cycleVoxel(self) then return end
         elseif Pipelines.hotkey(key, top, self.overworld) then
           if cycleVoxel(self) then return end
-        elseif Pipelines.hotkey(key, top, self.overworld) then
-          Pipelines.syncOptions(self.save.options)
-          require("src.render.Tilt").setLevel(self.save.options.tilt or 0)
-          self:writeOptions()
-          return
         end
       elseif Pipelines.canToggle("voxel", top, self.overworld) then
         -- All four answer to the voxel pass's own free-roam gate --
@@ -1505,7 +1307,7 @@ mod.hooks:wrap("world.tod", function(next, tod, ctx)
   return DayNight.tod()
 end)
 
-mod.exports.version = "1.6.1"
+mod.exports.version = "1.7.11"
 -- exposed so a companion mod can pin its own tiles' shapes or read the
 -- camera without reaching into this mod's file layout
 mod.exports.lib = V

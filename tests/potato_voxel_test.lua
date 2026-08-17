@@ -7,7 +7,12 @@ local run = T.sdk.loadMod("mods/potato_voxel", { data = Data })
 T.eq(#run.errors, 0, "loads clean")
 local exports = run.loader.exports.potato_voxel
 T.check(exports ~= nil, "mod exports a table")
+T.eq(exports.version, "1.7.11", "exports the manifest release version")
 local RuntimeHooks = exports.lib.require("RuntimeHooks")
+local WorldFeature = exports.lib.require("WorldFeature")
+T.check(type(WorldFeature.render) == "function"
+        and type(WorldFeature.updateStall) == "function",
+        "world feature owns the render boundary")
 local CacheFeature = exports.lib.require("CacheFeature")
 T.check(type(CacheFeature.new) == "function",
         "cache feature exposes an explicit boundary")

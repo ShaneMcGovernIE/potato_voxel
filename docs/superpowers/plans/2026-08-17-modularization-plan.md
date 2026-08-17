@@ -39,7 +39,7 @@
 - [x] Enumerate all VR references, settings keys, exports, hook registrations, and dynamic loader strings.
 - [x] Trace the remaining Perf references and confirm the diagnostics surface is absent from runtime exports.
 - [x] Record which dormant branches are safe to remove and which must remain as compatibility guards.
-- [ ] Remove only proven-dead compatibility code, with a focused regression test for every deleted public seam.
+- [x] Remove only proven-dead compatibility code, with a focused regression test for every deleted public seam. The VR-only Pokedex branch had no public export or caller and was removed; the VR façade itself remains characterized and intact.
 
 ## Task 3: Extract lifecycle and settings ownership from `main.lua`
 
@@ -50,6 +50,7 @@
 - [ ] Move the remaining engine wrappers and hook registrations into `RuntimeHooks` after their order is characterized.
 - [x] Extract settings schema, live settings summary, and settings-row ownership into `SettingsFeature`.
 - [x] Pass an explicit context table from `main.lua`; keep module loading and exports unchanged.
+- [x] Extract world loading, fallback, render-scale, overlay, and VR-mirror policy into `WorldFeature` while preserving the pipeline callback boundary.
 - [x] Verify settings, loading, runtime seam, and shadow suites before and after extraction.
 
 ## Task 4: Extract cache readiness and prebuild gating
