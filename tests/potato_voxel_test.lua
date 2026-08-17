@@ -35,6 +35,19 @@ do
   T.eq(released, 2, "mesh runtime releases figure meshes with the entry")
   T.check(entry.full == nil and entry.figures == nil,
           "mesh runtime clears released cache ownership")
+  local evicted = nil
+  local cache = { FAR = { body = { release = function() end } } }
+  local jobs = {
+    { id = "FAR", slot = "body", prebuild = false,
+      index = {}, completion = {} },
+  }
+  local generations = {}
+  runtime.evict({ cache = cache, jobs = jobs, live = {}, previous = {},
+                  generations = generations, index = jobs[1].index,
+                  completion = jobs[1].completion,
+                  onEvict = function(id) evicted = id end })
+  T.check(cache.FAR == nil and #jobs == 0 and evicted == "FAR",
+          "mesh runtime evicts GPU entries and queued jobs outside live sets")
 end
 do
   local target = { run = function(_, value) return value end }

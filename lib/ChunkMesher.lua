@@ -1643,32 +1643,17 @@ end
 -- round trip free while staying bounded at two neighbourhoods.
 local prevLive = {}
 
-local function hasPrebuildJob(mapId)
-  for _, job in ipairs(jobs) do
-    if job.id == mapId and job.prebuild then return true end
-  end
-  return false
-end
-
 function ChunkMesher.setLive(live)
-  for id, c in pairs(cache) do
-    if not hasPrebuildJob(id) and not live[id] and not prevLive[id] then
-      releaseEntry(c)
-      cache[id] = nil
-      gen[id] = (gen[id] or 0) + 1
-      Structures.invalidate(id)
-    end
-  end
-  for i = #jobs, 1, -1 do
-    local job = jobs[i]
-    if not job.prebuild and not live[job.id] and not prevLive[job.id] then
-      local key = jobKey(job.id, job.slot)
-      jobIndex[key] = nil
-      completion[key] = "cancelled"
-      table.remove(jobs, i)
-    end
-  end
-  prevLive = live
+  prevLive = Runtime.evict({
+    cache = cache,
+    jobs = jobs,
+    live = live,
+    previous = prevLive,
+    generations = gen,
+    index = jobIndex,
+    completion = completion,
+    onEvict = function(id) Structures.invalidate(id) end,
+  })
 end
 
 -- Drop one map's mesh (Cut swapped a block) or all of them (hot reload).

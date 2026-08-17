@@ -97,6 +97,42 @@ function MeshRuntime.new()
     entry.noDisk = nil
   end
 
+  -- Keep the GPU live set bounded to the current and previous neighbourhood.
+  -- Generation bumps and Structure invalidation are supplied by the caller;
+  -- this module owns the eviction decision and mesh release itself.
+  function runtime.evict(ctx)
+    local cache = ctx.cache
+    local jobs = ctx.jobs
+    local live = ctx.live
+    local previous = ctx.previous
+    local generations = ctx.generations
+    local function protectedByPrebuild(mapId)
+      for _, job in ipairs(jobs) do
+        if job.id == mapId and job.prebuild then return true end
+      end
+      return false
+    end
+
+    for id, entry in pairs(cache) do
+      if not protectedByPrebuild(id) and not live[id] and not previous[id] then
+        runtime.releaseEntry(entry)
+        cache[id] = nil
+        generations[id] = (generations[id] or 0) + 1
+        if ctx.onEvict then ctx.onEvict(id) end
+      end
+    end
+    for i = #jobs, 1, -1 do
+        local job = jobs[i]
+      if not job.prebuild and not live[job.id] and not previous[job.id] then
+        local key = job.id .. ":" .. job.slot
+        ctx.index[key] = nil
+        ctx.completion[key] = "cancelled"
+        table.remove(jobs, i)
+      end
+    end
+    return live
+  end
+
   return runtime
 end
 
