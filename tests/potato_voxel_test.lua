@@ -23,6 +23,15 @@ T.check(type(CacheStorage.new) == "function",
 local MeshRuntime = exports.lib.require("MeshRuntime")
 T.check(type(MeshRuntime.new) == "function",
         "mesh runtime exposes an explicit boundary")
+do
+  local runtime = MeshRuntime.new()
+  T.check(type(runtime.fromAux) == "function"
+          and type(runtime.swapAux) == "function"
+          and type(runtime.releaseAux) == "function",
+          "mesh runtime owns auxiliary stream lifecycle")
+  T.check(runtime.fromAux(nil) == nil,
+          "mesh runtime ignores an absent auxiliary payload")
+end
 local MeshQueue = exports.lib.require("MeshQueue")
 T.check(type(MeshQueue.new) == "function",
         "mesh queue exposes an explicit boundary")

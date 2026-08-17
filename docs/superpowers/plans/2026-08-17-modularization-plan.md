@@ -80,6 +80,7 @@
 - [x] Move queue state, deduplication, completion, and cancellation into `MeshQueue`.
 - [x] Move budget-slice orchestration into `MeshQueue`; retain worker dispatch in `CachePrebuild`/`WorkerPool`, where map loading and protocol handoff are owned.
 - [x] Move GPU mesh upload, cache-entry release/swap rules, and live-set eviction into `MeshRuntime`.
+- [x] Consolidate auxiliary stream decode and figure/mesh release across sliced, cached, and synchronous paths.
 - [ ] Keep the worker protocol and `ChunkMesher` public calls stable; verify serial/threaded equivalence.
 
 ## Task 7: Split diagnostics data, transport, and presentation

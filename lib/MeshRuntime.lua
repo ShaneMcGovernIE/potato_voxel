@@ -72,12 +72,51 @@ function MeshRuntime.new()
     end
   end
 
+  -- Decode the auxiliary terrain streams at one lifecycle boundary. The
+  -- cache, sliced builder, and synchronous get path all consume the same
+  -- { grass, flowers, figures } record; keeping conversion here prevents
+  -- one path from forgetting a figure release or using a different slot
+  -- shape.
+  function runtime.fromAux(aux)
+    if not aux then return nil end
+    local figures = {}
+    for _, fd in ipairs(aux.figures or {}) do
+      local mesh = runtime.fromData(fd)
+      if mesh then
+        figures[#figures + 1] = { mesh = mesh, wx = fd.wx, wz = fd.wz,
+                                  y = fd.y, w = fd.w }
+      end
+    end
+    return {
+      grass = runtime.fromData(aux.grass),
+      flowers = runtime.fromData(aux.flowers),
+      figures = figures,
+    }
+  end
+
+  function runtime.releaseAux(aux)
+    if not aux then return end
+    if aux.grass and aux.grass.release then pcall(aux.grass.release, aux.grass) end
+    if aux.flowers and aux.flowers.release then
+      pcall(aux.flowers.release, aux.flowers)
+    end
+    runtime.releaseFigures(aux.figures)
+  end
+
   function runtime.swap(entry, slot, mesh)
     local old = entry[slot]
     if old and old ~= mesh and old.release then
       pcall(old.release, old)
     end
     entry[slot] = mesh
+  end
+
+  function runtime.swapAux(entry, aux)
+    if not aux then return end
+    runtime.swap(entry, "grass", aux.grass or false)
+    runtime.swap(entry, "flowers", aux.flowers or false)
+    runtime.releaseFigures(entry.figures)
+    entry.figures = aux.figures or false
   end
 
   function runtime.waterSlot(slot)

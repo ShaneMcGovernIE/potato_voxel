@@ -281,6 +281,9 @@ end
 -- release cannot reach them.
 local releaseFigures = Runtime.releaseFigures
 local swapSlot = Runtime.swap
+local fromAux = Runtime.fromAux
+local releaseAux = Runtime.releaseAux
+local swapAux = Runtime.swapAux
 
 -- ------------------------------------------------------------- the cache
 
@@ -394,26 +397,12 @@ local function fillAux(job)
   if MeshCache.available() then
     local aux = MeshCache.loadAux(map, job.slot)
     if aux then
-      local grass = meshFromData(aux.grass)
-      local flowers = meshFromData(aux.flowers)
-      local figures = {}
-      for _, fd in ipairs(aux.figures) do
-        local m = meshFromData(fd)
-        if m then
-          figures[#figures + 1] = { mesh = m, wx = fd.wx, wz = fd.wz,
-                                    y = fd.y, w = fd.w }
-        end
-      end
+      local auxMeshes = fromAux(aux)
       if not current then
-        if grass and grass.release then pcall(grass.release, grass) end
-        if flowers and flowers.release then pcall(flowers.release, flowers) end
-        releaseFigures(figures)
+        releaseAux(auxMeshes)
         return false
       end
-      swapSlot(c, "grass", grass or false)
-      swapSlot(c, "flowers", flowers or false)
-      releaseFigures(c.figures)
-      c.figures = figures or false
+      swapAux(c, auxMeshes)
       if c.stale then c.stale.aux = nil end
       return true
     end
@@ -426,16 +415,9 @@ local function fillAux(job)
     local okFlat, flat = pcall(flattenAux, map)
     if okFlat and flat then
       MeshCache.saveAux(map, job.slot, flat)
-      grass = flat.grass and meshFromData(flat.grass) or nil
-      flowers = flat.flowers and meshFromData(flat.flowers) or nil
-      figures = {}
-      for _, fd in ipairs(flat.figures) do
-        local m = meshFromData(fd)
-        if m then
-          figures[#figures + 1] = { mesh = m, wx = fd.wx, wz = fd.wz,
-                                    y = fd.y, w = fd.w }
-        end
-      end
+      local auxMeshes = fromAux(flat)
+      grass, flowers, figures = auxMeshes.grass, auxMeshes.flowers,
+                                auxMeshes.figures
     end
   else
     local okG, g = pcall(buildGrassMesh, map)
@@ -445,17 +427,10 @@ local function fillAux(job)
                               (okX and fig) or false
   end
   if not current then
-    if grass and grass ~= false and grass.release then pcall(grass.release, grass) end
-    if flowers and flowers ~= false and flowers.release then
-      pcall(flowers.release, flowers)
-    end
-    releaseFigures(figures)
+    releaseAux({ grass = grass, flowers = flowers, figures = figures })
     return false
   end
-  swapSlot(c, "grass", grass or false)
-  swapSlot(c, "flowers", flowers or false)
-  releaseFigures(c.figures)
-  c.figures = figures or false
+  swapAux(c, { grass = grass, flowers = flowers, figures = figures })
   if c.stale then c.stale.aux = nil end
   return true
 end
@@ -599,20 +574,7 @@ function ChunkMesher.request(map, bodyOnly, masks, urgent, force)
       -- visible frame (ChunkMesher.get loads it on demand otherwise)
       local aux = MeshCache.loadAux(map, slot)
       if aux then
-        local grass = meshFromData(aux.grass)
-        local flowers = meshFromData(aux.flowers)
-        local figures = {}
-        for _, fd in ipairs(aux.figures) do
-          local m = meshFromData(fd)
-          if m then
-            figures[#figures + 1] = { mesh = m, wx = fd.wx, wz = fd.wz,
-                                      y = fd.y, w = fd.w }
-          end
-        end
-        swapSlot(c, "grass", grass or false)
-        swapSlot(c, "flowers", flowers or false)
-        releaseFigures(c.figures)
-        c.figures = figures or false
+        swapAux(c, fromAux(aux))
         if c.stale then c.stale.aux = nil end
       end
       return c[slot] or nil
@@ -785,20 +747,7 @@ function ChunkMesher.get(map, bodyOnly, masks)
     if MeshCache.available() then
       local aux = MeshCache.loadAux(map, slot)
       if aux then
-        local grass = meshFromData(aux.grass)
-        local flowers = meshFromData(aux.flowers)
-        local figures = {}
-        for _, fd in ipairs(aux.figures) do
-          local m = meshFromData(fd)
-          if m then
-            figures[#figures + 1] = { mesh = m, wx = fd.wx, wz = fd.wz,
-                                      y = fd.y, w = fd.w }
-          end
-        end
-        swapSlot(c, "grass", grass or false)
-        swapSlot(c, "flowers", flowers or false)
-        releaseFigures(c.figures)
-        c.figures = figures or false
+        swapAux(c, fromAux(aux))
         if c.stale then c.stale.aux = nil end
       else
         local okG, grass = pcall(buildGrassMesh, map)
