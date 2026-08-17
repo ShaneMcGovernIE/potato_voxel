@@ -7,6 +7,23 @@ local run = T.sdk.loadMod("mods/potato_voxel", { data = Data })
 T.eq(#run.errors, 0, "loads clean")
 local exports = run.loader.exports.potato_voxel
 T.check(exports ~= nil, "mod exports a table")
+local RuntimeHooks = exports.lib.require("RuntimeHooks")
+do
+  local target = { run = function(_, value) return value end }
+  local installs = 0
+  local wrapped = RuntimeHooks.wrapOnce(target, "run", "testHook", function(inner)
+    installs = installs + 1
+    return function(self, value) return inner(self, value) + 1 end
+  end)
+  T.eq(wrapped, true, "runtime hook helper installs once")
+  T.eq(target:run(2), 3, "runtime hook helper preserves the inner call")
+  T.eq(RuntimeHooks.wrapOnce(target, "run", "testHook", function()
+    installs = installs + 1
+    return function() return 99 end
+  end), false, "runtime hook helper skips an installed marker")
+  T.eq(installs, 1, "runtime hook helper does not rebuild a wrapper")
+  T.eq(target:run(2), 3, "runtime hook helper keeps the original wrapper")
+end
 -- The sandbox-era settings read LIVE through mod.options, and writers
 -- persist into a game's save options (the same dual write the engine's
 -- manager page makes). The SDK stub has neither, so the suite installs a

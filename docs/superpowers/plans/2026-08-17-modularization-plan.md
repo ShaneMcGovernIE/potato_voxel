@@ -46,7 +46,8 @@
 **Files:** `main.lua`, new `lib/RuntimeHooks.lua`, new `lib/SettingsFeature.lua`, tests covering settings and runtime loading
 
 - [ ] Characterize current hook registration order and the exact settings row/preset/hotkey behavior.
-- [ ] Extract engine-facing wrappers and hook installation into `RuntimeHooks` without changing callback order or error handling.
+- [x] Add `RuntimeHooks.wrapOnce` and use it for the apply-options and map-block wrappers without changing callback order or error handling.
+- [ ] Move the remaining engine wrappers and hook registrations into `RuntimeHooks` after their order is characterized.
 - [x] Extract settings schema, live settings summary, and settings-row ownership into `SettingsFeature`.
 - [x] Pass an explicit context table from `main.lua`; keep module loading and exports unchanged.
 - [ ] Verify settings, loading, runtime seam, and shadow suites before and after extraction.

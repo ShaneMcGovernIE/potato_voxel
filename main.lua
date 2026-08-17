@@ -113,6 +113,7 @@ local MapAtmos = V.require("MapAtmos")
 local Weather = V.require("Weather")
 local VoxelLoading = V.require("VoxelLoading")
 local SettingsFeature = V.require("SettingsFeature")
+local RuntimeHooks = V.require("RuntimeHooks")
 local DebugOverlay = V.require("DebugOverlay")
 local PlayerId = V.require("PlayerId")
 DebugOverlay.install()
@@ -282,14 +283,13 @@ end
 
 do
   local Game = require("src.core.Game")
-  if not Game.dramaticShapeApplyOptionsHook then
-    local applyOptions = Game.applyOptions
-    function Game:applyOptions(opts)
-      applyOptions(self, opts)
-      voidFill.reseed()
-    end
-    Game.dramaticShapeApplyOptionsHook = true
-  end
+  RuntimeHooks.wrapOnce(Game, "applyOptions", "dramaticShapeApplyOptionsHook",
+    function(applyOptions)
+      return function(self, opts)
+        applyOptions(self, opts)
+        voidFill.reseed()
+      end
+    end)
 end
 
 mod.content.render_pipelines:register("voxel", {
@@ -1370,17 +1370,16 @@ end)
 -- is not a change and must not throw the mesh away.
 do
   local Map = require("src.world.Map")
-  if not Map.dramaticShapeBlockHook then
-    local setBlock = Map.setBlock
-    Map.setBlock = function(self, bx, by, block)
-      local before = self:blockAt(bx, by)
-      setBlock(self, bx, by, block)
-      if self.id and self:blockAt(bx, by) ~= before then
-        ChunkMesher.refresh(self.id)
+  RuntimeHooks.wrapOnce(Map, "setBlock", "dramaticShapeBlockHook",
+    function(setBlock)
+      return function(self, bx, by, block)
+        local before = self:blockAt(bx, by)
+        setBlock(self, bx, by, block)
+        if self.id and self:blockAt(bx, by) ~= before then
+          ChunkMesher.refresh(self.id)
+        end
       end
-    end
-    Map.dramaticShapeBlockHook = true
-  end
+    end)
 end
 
 -- A reloaded map is rebuilt from scratch (warps that re-enter the same map,
