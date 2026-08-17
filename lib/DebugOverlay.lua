@@ -34,6 +34,7 @@ local V = ...
 local Overlay = {}
 
 local PlayerId = V.require("PlayerId")
+local DiagnosticsEnvironment = V.require("DiagnosticsEnvironment")
 
 local MAX_LINES = 20
 local lines = {}         -- the on-screen ring buffer
@@ -92,22 +93,6 @@ local health = {
   lastError = nil,
   platform = nil,
 }
-
--- The device class these logs come from.  The mod sandbox forbids raw OS
--- queries, so the answer comes from the engine's own Platform module --
--- the same one main.lua reads for its mobile gates -- which resolves the
--- OS name inside engine code.  Captured once at boot: a device does not
--- change platform mid-session.
-local function platformName()
-  local ok, Platform = pcall(require, "src.core.Platform")
-  if not ok or type(Platform) ~= "table" then return "?" end
-  local okP, info = pcall(Platform.detect)
-  if not okP or type(info) ~= "table" then return "?" end
-  local osName = tostring(info.os or "?")
-  if osName == "?" or osName == "" then return "?" end
-  local kind = info.console and "console" or info.mobile and "mobile" or nil
-  return kind and (osName .. " (" .. kind .. ")") or osName
-end
 
 -- The VOXEL SETTINGS summary, provided by main.lua (it owns the rows and
 -- the live options API): one space-separated `key=label` line so a
@@ -168,6 +153,11 @@ local function dataCopy(value, depth)
   return out
 end
 
+local Environment = DiagnosticsEnvironment.new({
+  health = health,
+  dataCopy = dataCopy,
+})
+
 local function snapshot()
   return {
     schema = 2,
@@ -180,7 +170,7 @@ local function snapshot()
     storage = dataCopy(health.storage),
     build = dataCopy(health.build),
     probe = dataCopy(health.probe),
-    platform = health.platform or platformName(),
+    platform = health.platform or Environment.platformName(),
     settings = settingsLine(),
     lastEvent = dataCopy(health.lastEvent),
     lastError = dataCopy(health.lastError),
@@ -207,72 +197,8 @@ end
 -- <platform>-<engine>-<mod>-<DD_MM_YYYY> name and the server's per-platform
 -- subfolder both key off it.  Kept stable and folder-safe (lowercase
 -- letters only) so the server never has to sanitise a free-text platform.
--- L4T (Linux for Tegra -- Ubuntu running on Switch hardware) answers
--- "Linux" to every OS question, so the OS name alone can never tag a
--- Switch-under-Linux session. The GPU string still names the chip, and
--- getRendererInfo is the one hardware witness the sandbox leaves this
--- mod. A Linux session whose renderer is a Tegra slugs as `switch`: the
--- same SoC also powers Jetson devkits, which this folds in on purpose --
--- support triage wants the console, and no other device this mod ships
--- for draws a Tegra (the Brick's GE8300 keeps its honest `linux`).
-local function tegraRenderer()
-  local ri = health.renderer and health.renderer.renderer
-  if not ri then return false end
-  -- all four fields: the chip string lands where the driver puts it --
-  -- LÖVE 11 names it in `device`, some Mesa builds only in `version` --
-  -- and a matcher that missed the real field is what a Steam Deck log
-  -- once proved possible (its vangogh signature lived in version).
-  local s = ("%s %s %s %s"):format(tostring(ri.name or ""),
-                                    tostring(ri.vendor or ""),
-                                    tostring(ri.device or ""),
-                                    tostring(ri.version or "")):lower()
-  return s:find("tegra", 1, true) ~= nil
-      or s:find("nv13", 1, true) ~= nil
-      or s:find("gm20", 1, true) ~= nil
-end
-
-local function platformSlug()
-  local p = tostring(health.platform or platformName()):lower()
-  if p:find("switch") or p:find("nx") then return "switch" end
-  if p:find("ios") or p:find("iphone") or p:find("ipad") then return "ios" end
-  if p:find("android") then return "android" end
-  if p:find("linux") then
-    return tegraRenderer() and "switch" or "linux"
-  end
-  if p:find("windows") or p:find("win") then return "windows" end
-  -- The engine names macOS both "OS X" and "macOS" depending on build.
-  if p:find("mac") or p:find("os x") or p:find("osx") or p:find("darwin")
-     then return "macos" end
-  if p:find("web") or p:find("browser") then return "web" end
-  return "unknown"
-end
-
-Overlay._platformSlug = platformSlug   -- named for the suite
-
--- Identity fields for the remote payload.  The server derives the
--- filename (<platform>-<engine>-<mod>-<date>.json) and the platform
--- subfolder from these, so without them a received log cannot be
--- attributed to an engine build, a mod version, or a session.
-local function identityFields()
-  local mod = V.mod
-  local manifest = mod and mod.manifest
-  local ctx = health.storage.context or {}
-  local lv = health.renderer and health.renderer.love
-  local loveVer = lv and (tostring(lv.codename) .. " " .. tostring(lv.major)
-    .. "." .. tostring(lv.minor)) or "?"
-  -- The GPU identity, first thing a received log is sorted by. LÖVE 12's
-  -- getRendererInfo returns one table; LÖVE 11's four values (see
-  -- captureEnvironment, which normalises both).
-  local ri = health.renderer and health.renderer.renderer
-  local gpu = ri and ((tostring(ri.name or "") .. " " .. tostring(ri.device or ""))
-    :gsub("%s+$", "")) or "?"
-  return {
-    platform = platformSlug(),
-    engine = tostring(ctx.engineVersion or "?"),
-    mod = tostring(manifest and manifest.version or "?"),
-    love = loveVer,
-    gpu = gpu,
-  }
+Overlay._platformSlug = function()
+  return Environment.platformSlug()
 end
 
 -- The organized JSON document the send carries (schema 3).  Top-level
@@ -281,7 +207,7 @@ end
 -- (only lines newer than the last acked send); status is the structured
 -- snapshot, not a flat text excerpt.
 local function jsonPayload()
-  local id = identityFields()
+  local id = Environment.identityFields()
   local out = {
     schema = 3,
     session = tostring(sessionId),
@@ -1135,54 +1061,7 @@ function Overlay.draw()
   pcall(g.setBlendMode, prevBlend, prevBlendAlpha)
 end
 
-function Overlay.captureEnvironment()
-  local g = love and love.graphics
-  local out = {}
-  health.platform = platformName()
-  if love and love.getVersion then
-    local ok, major, minor, revision, codename = pcall(love.getVersion)
-    if ok then
-      out.love = { major = major, minor = minor, revision = revision,
-                   codename = codename }
-    end
-  end
-  if g then
-    if g.getRendererInfo then
-      -- LÖVE 12 returns one table (name/vendor/device/version); LÖVE 11
-      -- returns four values, in the order (name, version, vendor, device)
-      -- -- the field order matters: a Deck log once stored "AMD" as the
-      -- device and left the vangogh signature in the version slot, which
-      -- is how the GPU line degraded to "OpenGL AMD". Both shapes are the
-      -- same identity -- the GPU and the backend behind every render and
-      -- shadow issue.
-      local ok, a, b, c, d = pcall(g.getRendererInfo)
-      if ok and type(a) == "table" then
-        out.renderer = dataCopy(a)
-      elseif ok and a then
-        out.renderer = { name = tostring(a), version = tostring(b or ""),
-                         vendor = tostring(c or ""), device = tostring(d or "") }
-      end
-    end
-    if g.getDimensions then
-      local ok, w, h = pcall(g.getDimensions)
-      if ok then out.dimensions = { w = w, h = h } end
-    end
-    if g.getPixelDimensions then
-      local ok, w, h = pcall(g.getPixelDimensions)
-      if ok then out.pixelDimensions = { w = w, h = h } end
-    end
-    if g.getSupported then
-      local ok, caps = pcall(g.getSupported)
-      if ok then out.supported = dataCopy(caps) end
-    end
-    if g.getSystemLimits then
-      local ok, limits = pcall(g.getSystemLimits)
-      if ok then out.systemLimits = dataCopy(limits) end
-    end
-  end
-  health.renderer = out
-  return dataCopy(out)
-end
+Overlay.captureEnvironment = Environment.capture
 
 function Overlay.install()
   if Overlay.installed then return end

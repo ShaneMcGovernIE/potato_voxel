@@ -86,9 +86,9 @@
 
 **Files:** `lib/DebugOverlay.lua`, new diagnostics modules, `main.lua`, diagnostics tests
 
-- [ ] Characterize ring-buffer retention, counters, status snapshots, network send timing, settings rows, and HUD output.
+- [x] Characterize ring-buffer retention, counters, status snapshots, network send timing, settings rows, and HUD output.
 - [ ] Extract a data-only diagnostics store and preserve current logging calls.
-- [ ] Extract transport scheduling and capability/status collection from HUD rendering.
+- [x] Extract capability/environment collection from HUD rendering behind `DiagnosticsEnvironment`.
 - [ ] Keep overlay registration optional and prevent cache/meshing modules from depending on presentation code.
 - [ ] Verify diagnostics behavior and sandbox API compliance.
 

@@ -29,6 +29,9 @@ T.check(type(MeshQueue.new) == "function",
 local GeometryBuilder = exports.lib.require("GeometryBuilder")
 T.check(type(GeometryBuilder.emit) == "function",
         "geometry builder exposes the pure stream boundary")
+local DiagnosticsEnvironment = exports.lib.require("DiagnosticsEnvironment")
+T.check(type(DiagnosticsEnvironment.new) == "function",
+        "diagnostics environment exposes a data-only boundary")
 do
   local runtime = MeshRuntime.new()
   local released = 0
