@@ -4,6 +4,7 @@
 local V = ...
 
 local CacheStorage = {}
+local Diagnostics = V.require("DiagnosticsBridge")
 
 function CacheStorage.new()
   local store = nil
@@ -54,17 +55,14 @@ function CacheStorage.new()
     if code ~= nil and code ~= "not_found" then
       local level = (op:find("^read") and code == "invalid_key")
                     and "warn" or "error"
-      local okD, Overlay = pcall(V.require, "DebugOverlay")
-      if okD and Overlay then
-        if level == "warn" then
-          Overlay.count("storageWarns")
-          Overlay.warn("storage %s %q: %s (%s)", tostring(op),
-                       tostring(key), tostring(code), tostring(message))
-        else
-          Overlay.count("storageFails")
-          Overlay.error("storage %s %q: %s (%s)", tostring(op),
-                        tostring(key), tostring(code), tostring(message))
-        end
+      if level == "warn" then
+        Diagnostics.count("storageWarns")
+        Diagnostics.warn("storage %s %q: %s (%s)", tostring(op),
+                         tostring(key), tostring(code), tostring(message))
+      else
+        Diagnostics.count("storageFails")
+        Diagnostics.error("storage %s %q: %s (%s)", tostring(op),
+                          tostring(key), tostring(code), tostring(message))
       end
     end
     return false

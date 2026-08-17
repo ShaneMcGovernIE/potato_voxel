@@ -35,6 +35,7 @@ local ShadowSettings = V.require("ShadowSettings")
 local MapAtmos = V.require("MapAtmos")
 local BattleBillboard = V.require("BattleBillboard")
 local Pokedex = V.require("Pokedex")
+local Diagnostics = V.require("DiagnosticsBridge")
 local PaletteFX = require("src.render.PaletteFX")
 local Map = require("src.world.Map")
 
@@ -765,11 +766,7 @@ function VoxelScene.drawWater(draws, cast, waterProfile)
       waterDiagShown = true
       local reason = (not mirror or not depth)
         and "mirror capture failed" or "water shader/uniforms failed"
-      local okD, Overlay = pcall(V.require, "DebugOverlay")
-      if okD and Overlay then
-        Overlay.note("water pass skipped: %s (flat water fallback)",
-                     reason)
-      end
+      Diagnostics.note("water pass skipped: %s (flat water fallback)", reason)
     end
     -- Unconditionally, and OUTSIDE the success branch: beginWater unbinds
     -- the shader and the depth mode BEFORE it can discover it cannot go on,
@@ -781,11 +778,7 @@ function VoxelScene.drawWater(draws, cast, waterProfile)
     waterDiagShown = true
     local reason = (not Water.enabled() and "WATER row off")
       or "depth canvas not readable on this driver"
-    local okD, Overlay = pcall(V.require, "DebugOverlay")
-    if okD and Overlay then
-      Overlay.note("water pass skipped: %s (flat water fallback)",
-                   reason)
-    end
+    Diagnostics.note("water pass skipped: %s (flat water fallback)", reason)
   end
   -- the fallback flat draw -- unless the curve's prepass already put the
   -- same meshes down, in which case a bailed frame is already whole

@@ -58,6 +58,7 @@ local MeshCache = V.require("MeshCache")
 local MeshRuntime = V.require("MeshRuntime")
 local MeshQueue = V.require("MeshQueue")
 local GeometryBuilder = V.require("GeometryBuilder")
+local Diagnostics = V.require("DiagnosticsBridge")
 
 -- ffi is gone (sandbox) and this engine's love.data ByteData carries no
 -- accessors, so the native float buffers are gone with them: the table
@@ -309,14 +310,6 @@ local releaseEntry = Runtime.releaseEntry
 
 local clock = (love and love.timer and love.timer.getTime) or os.clock
 
-local DebugOverlay = nil
-local function debugNote(fmt, ...)
-  if not DebugOverlay then
-    local okD, mod = pcall(V.require, "DebugOverlay")
-    if okD then DebugOverlay = mod end
-  end
-  if DebugOverlay then DebugOverlay.note(fmt, ...) end
-end
 local function finishJob(job, ok, err)
   local key = Queue.key(job.id, job.slot)
   local jobMs = nil
@@ -324,24 +317,17 @@ local function finishJob(job, ok, err)
     jobMs = math.floor((love.timer.getTime() - job.queuedAt) * 1000 + 0.5)
   end
   if not ok then
-    local okD, Overlay = pcall(V.require, "DebugOverlay")
-    if okD and Overlay then Overlay.count("jobFails") end
-    debugNote("mesh job failed %s: %s", key, tostring(err))
+    Diagnostics.count("jobFails")
+    Diagnostics.note("mesh job failed %s: %s", key, tostring(err))
   else
-    local okD, Overlay = pcall(V.require, "DebugOverlay")
-    if okD and Overlay then Overlay.count("jobs") end
-    debugNote("mesh done %s (%dms)", key, jobMs or 0)
+    Diagnostics.count("jobs")
+    Diagnostics.note("mesh done %s (%dms)", key, jobMs or 0)
   end
   -- Per-job build health for the status snapshot: slices taken, the
   -- longest single resume (the freeze evidence), and how many resumes
   -- blew their budget.
-  do
-    local okD, Overlay = pcall(V.require, "DebugOverlay")
-    if okD and Overlay then
-      Overlay.buildDone(job.id, job.slot, job.slices or 0,
+  Diagnostics.buildDone(job.id, job.slot, job.slices or 0,
                         job.maxGapMs or 0, job.overshoots or 0)
-    end
-  end
   Queue.finish(job, ok)
   if not ok then
     -- name the reason: in a real session a lost build is a black map
@@ -763,14 +749,11 @@ function ChunkMesher.pump(covered)
       pick.overshoots = (pick.overshoots or 0) + 1
       if pick.warnedPhase ~= pick.phase then
         pick.warnedPhase = pick.phase
-        local okD, Overlay = pcall(V.require, "DebugOverlay")
-        if okD and Overlay then
-          Overlay.warn("mesh build overshot its slice: %s/%s in %s "
-                       .. "(%.0fms resume vs %.0fms slice)",
-                       tostring(pick.id), tostring(pick.slot),
-                       tostring(pick.phase), elapsedMs,
-                       overshootThreshold)
-        end
+        Diagnostics.warn("mesh build overshot its slice: %s/%s in %s "
+                         .. "(%.0fms resume vs %.0fms slice)",
+                         tostring(pick.id), tostring(pick.slot),
+                         tostring(pick.phase), elapsedMs,
+                         overshootThreshold)
       end
     end
     if not ok then

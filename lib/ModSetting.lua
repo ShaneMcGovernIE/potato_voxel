@@ -26,6 +26,7 @@ local V = ...
 
 local ModSetting = {}
 ModSetting.__index = ModSetting
+local Diagnostics = V.require("DiagnosticsBridge")
 
 local function modId()
   local mod = V.mod
@@ -131,11 +132,8 @@ function ModSetting:setIndex(i, game)
     loader.modOptions[id][self.key] = value
   end
   if game and game.writeOptions then pcall(game.writeOptions, game) end
-  local okD, Overlay = pcall(V.require, "DebugOverlay")
-  if okD and Overlay then
-    Overlay.trace("setting %s.%s = %s", id, tostring(self.key),
-                 tostring(self.labels[i] or tostring(value)))
-  end
+  Diagnostics.trace("setting %s.%s = %s", id, tostring(self.key),
+                    tostring(self.labels[i] or tostring(value)))
   return value
 end
 

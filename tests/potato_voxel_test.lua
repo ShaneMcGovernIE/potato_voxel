@@ -35,6 +35,10 @@ T.check(type(DiagnosticsEnvironment.new) == "function",
 local DiagnosticsStore = exports.lib.require("DiagnosticsStore")
 T.check(type(DiagnosticsStore.new) == "function",
         "diagnostics store exposes a data-only boundary")
+local DiagnosticsBridge = exports.lib.require("DiagnosticsBridge")
+T.check(type(DiagnosticsBridge.trace) == "function"
+        and type(DiagnosticsBridge.count) == "function",
+        "feature diagnostics use an optional transport boundary")
 do
   local store = DiagnosticsStore.new({
     sessionId = "test-session", maxLines = 2, logKeep = 4, bootKeep = 2,

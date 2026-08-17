@@ -7,6 +7,7 @@ local Prebuild = {}
 local ChunkMesher = V.require("ChunkMesher")
 local MeshCache = V.require("MeshCache")
 local WorkerPool = V.require("WorkerPool")
+local Diagnostics = V.require("DiagnosticsBridge")
 
 -- Use the engine's own placement routine so prebuilt FULL masks cover the same
 -- connected strips (including two-hop neighbours) as the live renderer.
@@ -216,15 +217,12 @@ local function finish(cancelled)
       state.failed = true
       state.error = MeshCache.saveError() or "manifest write failed"
     else
-      local okD, Overlay = pcall(V.require, "DebugOverlay")
-      if okD and Overlay then
-        local secs = state.startedAt and
-          (love and love.timer and love.timer.getTime
-           and love.timer.getTime() - state.startedAt) or 0
-        local rate = secs and secs > 0 and (state.total / secs) or 0
-        Overlay.trace("prebuild finished READY in %.1fs (%.1f jobs/s)",
-                     secs, rate)
-      end
+      local secs = state.startedAt and
+        (love and love.timer and love.timer.getTime
+         and love.timer.getTime() - state.startedAt) or 0
+      local rate = secs and secs > 0 and (state.total / secs) or 0
+      Diagnostics.trace("prebuild finished READY in %.1fs (%.1f jobs/s)",
+                        secs, rate)
     end
   end
   state.running, state.cancelled = false, cancelled or false
@@ -306,11 +304,8 @@ function Prebuild.start(game)
             failed = false, error = nil, completed = completed,
             declined = sessionDeclined, gateRan = sessionGateRan,
             threaded = {} }
-  local okD, Overlay = pcall(V.require, "DebugOverlay")
-  if okD and Overlay then
-    Overlay.trace("prebuild start: %d/%d done, %d jobs",
-                 index - 1, #jobs, #jobs)
-  end
+  Diagnostics.trace("prebuild start: %d/%d done, %d jobs",
+                    index - 1, #jobs, #jobs)
   return true
 end
 
@@ -328,11 +323,8 @@ function Prebuild.autoStart(game)
   if Prebuild.status() ~= "PREBUILD" then return false end
   local ow = game and (game.overworld or game)
   if not (ow and ow.map and ow.camera) then return false end
-  local okD, Overlay = pcall(V.require, "DebugOverlay")
-  if okD and Overlay then
-    Overlay.trace("prebuild auto-start: cache incomplete, filling in "
-                  .. "the background")
-  end
+  Diagnostics.trace("prebuild auto-start: cache incomplete, filling in "
+                    .. "the background")
   return Prebuild.start(game)
 end
 
@@ -449,12 +441,9 @@ local function finishThreaded(result)
   local job, map = entry.job, entry.map
   local fail = function(reason)
     state.failedJobs = (state.failedJobs or 0) + 1
-    local okD, Overlay = pcall(V.require, "DebugOverlay")
-    if okD and Overlay then
-      Overlay.error("prebuild job failed (%d/%d): %s -- %s/%s",
-                    state.failedJobs, state.total, tostring(reason),
-                    tostring(job.id), tostring(job.slot))
-    end
+    Diagnostics.error("prebuild job failed (%d/%d): %s -- %s/%s",
+                      state.failedJobs, state.total, tostring(reason),
+                      tostring(job.id), tostring(job.slot))
     releaseMap(job.id, state.game)
     state.done = state.done + 1
     if state.done >= state.total then finish(false) end
@@ -528,11 +517,8 @@ local function finishThreaded(result)
   progressTick()
   releaseMap(job.id, state.game)
   state.done = state.done + 1
-  local okD, Overlay = pcall(V.require, "DebugOverlay")
-  if okD and Overlay then
-    Overlay.trace("prebuild %d/%d done %s/%s (worker)", state.done,
-                  state.total, tostring(job.id), tostring(job.slot))
-  end
+  Diagnostics.trace("prebuild %d/%d done %s/%s (worker)", state.done,
+                    state.total, tostring(job.id), tostring(job.slot))
   local elapsed = state.startedAt and now()
   if elapsed and state.startedAt and state.done > 0 then
     state.eta = (elapsed - state.startedAt) * (state.total - state.done)
@@ -557,22 +543,16 @@ local function dispatchThreaded(covered)
                  and (love.timer.getTime() - t0) * 1000) or 0
   if not map then
     state.failedJobs = (state.failedJobs or 0) + 1
-    local okD, Overlay = pcall(V.require, "DebugOverlay")
-    if okD and Overlay then
-      Overlay.error("prebuild job failed (%d/%d): map load failed -- %s/%s",
-                    state.failedJobs, state.total, tostring(job.id),
-                    tostring(job.slot))
-    end
+    Diagnostics.error("prebuild job failed (%d/%d): map load failed -- %s/%s",
+                      state.failedJobs, state.total, tostring(job.id),
+                      tostring(job.slot))
     state.done = state.done + 1
     state.index = state.index + 1
     return true
   end
   if loadMs > 250 then
-    local okD, Overlay = pcall(V.require, "DebugOverlay")
-    if okD and Overlay then
-      Overlay.warn("prebuild map load overshot: %s %.0fms",
-                   tostring(job.id), loadMs)
-    end
+    Diagnostics.warn("prebuild map load overshot: %s %.0fms",
+                     tostring(job.id), loadMs)
   end
   local tileImage = nil
   local okA, Assets = pcall(require, "src.render.Assets")
@@ -588,11 +568,8 @@ local function dispatchThreaded(covered)
     -- a map the dump cannot represent (a cyclic engine field past the
     -- renderer): the serial pump builds the same geometry from the live
     -- object, so report and let update() drop the pool and fall back
-    local okD, Overlay = pcall(V.require, "DebugOverlay")
-    if okD and Overlay then
-      Overlay.error("map dump failed for %s: %s", tostring(job.id),
-                    tostring(mapSrc))
-    end
+    Diagnostics.error("map dump failed for %s: %s", tostring(job.id),
+                      tostring(mapSrc))
     return false
   end
   local gen = WorkerPool.submit({
@@ -748,10 +725,7 @@ function Prebuild.update(covered)
       if entry.at and (now() or 0) - entry.at > 60 then stuck = gen end
     end
     if stuck then
-      local okD, Overlay = pcall(V.require, "DebugOverlay")
-      if okD and Overlay then
-        Overlay.error("geometry worker stalled: falling back to serial")
-      end
+      Diagnostics.error("geometry worker stalled: falling back to serial")
       WorkerPool.shutdown()
     end
     if not WorkerPool.working() and state.index <= #state.maps
@@ -788,11 +762,8 @@ function Prebuild.update(covered)
   local sliceMs = covered and PREBUILD_COVERED_SLICE or PREBUILD_IDLE_SLICE
   if pumpMs > sliceMs * 1000 * 4 then
     pumpPause = 1
-    local okD, Overlay = pcall(V.require, "DebugOverlay")
-    if okD and Overlay then
-      Overlay.warn("prebuild pump overshot: %.0fms vs %.0fms slice; "
-                   .. "pausing next tick", pumpMs, sliceMs * 1000)
-    end
+    Diagnostics.warn("prebuild pump overshot: %.0fms vs %.0fms slice; "
+                     .. "pausing next tick", pumpMs, sliceMs * 1000)
     return
   end
   local bodyOnly = job.slot == "body"
@@ -813,12 +784,9 @@ function Prebuild.update(covered)
     local maxFailures = math.max(4, math.floor(state.total / 10))
     local reason = jobStatus or MeshCache.saveError()
       or "cache verification failed"
-    local okD, Overlay = pcall(V.require, "DebugOverlay")
-    if okD and Overlay then
-      Overlay.error("prebuild job failed (%d/%d): %s -- %s/%s",
-                    state.failedJobs, state.total, tostring(reason),
-                    tostring(job.id), tostring(job.slot))
-    end
+    Diagnostics.error("prebuild job failed (%d/%d): %s -- %s/%s",
+                      state.failedJobs, state.total, tostring(reason),
+                      tostring(job.id), tostring(job.slot))
     if state.failedJobs > maxFailures then
       state.failed = true
       state.error = ("%d jobs failed"):format(state.failedJobs)
@@ -846,11 +814,8 @@ function Prebuild.update(covered)
   state.done = state.done + 1
   state.index = state.index + 1
   state.slot = nil
-  local okD, Overlay = pcall(V.require, "DebugOverlay")
-  if okD and Overlay then
-    Overlay.trace("prebuild %d/%d done %s/%s", state.done, state.total,
-                 tostring(job.id), tostring(job.slot))
-  end
+  Diagnostics.trace("prebuild %d/%d done %s/%s", state.done, state.total,
+                    tostring(job.id), tostring(job.slot))
   local elapsed = state.startedAt and now()
   if elapsed and state.startedAt and state.done > 0 then
     state.eta = (elapsed - state.startedAt) * (state.total - state.done) / state.done
@@ -897,11 +862,8 @@ function Prebuild.primeFirst(map)
   local okP, terrain = pcall(MeshCache.loadTerrain, map, "body")
   if not okP or not terrain then return false end
   local okG, mesh = pcall(ChunkMesher.get, map, true, nil)
-  local okD, Overlay = pcall(V.require, "DebugOverlay")
-  if okD and Overlay then
-    Overlay.note("pre-warm: primed %s/body%s", tostring(map.id),
-                 okG and mesh and "" or " (payloads present, no mesh)")
-  end
+  Diagnostics.note("pre-warm: primed %s/body%s", tostring(map.id),
+                   okG and mesh and "" or " (payloads present, no mesh)")
   return okG
 end
 

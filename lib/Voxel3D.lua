@@ -34,6 +34,7 @@ local Sky = V.require("Sky")
 local DayNight = V.require("DayNight")
 local GlassMask = V.require("GlassMask")
 local PixelCanvas = V.require("PixelCanvas")
+local Diagnostics = V.require("DiagnosticsBridge")
 
 local Voxel3D = {}
 
@@ -1275,11 +1276,8 @@ function Voxel3D.beginWater(paint)
       return nil
     end
     paint = nil   -- no depth to test against: skip the cast pass
-    local okD, Overlay = pcall(V.require, "DebugOverlay")
-    if okD and Overlay then
-      Overlay.note("water mirror capture: depthless fallback (%s)",
-                   tostring(err))
-    end
+    Diagnostics.note("water mirror capture: depthless fallback (%s)",
+                     tostring(err))
   end
   love.graphics.setDepthMode("always", false)
   -- COLOUR only. The last two arguments are what keep the depth buffer the

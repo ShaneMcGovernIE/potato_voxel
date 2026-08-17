@@ -16,6 +16,7 @@ local WorkerPool = {}
 
 local ChunkMesher = V.require("ChunkMesher")
 local MeshCache = V.require("MeshCache")
+local Diagnostics = V.require("DiagnosticsBridge")
 
 local CMD_CH = "pv_geom_cmd"
 local OUT_CH = "pv_geom_out"
@@ -123,10 +124,7 @@ function WorkerPool.start()
     return
   end
   state.started = true
-  local okD, Overlay = pcall(V.require, "DebugOverlay")
-  if okD and Overlay and Overlay.note then
-    Overlay.note("geometry workers: %d threads", #state.threads)
-  end
+  Diagnostics.note("geometry workers: %d threads", #state.threads)
 end
 
 function WorkerPool.working()

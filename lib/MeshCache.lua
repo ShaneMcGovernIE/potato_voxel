@@ -39,6 +39,7 @@ local CacheManifest = V.require("CacheManifest")
 local CacheStorage = V.require("CacheStorage")
 local Budget = V.require("BuildBudget")
 local Platform = V.require("Platform")
+local Diagnostics = V.require("DiagnosticsBridge")
 
 -- The engine's save-root resolver used to pick the portable SD-card dir.
 -- With storage the engine owns placement entirely; SaveData is no longer
@@ -946,11 +947,8 @@ function MeshCache.writeManifest(records, total)
     buildIdentity = nil
     buildParts = nil
     updateCompression(records)
-    local okD, Overlay = pcall(V.require, "DebugOverlay")
-    if okD and Overlay then
-      Overlay.trace("manifest written (%d jobs, codec %s)",
-                   total, tostring(codec))
-    end
+    Diagnostics.trace("manifest written (%d jobs, codec %s)",
+                      total, tostring(codec))
   end
   return ok
 end
@@ -960,10 +958,7 @@ end
 local function recordSaveFailure(kind, detail)
   saveFailures = saveFailures + 1
   lastSaveError = kind .. (detail and (": " .. tostring(detail)) or "")
-  local okD, Overlay = pcall(V.require, "DebugOverlay")
-  if okD and Overlay then
-    Overlay.note("cache save failed: %s", lastSaveError)
-  end
+  Diagnostics.note("cache save failed: %s", lastSaveError)
   return false
 end
 
@@ -979,11 +974,8 @@ function MeshCache.saveTerrain(map, slot, buf, n, idx, m)
     return recordSaveFailure("terrain", result)
   end
   if result ~= true then return recordSaveFailure("terrain") end
-  local okD, Overlay = pcall(V.require, "DebugOverlay")
-  if okD and Overlay then
-    Overlay.trace("saved terrain %s/%s (%d verts)", tostring(map.id),
-                 tostring(slot), n or 0)
-  end
+  Diagnostics.trace("saved terrain %s/%s (%d verts)", tostring(map.id),
+                    tostring(slot), n or 0)
   return true
 end
 
@@ -999,11 +991,8 @@ function MeshCache.saveWater(map, slot, buf, n, idx, m)
     return recordSaveFailure("water", result)
   end
   if result ~= true then return recordSaveFailure("water") end
-  local okD, Overlay = pcall(V.require, "DebugOverlay")
-  if okD and Overlay then
-    Overlay.trace("saved water %s/%s (%d verts)", tostring(map.id),
-                 tostring(slot), n or 0)
-  end
+  Diagnostics.trace("saved water %s/%s (%d verts)", tostring(map.id),
+                    tostring(slot), n or 0)
   return true
 end
 
@@ -1019,31 +1008,25 @@ function MeshCache.loadTerrain(map, slot)
   local water = MeshCache.loadMeshData(map, slot, "water",
                                        fingerprint(map, slot .. "Water"))
   if mesh and water then
-    local okD, Overlay = pcall(V.require, "DebugOverlay")
-    if okD and Overlay then
-      local ms = (love and love.timer and love.timer.getTime
-                  and math.floor((love.timer.getTime() - t0) * 1000 + 0.5))
-                 or 0
-      Overlay.count("cacheHits")
-      Overlay.trace("cache hit terrain %s/%s (%dms, %d verts)",
-                   tostring(map.id), tostring(slot), ms, mesh.n or 0)
-      if ms and ms > 250 then
-        Overlay.count("slowLoads")
-        -- A warning, not an error: a slow-but-successful load must not
-        -- inflate counters.errors (it never did before the counter split).
-        -- The tag says WHERE it hitched: in-build loads are budgeted (the
-        -- pump's overshoot warn covers them); sync loads run on the entry
-        -- frame and ARE the freeze.
-        local where = Budget.inBuild() and "in-build" or "sync"
-        Overlay.warn("SLOW load terrain %s/%s: %dms (%s)", tostring(map.id),
-                     tostring(slot), ms, where)
-      end
+    local ms = (love and love.timer and love.timer.getTime
+                and math.floor((love.timer.getTime() - t0) * 1000 + 0.5))
+               or 0
+    Diagnostics.count("cacheHits")
+    Diagnostics.trace("cache hit terrain %s/%s (%dms, %d verts)",
+                      tostring(map.id), tostring(slot), ms, mesh.n or 0)
+    if ms and ms > 250 then
+      Diagnostics.count("slowLoads")
+      -- A warning, not an error: a slow-but-successful load must not
+      -- inflate counters.errors (it never did before the counter split).
+      -- The tag says WHERE it hitched: in-build loads are budgeted (the
+      -- pump's overshoot warn covers them); sync loads run on the entry
+      -- frame and ARE the freeze.
+      local where = Budget.inBuild() and "in-build" or "sync"
+      Diagnostics.warn("SLOW load terrain %s/%s: %dms (%s)", tostring(map.id),
+                       tostring(slot), ms, where)
     end
   else
-    local okD, Overlay = pcall(V.require, "DebugOverlay")
-    if okD and Overlay then
-      Overlay.count("cacheMisses")
-    end
+    Diagnostics.count("cacheMisses")
   end
   return mesh, water
 end
@@ -1082,10 +1065,7 @@ function MeshCache.saveAux(map, slot, flattened)
     return recordSaveFailure("aux", result)
   end
   if result ~= true then return recordSaveFailure("aux") end
-  local okD, Overlay = pcall(V.require, "DebugOverlay")
-  if okD and Overlay then
-    Overlay.trace("saved aux %s/%s", tostring(map.id), tostring(slot))
-  end
+  Diagnostics.trace("saved aux %s/%s", tostring(map.id), tostring(slot))
   return true
 end
 
@@ -1097,10 +1077,7 @@ function MeshCache.loadAux(map, slot)
   local fp = fingerprint(map, slot .. "Aux")
   local body, meta = readPayload(key, fp)
   if not body then
-    local okD, Overlay = pcall(V.require, "DebugOverlay")
-    if okD and Overlay then
-      Overlay.count("cacheMisses")
-    end
+    Diagnostics.count("cacheMisses")
     return nil
   end
   repackRaw(key, mkey, fp, body, meta)
@@ -1112,10 +1089,7 @@ function MeshCache.loadAux(map, slot)
   local fpos2 = fpos + 4 + flowers.n * 24 + 4 + flowers.m * 4
   local figures = decodeFigures(body:sub(1 + fpos2))
   if not figures then return nil end
-  local okD, Overlay = pcall(V.require, "DebugOverlay")
-  if okD and Overlay then
-    Overlay.trace("cache hit aux %s/%s", tostring(map.id), tostring(slot))
-  end
+  Diagnostics.trace("cache hit aux %s/%s", tostring(map.id), tostring(slot))
   return { grass = g, flowers = flowers, figures = figures }
 end
 
@@ -1129,10 +1103,7 @@ function MeshCache.invalidate(mapId)
   dirty = true
   compression = "unknown"
   codec = nil
-  local okD, Overlay = pcall(V.require, "DebugOverlay")
-  if okD and Overlay then
-    Overlay.trace("cache invalidate %s", tostring(mapId or "ALL"))
-  end
+  Diagnostics.trace("cache invalidate %s", tostring(mapId or "ALL"))
   if not MeshCache.available() then return end
   deleteKey(MANIFEST_KEY)
   if not mapId then return end
@@ -1149,8 +1120,7 @@ function MeshCache.wipe(jobs)
   dirty = true
   compression = "unknown"
   codec = nil
-  local okD, Overlay = pcall(V.require, "DebugOverlay")
-  if okD and Overlay then Overlay.trace("cache wipe") end
+  Diagnostics.trace("cache wipe")
   if not MeshCache.available() then return false end
   deleteKey(MANIFEST_KEY)
   deleteKey(BUILD_INFO_KEY)
@@ -1188,11 +1158,8 @@ function MeshCache.wipe(jobs)
       survivors[#survivors + 1] = key
     end
     if #survivors > 0 then
-      local okD2, Overlay2 = pcall(V.require, "DebugOverlay")
-      if okD2 and Overlay2 then
-        Overlay2.count("storageFails")
-        Overlay2.error("cache wipe: %d key(s) survived delete", #survivors)
-      end
+      Diagnostics.count("storageFails")
+      Diagnostics.error("cache wipe: %d key(s) survived delete", #survivors)
       return false
     end
   end
