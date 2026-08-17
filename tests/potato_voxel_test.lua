@@ -32,6 +32,11 @@ T.check(type(GeometryBuilder.emit) == "function",
 local DiagnosticsEnvironment = exports.lib.require("DiagnosticsEnvironment")
 T.check(type(DiagnosticsEnvironment.new) == "function",
         "diagnostics environment exposes a data-only boundary")
+local VegetationBuilder = exports.lib.require("VegetationBuilder")
+T.check(type(VegetationBuilder.buildGrass) == "function",
+        "vegetation builder exposes grass ownership")
+T.check(type(VegetationBuilder.buildFlowers) == "function",
+        "vegetation builder exposes flower ownership")
 do
   local runtime = MeshRuntime.new()
   local released = 0

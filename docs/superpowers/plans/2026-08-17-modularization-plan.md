@@ -98,6 +98,7 @@
 
 - [ ] Characterize `Structures.forMap()` result shape, template cache identity, object/relief/vegetation ordering, and `Buildings` integration.
 - [ ] Move analysis and specialist builders behind the existing Structures façade one boundary at a time.
+- [x] Move grass and flower specialist builders behind the existing Structures façade.
 - [ ] Preserve result ordering, cache keys, and all extension points.
 - [ ] Run the complete suite, syntax checks, sandbox scan, mod lint, mod pack, and a final static reachability scan.
 - [ ] Update the design spec and ADR notes with completed boundaries, retained compatibility seams, and known residual risks.
