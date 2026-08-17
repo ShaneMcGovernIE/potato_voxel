@@ -78,7 +78,7 @@
 - [x] Characterize stream counts, fingerprints, job ordering, budget slicing, worker messages, and runtime mesh eviction.
 - [x] Move map-to-stream construction into `GeometryBuilder` with no GPU or queue dependencies.
 - [x] Move queue state, deduplication, completion, and cancellation into `MeshQueue`.
-- [ ] Move budget-slice orchestration and worker dispatch policy into `MeshQueue`.
+- [x] Move budget-slice orchestration into `MeshQueue`; retain worker dispatch in `CachePrebuild`/`WorkerPool`, where map loading and protocol handoff are owned.
 - [x] Move GPU mesh upload, cache-entry release/swap rules, and live-set eviction into `MeshRuntime`.
 - [ ] Keep the worker protocol and `ChunkMesher` public calls stable; verify serial/threaded equivalence.
 

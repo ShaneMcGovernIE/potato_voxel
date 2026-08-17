@@ -26,6 +26,31 @@ T.check(type(MeshRuntime.new) == "function",
 local MeshQueue = exports.lib.require("MeshQueue")
 T.check(type(MeshQueue.new) == "function",
         "mesh queue exposes an explicit boundary")
+do
+  local queue = MeshQueue.new()
+  local job = { id = "QUEUE", slot = "body", urgent = true }
+  queue.enqueue(job)
+  local completed = false
+  queue.pump({
+    clock = function() return 0 end,
+    slice = function() return 1 end,
+    step = function(pick) T.eq(pick, job, "mesh queue passes the selected job")
+      return "complete"
+    end,
+    complete = function(pick, ok)
+      completed = pick == job and ok
+      queue.finish(pick, ok)
+    end,
+  })
+  T.check(completed and queue.pending() == 0,
+          "mesh queue owns completion after a finished step")
+  queue.enqueue({ id = "YIELD", slot = "full" })
+  queue.pump({ clock = function() return 0 end,
+               slice = function() return 1 end,
+               step = function() return "yield" end,
+               complete = function() error("yield must not complete") end })
+  T.eq(queue.pending(), 1, "mesh queue keeps a yielded job pending")
+end
 local GeometryBuilder = exports.lib.require("GeometryBuilder")
 T.check(type(GeometryBuilder.emit) == "function",
         "geometry builder exposes the pure stream boundary")

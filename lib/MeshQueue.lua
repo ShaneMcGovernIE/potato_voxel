@@ -86,6 +86,26 @@ function MeshQueue.new()
     return pick
   end
 
+  -- Run queued jobs until the selected slice expires. The queue owns the
+  -- generic deadline/continue policy; the caller supplies the mesher-specific
+  -- coroutine step and completion callback. A step returns "yield" when its
+  -- job remains pending, "complete" when it finished, or "failed" plus an
+  -- error value when the caller wants completion handling to record a fault.
+  function queue.pump(options)
+    if #pending == 0 then return false end
+    local clock = options.clock
+    local pick = queue.pick(true)
+    local deadline = clock() + options.slice(pick)
+    while pick do
+      local state, err = options.step(pick, deadline)
+      if state == "yield" then return true end
+      options.complete(pick, state == "complete", err)
+      if clock() >= deadline or #pending == 0 then return true end
+      pick = queue.pick(true)
+    end
+    return true
+  end
+
   function queue.list()
     return pending
   end

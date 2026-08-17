@@ -723,49 +723,53 @@ ChunkMesher.IDLE_SLICE = 0.005
 ChunkMesher.COVERED_SLICE = 0.050
 
 function ChunkMesher.pump(covered)
-  if Queue.pending() == 0 then return end
-  local pick = Queue.pick(true)
-  local slice = covered and ChunkMesher.COVERED_SLICE
-                or (pick.urgent and ChunkMesher.URGENT_SLICE
-                    or ChunkMesher.IDLE_SLICE)
-  local deadline = clock() + slice
-  while pick do
-    if not pick.co then
-      pick.co = coroutine.create(runJob)
-    end
-    local t0 = clock()
-    Budget.begin(pick.co, deadline - clock())
-    local ok, err = coroutine.resume(pick.co, pick)
-    Budget.finish()
-    -- The cooperative budget is the contract: a resume that runs far past
-    -- its slice froze the frames it landed on (field logs: 590-1083ms on a
-    -- Deck, a 20.3s frame on an Adreno 830). Name the job and its phase
-    -- once per phase so a support log says exactly which step to slice.
-    local elapsedMs = (clock() - t0) * 1000
-    pick.slices = (pick.slices or 0) + 1
-    if elapsedMs > (pick.maxGapMs or 0) then pick.maxGapMs = elapsedMs end
-    local overshootThreshold = slice * 1000 * 4
-    if elapsedMs > overshootThreshold then
-      pick.overshoots = (pick.overshoots or 0) + 1
-      if pick.warnedPhase ~= pick.phase then
-        pick.warnedPhase = pick.phase
-        Diagnostics.warn("mesh build overshot its slice: %s/%s in %s "
-                         .. "(%.0fms resume vs %.0fms slice)",
-                         tostring(pick.id), tostring(pick.slot),
-                         tostring(pick.phase), elapsedMs,
-                         overshootThreshold)
+  Queue.pump({
+    clock = clock,
+    slice = function(pick)
+      return covered and ChunkMesher.COVERED_SLICE
+        or (pick.urgent and ChunkMesher.URGENT_SLICE
+            or ChunkMesher.IDLE_SLICE)
+    end,
+    step = function(pick, deadline)
+      if not pick.co then
+        pick.co = coroutine.create(runJob)
       end
-    end
-    if not ok then
-      finishJob(pick, false, err)
-    elseif coroutine.status(pick.co) == "dead" then
-      finishJob(pick, true)
-    else
-      return   -- slice spent mid-build; resume next frame
-    end
-    if clock() >= deadline or Queue.pending() == 0 then return end
-    pick = Queue.pick(true)
-  end
+      local t0 = clock()
+      local slice = covered and ChunkMesher.COVERED_SLICE
+        or (pick.urgent and ChunkMesher.URGENT_SLICE
+            or ChunkMesher.IDLE_SLICE)
+      Budget.begin(pick.co, deadline - clock())
+      local ok, err = coroutine.resume(pick.co, pick)
+      Budget.finish()
+      -- The cooperative budget is the contract: a resume that runs far past
+      -- its slice froze the frames it landed on (field logs: 590-1083ms on a
+      -- Deck, a 20.3s frame on an Adreno 830). Name the job and its phase
+      -- once per phase so a support log says exactly which step to slice.
+      local elapsedMs = (clock() - t0) * 1000
+      pick.slices = (pick.slices or 0) + 1
+      if elapsedMs > (pick.maxGapMs or 0) then pick.maxGapMs = elapsedMs end
+      local overshootThreshold = slice * 1000 * 4
+      if elapsedMs > overshootThreshold then
+        pick.overshoots = (pick.overshoots or 0) + 1
+        if pick.warnedPhase ~= pick.phase then
+          pick.warnedPhase = pick.phase
+          Diagnostics.warn("mesh build overshot its slice: %s/%s in %s "
+                           .. "(%.0fms resume vs %.0fms slice)",
+                           tostring(pick.id), tostring(pick.slot),
+                           tostring(pick.phase), elapsedMs,
+                           overshootThreshold)
+        end
+      end
+      if not ok then
+        return "failed", err
+      elseif coroutine.status(pick.co) == "dead" then
+        return "complete"
+      else
+        return "yield"
+      end
+    end,
+    complete = finishJob,
+  })
 end
 
 -- Meshes for `map`, built SYNCHRONOUSLY on first use -- the historical
