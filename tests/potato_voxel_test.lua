@@ -32,6 +32,27 @@ T.check(type(GeometryBuilder.emit) == "function",
 local DiagnosticsEnvironment = exports.lib.require("DiagnosticsEnvironment")
 T.check(type(DiagnosticsEnvironment.new) == "function",
         "diagnostics environment exposes a data-only boundary")
+local DiagnosticsStore = exports.lib.require("DiagnosticsStore")
+T.check(type(DiagnosticsStore.new) == "function",
+        "diagnostics store exposes a data-only boundary")
+do
+  local store = DiagnosticsStore.new({
+    sessionId = "test-session", maxLines = 2, logKeep = 4, bootKeep = 2,
+  })
+  store.append("first")
+  store.append("second")
+  store.append("third")
+  T.eq(#store.lines, 2, "diagnostics store bounds the visible ring")
+  T.eq(#store.bootLog, 2, "diagnostics store preserves bounded boot evidence")
+  T.eq(store.ringDelta()[1], "first",
+       "diagnostics store exposes unsent ring evidence")
+  store.lastSentSeq = store.seq
+  T.check(store.ringDelta() == nil,
+          "diagnostics store clears the delta at the send watermark")
+  store.count("errors")
+  T.eq(store.snapshot({ platform = "test" }).counters.errors, 1,
+       "diagnostics store snapshots counters without presentation state")
+end
 local VegetationBuilder = exports.lib.require("VegetationBuilder")
 T.check(type(VegetationBuilder.buildGrass) == "function",
         "vegetation builder exposes grass ownership")

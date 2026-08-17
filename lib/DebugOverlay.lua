@@ -34,18 +34,9 @@ local V = ...
 local Overlay = {}
 
 local PlayerId = V.require("PlayerId")
+local DiagnosticsStore = V.require("DiagnosticsStore")
 local DiagnosticsEnvironment = V.require("DiagnosticsEnvironment")
 
-local MAX_LINES = 20
-local lines = {}         -- the on-screen ring buffer
-local log = {}           -- the recent deduped line ring
-local logSeq = {}        -- parallel monotonic sequence per ring line (delta sends)
-local bootLog = {}       -- first boot lines, kept even after the ring rolls
-local LOG_KEEP = 600
-local BOOT_KEEP = 128
-local seq = 0            -- next ring sequence number
-local lastSentSeq = 0    -- watermark: ring lines with seq > lastSentSeq are unsent
-local bootSent = false   -- boot evidence ships once per session
 local running = true     -- capture starts at boot, even while hidden
 local visible = false    -- F9 only changes panel visibility
 local verbose = true     -- F10: true = all lines, false = important only
@@ -64,35 +55,6 @@ local statsTime = 0
 local statsMax = 0
 local statsRender = 0
 local statsLast = 0
-
--- session counters, folded into the summary
-local counters = { jobs = 0, jobFails = 0, cacheHits = 0, cacheMisses = 0,
-                   slowLoads = 0, errors = 0, storageFails = 0 }
-local worstFrame = 0
-
--- This is deliberately data-only: it can be written through mod.storage's
--- table surface and exported without exposing a Canvas, shader or game object.
-local health = {
-  frame = 0,
-  session = sessionId,
-  startedAt = os.date("%Y-%m-%dT%H:%M:%S"),
-  pipeline = {
-    id = "voxel", level = 0, updateCalls = 0, drawWorldCalls = 0,
-    rendered = 0, fallbacks = 0, loading = 0, noState = 0,
-    unavailable = 0, availability = nil, reason = nil,
-    detail = {}, lastPath = "never", lastPathFrame = 0,
-    lastAvailabilityFrame = 0,
-  },
-  capabilities = {},
-  renderer = {},
-  storage = { writes = 0, failures = 0, available = nil },
-  build = { jobs = 0, slices = 0, overshoots = 0, worstResumeMs = 0,
-            worstResumeJob = nil },
-  probe = { ok = nil },
-  lastEvent = nil,
-  lastError = nil,
-  platform = nil,
-}
 
 -- The VOXEL SETTINGS summary, provided by main.lua (it owns the rows and
 -- the live options API): one space-separated `key=label` line so a
@@ -153,44 +115,27 @@ local function dataCopy(value, depth)
   return out
 end
 
+local diagnostics = DiagnosticsStore.new({
+  sessionId = sessionId,
+  dataCopy = dataCopy,
+})
+local health = diagnostics.health
+local counters = diagnostics.counters
+
 local Environment = DiagnosticsEnvironment.new({
   health = health,
   dataCopy = dataCopy,
 })
 
 local function snapshot()
-  return {
-    schema = 2,
-    session = sessionId,
-    startedAt = health.startedAt,
-    frame = health.frame,
-    pipeline = dataCopy(health.pipeline),
-    capabilities = dataCopy(health.capabilities),
-    renderer = dataCopy(health.renderer),
-    storage = dataCopy(health.storage),
-    build = dataCopy(health.build),
-    probe = dataCopy(health.probe),
+  return diagnostics.snapshot({
     platform = health.platform or Environment.platformName(),
     settings = settingsLine(),
-    lastEvent = dataCopy(health.lastEvent),
-    lastError = dataCopy(health.lastError),
-    lastPhase = health.lastPhase,
-    counters = dataCopy(counters),
-    worstFrame = worstFrame,
-  }
+  })
 end
 
 local function logText()
-  local out = {}
-  if #bootLog > 0 then
-    out[#out + 1] = "-- boot evidence (first lines) --"
-    for _, line in ipairs(bootLog) do out[#out + 1] = line end
-  end
-  if #log > 0 then
-    out[#out + 1] = "-- recent evidence (ring) --"
-    for _, line in ipairs(log) do out[#out + 1] = line end
-  end
-  return table.concat(out, "\n")
+  return diagnostics.logText()
 end
 
 -- Platform slug for the remote filename/folder: the send's
@@ -210,7 +155,7 @@ local function jsonPayload()
   local id = Environment.identityFields()
   local out = {
     schema = 3,
-    session = tostring(sessionId),
+    session = tostring(diagnostics.sessionId),
     frame = health.frame,
     platform = id.platform,
     engine = id.engine,
@@ -224,19 +169,13 @@ local function jsonPayload()
   -- (PlayerId). Omitted entirely when the store could not be read.
   local pid = PlayerId.get()
   if pid then out.playerId = pid end
-  if not bootSent and #bootLog > 0 then
+  if not diagnostics.bootSent and #diagnostics.bootLog > 0 then
     out.boot = {}
-    for _, line in ipairs(bootLog) do out.boot[#out.boot + 1] = line end
+    for _, line in ipairs(diagnostics.bootLog) do out.boot[#out.boot + 1] = line end
   end
-  if #log > 0 then
-    local first = nil
-    for i = 1, #log do
-      if logSeq[i] and logSeq[i] > lastSentSeq then first = i break end
-    end
-    if first then
-      out.ring = {}
-      for i = first, #log do out.ring[#out.ring + 1] = log[i] end
-    end
+  local ring = diagnostics.ringDelta()
+  if ring then
+    out.ring = ring
   end
   out.status = snapshot()
   return out
@@ -288,7 +227,7 @@ local function storageFailure(op, code, message, key)
       (health.storage.expectedUnavailable or 0) + 1
     return
   end
-  counters.storageFails = counters.storageFails + 1
+  diagnostics.count("storageFails")
   -- Do not call Overlay.error here: persistence is called by emit(), and
   -- recursively logging a storage failure would create a write loop.
   pcall(print, "[pv-debug] storage " .. health.storage.lastError)
@@ -390,21 +329,6 @@ local function persist(force)
   if backoff then slowUntil = clock() + backoff end
 end
 
-local function append(line)
-  lines[#lines + 1] = line
-  if #lines > MAX_LINES then table.remove(lines, 1) end
-  if #bootLog < BOOT_KEEP then bootLog[#bootLog + 1] = line end
-  seq = seq + 1
-  log[#log + 1] = line
-  logSeq[#logSeq + 1] = seq
-  if #log > LOG_KEEP then
-    for i = 1, #log - (LOG_KEEP / 2) do
-      table.remove(log, 1)
-      table.remove(logSeq, 1)
-    end
-  end
-end
-
 -- Error lines are the support-report artifact: the throttled persist would
 -- otherwise lose up to a second of them on an abrupt exit. Force the write
 -- on the first error, then only again after a quiet gap -- a flood of
@@ -423,7 +347,7 @@ local function emit(msg, kind)
   -- Count every error occurrence, including deduped repeats: the summary's
   -- "N errors" must match how many errors actually happened.
   if kind == "error" then
-    counters.errors = counters.errors + 1
+    diagnostics.count("errors")
     health.lastError = {
       message = msg,
       frame = health.frame,
@@ -434,14 +358,13 @@ local function emit(msg, kind)
   if msg == lastMsg then
     lastCount = lastCount + 1
     local line = stamp(msg .. (" (x%d)"):format(lastCount))
-    lines[#lines] = line
-    log[#log] = line
+    diagnostics.replaceLatest(line)
     persistFor(kind)
     return
   end
   lastMsg, lastCount = msg, 1
   local line = stamp(msg)
-  append(line)
+  diagnostics.append(line)
   pcall(print, "[pv-debug] " .. line)
   persistFor(kind)
 end
@@ -581,7 +504,7 @@ end
 -- Session counters feed the summary and run from boot with the background
 -- recorder. Panel visibility must not change the support report.
 function Overlay.count(name)
-  counters[name] = (counters[name] or 0) + 1
+  diagnostics.count(name)
 end
 
 -- `enabled` is retained as the public visibility query used by the input
@@ -609,7 +532,7 @@ function Overlay.setVisible(show)
   visible = show
   if not visible then Overlay.summary() end
   local line = "debugger " .. (visible and "VISIBLE" or "HIDDEN")
-  append(stamp(line))
+  diagnostics.append(stamp(line))
   pcall(print, "[pv-debug] " .. stamp(line))
   persist(true)
 end
@@ -690,11 +613,11 @@ function Overlay.sendLogs()
   -- its own ring line, so the send's self-lines are never re-sent and
   -- the idle gate (seq == lastSentSeq) can actually trip once the send
   -- settles; the poll half advances it again past its confirmation trace.
-  bootSent = true
+  diagnostics.bootSent = true
   sendHandle = handle
   sendAt = clock()
   Overlay.note("log sent to loghook")
-  lastSentSeq = seq
+  diagnostics.lastSentSeq = diagnostics.seq
   return true
 end
 
@@ -744,12 +667,12 @@ function Overlay.export(g)
       Overlay.note("log send disabled (LOGS TO DEV OFF)")
     end
   end
-  pcall(print, "[pv-log] ---- boot evidence (" .. #bootLog .. " lines) ----")
-  for _, line in ipairs(bootLog) do
+  pcall(print, "[pv-log] ---- boot evidence (" .. #diagnostics.bootLog .. " lines) ----")
+  for _, line in ipairs(diagnostics.bootLog) do
     pcall(print, "[pv-log] " .. line)
   end
-  pcall(print, "[pv-log] ---- recent evidence (" .. #log .. " lines) ----")
-  for _, line in ipairs(log) do
+  pcall(print, "[pv-log] ---- recent evidence (" .. #diagnostics.log .. " lines) ----")
+  for _, line in ipairs(diagnostics.log) do
     pcall(print, "[pv-log] " .. line)
   end
   local current = snapshot()
@@ -765,9 +688,9 @@ function Overlay.export(g)
              .. " rendered=" .. tostring(current.pipeline.rendered)
              .. " fallbacks=" .. tostring(current.pipeline.fallbacks))
   pcall(print, "[pv-log] ---- end ----")
-  local line = stamp("log exported: " .. (#bootLog + #log)
+  local line = stamp("log exported: " .. (#diagnostics.bootLog + #diagnostics.log)
                      .. " lines + status -> storage debug/log")
-  append(line)
+  diagnostics.append(line)
   pcall(print, "[pv-debug] " .. line)
   persist(true)
 end
@@ -779,10 +702,10 @@ function Overlay.summary()
     .. "%d errors, %d storage fails, worst frame %.1fms",
     counters.jobs, counters.jobFails, counters.cacheHits, counters.cacheMisses,
     counters.slowLoads, counters.errors, counters.storageFails,
-    worstFrame)
+    diagnostics.worstFrame)
   if not ok then msg = "session summary unavailable" end
   local line = stamp(msg)
-  append(line)
+  diagnostics.append(line)
   pcall(print, "[pv-debug] " .. line)
   persist(true)
 end
@@ -822,7 +745,7 @@ function Overlay.frame(dt, renderMs)
       -- (stored in the support log and shown), a success is a trace.
       if st.status == "ok" then
         Overlay.trace("log send confirmed")
-        lastSentSeq = seq
+        diagnostics.lastSentSeq = diagnostics.seq
       else
         Overlay.note("log send failed: %s", tostring(st.err or st.status))
       end
@@ -846,7 +769,7 @@ function Overlay.frame(dt, renderMs)
   end
   if Overlay.canSend() and Overlay.sendingAllowed()
       and not sendHandle and autoSendElapsed >= nextAutoAt then
-    if bootSent and seq == lastSentSeq
+    if diagnostics.bootSent and diagnostics.seq == diagnostics.lastSentSeq
         and nextAutoAt < lastAutoSendElapsed + IDLE_HEARTBEAT_EVERY then
       -- Nothing new since the last send and the heartbeat window is
       -- still open: skip the identical-delta ship and push the deadline
@@ -868,7 +791,7 @@ function Overlay.frame(dt, renderMs)
   autoSendElapsed = autoSendElapsed + (dt or 0)
   health.frame = health.frame + 1
   local frameMs = (dt or 0) * 1000
-  if frameMs > worstFrame then worstFrame = frameMs end
+  diagnostics.updateWorstFrame(frameMs)
   statsFrames = statsFrames + 1
   statsTime = statsTime + frameMs
   if renderMs and renderMs > statsMax then statsMax = renderMs end
@@ -1017,7 +940,7 @@ function Overlay.lint(mod, moduleNames)
 end
 
 function Overlay.draw()
-  if not visible or #lines == 0 then return end
+  if not visible or #diagnostics.lines == 0 then return end
   local g = love.graphics
   if not g then return end
   local prevFont, okF = pcall(g.getFont)
@@ -1040,7 +963,7 @@ function Overlay.draw()
   -- match against the received file's name.
   local pid = PlayerId.get() or "--------"
   shown[#shown + 1] = ("id %s   session %s"):format(pid, tostring(sessionId))
-  for _, line in ipairs(lines) do
+  for _, line in ipairs(diagnostics.lines) do
     if verbose or line:find(" ERROR ") or line:find("FWD%-LOCAL")
        or line:find("mesh job failed") or line:find("SLOW load")
        or line:find("storage ") or line:find("prebuild job failed")
