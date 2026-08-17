@@ -23,6 +23,12 @@ T.check(type(CacheStorage.new) == "function",
 local MeshRuntime = exports.lib.require("MeshRuntime")
 T.check(type(MeshRuntime.new) == "function",
         "mesh runtime exposes an explicit boundary")
+local MeshQueue = exports.lib.require("MeshQueue")
+T.check(type(MeshQueue.new) == "function",
+        "mesh queue exposes an explicit boundary")
+local GeometryBuilder = exports.lib.require("GeometryBuilder")
+T.check(type(GeometryBuilder.emit) == "function",
+        "geometry builder exposes the pure stream boundary")
 do
   local runtime = MeshRuntime.new()
   local released = 0
@@ -42,9 +48,16 @@ do
       index = {}, completion = {} },
   }
   local generations = {}
-  runtime.evict({ cache = cache, jobs = jobs, live = {}, previous = {},
-                  generations = generations, index = jobs[1].index,
-                  completion = jobs[1].completion,
+  local fakeQueue = {
+    list = function() return jobs end,
+    removeIf = function(predicate, status)
+      for i = #jobs, 1, -1 do
+        if predicate(jobs[i]) then table.remove(jobs, i) end
+      end
+    end,
+  }
+  runtime.evict({ cache = cache, queue = fakeQueue, live = {}, previous = {},
+                  generations = generations,
                   onEvict = function(id) evicted = id end })
   T.check(cache.FAR == nil and #jobs == 0 and evicted == "FAR",
           "mesh runtime evicts GPU entries and queued jobs outside live sets")

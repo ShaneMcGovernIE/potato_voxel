@@ -102,7 +102,8 @@ function MeshRuntime.new()
   -- this module owns the eviction decision and mesh release itself.
   function runtime.evict(ctx)
     local cache = ctx.cache
-    local jobs = ctx.jobs
+    local queue = ctx.queue
+    local jobs = queue.list()
     local live = ctx.live
     local previous = ctx.previous
     local generations = ctx.generations
@@ -121,15 +122,9 @@ function MeshRuntime.new()
         if ctx.onEvict then ctx.onEvict(id) end
       end
     end
-    for i = #jobs, 1, -1 do
-        local job = jobs[i]
-      if not job.prebuild and not live[job.id] and not previous[job.id] then
-        local key = job.id .. ":" .. job.slot
-        ctx.index[key] = nil
-        ctx.completion[key] = "cancelled"
-        table.remove(jobs, i)
-      end
-    end
+    queue.removeIf(function(job)
+      return not job.prebuild and not live[job.id] and not previous[job.id]
+    end, "cancelled")
     return live
   end
 
