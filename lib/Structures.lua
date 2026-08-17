@@ -52,6 +52,7 @@ local Budget = V.require("BuildBudget")
 local GridKey = V.require("GridKey")
 local VegetationBuilder = V.require("VegetationBuilder")
 local StructureMatcher = V.require("StructureMatcher")
+local StairBuilder = V.require("StairBuilder")
 
 local Structures = {}
 
@@ -2104,179 +2105,6 @@ end
 -- walls) wear the matching slice of that drawing -- the railing's
 -- diagonal lands along the stepped silhouette -- while treads sample the
 -- art band drawn at their own height.
-local STAIR_STEPS = 4
-
-local STAIR_SHADE = { south = 1.0, north = 0.68, tread = 1.0,
-                      riser = 0.82, cap = 0.78,
-                      wellN = 0.9, wellS = 0.55, wellEnd = 0.15,
-                      wellTread = 0.8 }
-
-local function stairCell(S, map, data, cx, cy, s)
-  local perRow = map.tileset.tilesPerRow or 16
-  local atlasW = map.tileset.imageWidth or 128
-  local atlasH = map.tileset.imageHeight or 48
-  local quads = S.objectQuads
-  local down = s.class == "stair_down_e" or s.class == "stair_down_w"
-  local east = s.class == "stair_e" or s.class == "stair_down_e"
-  local mx, mz = cx * 16, cy * 16
-  local h = s.h or 16
-  local rise = h / STAIR_STEPS
-  local runW = 16 / STAIR_STEPS
-  local z0, z1 = mz, mz + 16
-
-  -- cell-space art coords (16x16, row 0 the top) -> atlas uv; callers keep
-  -- a quad's range inside one 8px tile so it never samples across a seam
-  local function uv(px, py)
-    px = math.max(0.05, math.min(15.95, px))
-    py = math.max(0.05, math.min(15.95, py))
-    local tile = S.tileAt[GridKey.of(cx * 2 + (px >= 8 and 1 or 0),
-                                cy * 2 + (py >= 8 and 1 or 0))]
-    return ((tile % perRow) * 8 + px % 8) / atlasW,
-           (math.floor(tile / perRow) * 8 + py % 8) / atlasH
-  end
-  -- corners run bottom-left, bottom-right, top-right, top-left as seen
-  -- from outside (the mesher's side convention); art rect in cell space
-  local function face(c1, c2, c3, c4, ax0, ay0, ax1, ay1, shade)
-    local u0, v0 = uv(ax0, ay0)
-    local u1, v1 = uv(ax1, ay1)
-    quads[#quads + 1] = { c1, c2, c3, c4,
-      uv = { { u0, v1 }, { u1, v1 }, { u1, v0 }, { u0, v0 } },
-      shade = shade }
-  end
-  -- a vertical face spanning heights [fy0, fy1] wearing art rows
-  -- [ay0, ay1], emitted per 8-row art band so no quad crosses the seam
-  local function banded(z, ax0, ax1, fy0, fy1, ay0, ay1, shade, flip)
-    local scale = (fy1 - fy0) / math.max(ay1 - ay0, 0.001)
-    for _, band in ipairs({ { ay0, math.min(8, ay1) },
-                            { math.max(ay0, 8), ay1 } }) do
-      local a0, a1 = band[1], band[2]
-      if a1 > a0 then
-        local by1 = fy1 - (a0 - ay0) * scale
-        local by0 = fy1 - (a1 - ay0) * scale
-        local xa, xb = mx + ax0, mx + ax1
-        if flip then
-          face({ xb, by0, z }, { xa, by0, z }, { xa, by1, z },
-               { xb, by1, z }, ax0, a0, ax1, a1, shade)
-        else
-          face({ xa, by0, z }, { xb, by0, z }, { xb, by1, z },
-               { xa, by1, z }, ax0, a0, ax1, a1, shade)
-        end
-      end
-    end
-  end
-
-  for i = 0, STAIR_STEPS - 1 do
-    local sx0 = east and (i * runW) or (16 - (i + 1) * runW)
-    local sx1 = sx0 + runW
-    local x0, x1 = mx + sx0, mx + sx1
-
-    if down then
-      -- stairwell: tread i sits (i+1) rises below the floor; the walls
-      -- above it are the excavation, wearing the drawing at its depth
-      local yTop = -(i + 1) * rise
-      local dep = (i + 1) * rise
-
-      face({ x0, yTop, z0 }, { x1, yTop, z0 },
-           { x1, yTop, z1 }, { x0, yTop, z1 },
-           sx0, dep - 1.4, sx1, dep, STAIR_SHADE.wellTread)
-
-      -- stairwell walls above this tread: north wall faces the camera
-      banded(z0, sx0, sx1, yTop, 0, 0, dep, STAIR_SHADE.wellN)
-      banded(z1, sx0, sx1, yTop, 0, 0, dep, STAIR_SHADE.wellS, true)
-
-      -- riser dropping to this tread from the shallower step
-      local rx = east and x0 or x1
-      local ry1 = -i * rise
-      local rax = east and (sx0 + 0.1) or (sx1 - 1.3)
-      if east then
-        face({ rx, yTop, z0 }, { rx, yTop, z1 },
-             { rx, ry1, z1 }, { rx, ry1, z0 },
-             rax, i * rise, rax + 1.2, dep, STAIR_SHADE.riser)
-      else
-        face({ rx, yTop, z1 }, { rx, yTop, z0 },
-             { rx, ry1, z0 }, { rx, ry1, z1 },
-             rax, i * rise, rax + 1.2, dep, STAIR_SHADE.riser)
-      end
-
-      -- the deep end: a dark opening under the wall the flight leaves by
-      if i == STAIR_STEPS - 1 then
-        local px = east and (mx + 16) or mx
-        local cax = east and 14.7 or 0.1
-        if east then
-          face({ px, -h, z1 }, { px, -h, z0 }, { px, 0, z0 }, { px, 0, z1 },
-               cax, 0, cax + 1.2, 16, STAIR_SHADE.wellEnd)
-        else
-          face({ px, -h, z0 }, { px, -h, z1 }, { px, 0, z1 }, { px, 0, z0 },
-               cax, 0, cax + 1.2, 16, STAIR_SHADE.wellEnd)
-        end
-      end
-    else
-      -- rising flight
-      local yTop = (i + 1) * rise
-      local py0 = 16 - yTop
-
-      -- south + north faces: the drawn flight sliced at this step's column
-      banded(z1, sx0, sx1, 0, yTop, py0, 16, STAIR_SHADE.south)
-      banded(z0, sx0, sx1, 0, yTop, py0, 16, STAIR_SHADE.north, true)
-
-      -- tread: the step's top, wearing the art band drawn at its height
-      face({ x0, yTop, z0 }, { x1, yTop, z0 },
-           { x1, yTop, z1 }, { x0, yTop, z1 },
-           sx0, py0, sx1, py0 + 1.4, STAIR_SHADE.tread)
-
-      -- riser: the vertical strip exposed above the previous step
-      local rx = east and x0 or x1
-      local ry0 = i * rise
-      local rax = east and (sx0 + 0.1) or (sx1 - 1.3)
-      if east then
-        face({ rx, ry0, z0 }, { rx, ry0, z1 },
-             { rx, yTop, z1 }, { rx, yTop, z0 },
-             rax, 16 - yTop, rax + 1.2, 16 - ry0, STAIR_SHADE.riser)
-      else
-        face({ rx, ry0, z1 }, { rx, ry0, z0 },
-             { rx, yTop, z0 }, { rx, yTop, z1 },
-             rax, 16 - yTop, rax + 1.2, 16 - ry0, STAIR_SHADE.riser)
-      end
-
-      -- cap the tall end of the flight so it never shows a hole
-      if i == STAIR_STEPS - 1 then
-        local px = east and (mx + 16) or mx
-        local cax = east and 14.7 or 0.1
-        if east then
-          face({ px, 0, z1 }, { px, 0, z0 }, { px, h, z0 }, { px, h, z1 },
-               cax, 0, cax + 1.2, 16, STAIR_SHADE.cap)
-        else
-          face({ px, 0, z0 }, { px, 0, z1 }, { px, h, z1 }, { px, h, z0 },
-               cax, 0, cax + 1.2, 16, STAIR_SHADE.cap)
-        end
-      end
-    end
-  end
-end
-
-function Structures.buildStairs(S, map, x0, x1, y0, y1)
-  local data = pixels(map.tileset)
-  for cy = math.floor(y0 / 2), math.floor(y1 / 2) do
-    for cx = math.floor(x0 / 2), math.floor(x1 / 2) do
-      local s = S.shapeAt[GridKey.of(cx * 2, cy * 2)]
-      if s and s.art == "stair" then
-        -- claim the cell whichever way the quads go: the mesher must not
-        -- box or floor it.  A rising flight stands on the map's common
-        -- floor; a stairwell IS the hole, so nothing is painted under it
-        local down = s.class == "stair_down_e" or s.class == "stair_down_w"
-        for dy = 0, 1 do
-          for dx = 0, 1 do
-            local tk = GridKey.of(cx * 2 + dx, cy * 2 + dy)
-            S.skip[tk] = true
-            if not down then S.ground[tk] = false end
-          end
-        end
-        if data then stairCell(S, map, data, cx, cy, s) end
-      end
-    end
-  end
-end
-
 -- ---- volume mode: per-column runs with real drawn heights ----
 
 -- `tiles` is a list of {tx, ty} forming one region (or what is left of one
@@ -3405,6 +3233,11 @@ function Structures.buildMounted(S, map, x0, x1, y0, y1)
                         function(m, tx, ty)
                           buildMountedAt(S, map, m, tx, ty, perRow)
                         end)
+end
+
+-- Compatibility façade: stair geometry ownership lives in StairBuilder.
+function Structures.buildStairs(S, map, x0, x1, y0, y1)
+  return StairBuilder.build(S, map, x0, x1, y0, y1, pixels(map.tileset))
 end
 
 -- ---- tall grass ----

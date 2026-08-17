@@ -99,6 +99,9 @@ T.check(type(VegetationBuilder.buildFlowers) == "function",
 local StructureMatcher = exports.lib.require("StructureMatcher")
 T.check(type(StructureMatcher.each) == "function",
         "structure matcher exposes the shared pattern boundary")
+local StairBuilder = exports.lib.require("StairBuilder")
+T.check(type(StairBuilder.build) == "function",
+        "stair builder exposes the specialist boundary")
 do
   local runtime = MeshRuntime.new()
   local released = 0

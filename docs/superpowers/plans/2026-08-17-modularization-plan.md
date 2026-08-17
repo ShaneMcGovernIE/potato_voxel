@@ -102,6 +102,7 @@
 - [ ] Move analysis and specialist builders behind the existing Structures façade one boundary at a time.
 - [x] Move grass and flower specialist builders behind the existing Structures façade.
 - [x] Centralize the shared authored-pattern scan used by figure and mounted-object specialists.
+- [x] Move profile-pinned stair geometry behind the existing Structures façade.
 - [ ] Preserve result ordering, cache keys, and all extension points.
 - [ ] Run the complete suite, syntax checks, sandbox scan, mod lint, mod pack, and a final static reachability scan.
 - [ ] Update the design spec and ADR notes with completed boundaries, retained compatibility seams, and known residual risks.
