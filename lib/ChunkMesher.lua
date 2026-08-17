@@ -57,12 +57,14 @@ local Voxel3D = V.require("Voxel3D")
 local Budget = V.require("BuildBudget")
 local MeshCache = V.require("MeshCache")
 local GridKey = V.require("GridKey")
+local MeshRuntime = V.require("MeshRuntime")
 
 -- ffi is gone (sandbox) and this engine's love.data ByteData carries no
 -- accessors, so the native float buffers are gone with them: the table
 -- sink (plain 1-based Lua tables) is the one build path.
 
 local ChunkMesher = {}
+local Runtime = MeshRuntime.new()
 
 -- Ring of border blocks meshed around the body, matching the width
 -- TileRenderer draws so the two modes end at the same place.
@@ -132,37 +134,6 @@ local SIDES = {
 -- the engine's own build). Every upload below CHECKS its pcall and
 -- drops the mesh on failure, so a regression fails the job loudly
 -- (logged, flat-2D fallback) instead of silently blacking the world.
-local UPLOAD_CHUNK = 8192
-
-local function uploadTableMesh(rows, indices)
-  local n = #rows
-  if n == 0 then return nil end
-  local ok, mesh = pcall(love.graphics.newMesh, Voxel3D.FORMAT, n,
-                         "triangles", "static")
-  if not ok or not mesh then return nil end
-  local i = 0
-  while i < n do
-    local c = math.min(UPLOAD_CHUNK, n - i)
-    local slice = {}
-    for j = 1, c do slice[j] = rows[i + j] end
-    local okUp = pcall(mesh.setVertices, mesh, slice, i + 1)
-    if not okUp then
-      pcall(mesh.release, mesh)
-      return nil
-    end
-    i = i + c
-    Budget.check()
-  end
-  if indices and #indices > 0 then
-    local okMap = pcall(mesh.setVertexMap, mesh, indices)
-    if not okMap then
-      pcall(mesh.release, mesh)
-      return nil
-    end
-  end
-  return mesh
-end
-
 local function newTableSink()
   local verts, indices, quads = {}, {}, 0
   return {
@@ -203,7 +174,7 @@ local function newTableSink()
       return flat, #verts, imap, #indices
     end,
     finish = function()
-      return uploadTableMesh(verts, indices)
+      return Runtime.upload(verts, indices)
     end,
   }
 end
@@ -950,18 +921,8 @@ end
 
 -- Figure lists hold their meshes one level down, so the generic slot
 -- release cannot reach them.
-local function releaseFigures(list)
-  for _, f in ipairs(type(list) == "table" and list or {}) do
-    if f.mesh and f.mesh.release then pcall(f.mesh.release, f.mesh) end
-  end
-end
-
--- Replace a cached slot, releasing whatever mesh it held.
-local function swapSlot(c, slot, mesh)
-  local old = c[slot]
-  if old and old ~= mesh and old.release then pcall(old.release, old) end
-  c[slot] = mesh
-end
+local releaseFigures = Runtime.releaseFigures
+local swapSlot = Runtime.swap
 
 -- ------------------------------------------------------------- the cache
 
@@ -984,22 +945,8 @@ end
 -- beside it rather than in a slot of its own because the two are ONE
 -- answer: a full mesh drawn beside a body build's water would draw the
 -- ring's ponds twice and miss the body's own.
-local function waterSlot(slot)
-  return slot .. "Water"
-end
-
-local function releaseEntry(c)
-  for _, slot in ipairs({ "full", "body", "fullWater", "bodyWater",
-                          "grass", "flowers" }) do
-    local mesh = c[slot]
-    if mesh and mesh.release then pcall(mesh.release, mesh) end
-    c[slot] = nil
-  end
-  releaseFigures(c.figures)
-  c.figures = nil
-  c.stale = nil
-  c.noDisk = nil
-end
+local waterSlot = Runtime.waterSlot
+local releaseEntry = Runtime.releaseEntry
 
 -- ---------------------------------------------------------- async builds
 
@@ -1070,23 +1017,7 @@ end
 -- both halves share Voxel3D.newMesh. Returns nil for an empty stream or
 -- a failed upload. Every record is INDEXED since brick.13 (terrain/water
 -- since brick.11, aux since 12): 4 verts per quad plus a u32 vertex map.
-local function meshFromData(d)
-  if not d then return nil end
-  -- Accept BOTH record shapes: cache-load records carry verts/indices
-  -- (flat 1-based float tables) while fresh-build records from
-  -- flattenAux carry buf/idx -- flat tables either way. Voxel3D.newMesh
-  -- wants ROWS, so the flat stream is folded into rows here; the index  -- map is already 1-based.
-  local flat, indices = d.verts or d.buf, d.indices or d.idx
-  if not flat or d.n == 0 then return nil end
-  local rows = {}
-  for i = 1, d.n do
-    local b = (i - 1) * 6 + 1
-    rows[i] = { flat[b], flat[b + 1], flat[b + 2],
-                flat[b + 3], flat[b + 4], flat[b + 5] }
-    if i % 4096 == 0 then Budget.check() end
-  end
-  return uploadTableMesh(rows, indices)
-end
+local meshFromData = Runtime.fromData
 
 -- Flatten the map's grass/flower quads and authored figures into the
 -- INDEXED vertex streams the disk cache stores, in one pass each. Only

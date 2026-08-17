@@ -20,6 +20,22 @@ T.check(type(CacheManifest.new) == "function",
 local CacheStorage = exports.lib.require("CacheStorage")
 T.check(type(CacheStorage.new) == "function",
         "cache storage exposes an explicit boundary")
+local MeshRuntime = exports.lib.require("MeshRuntime")
+T.check(type(MeshRuntime.new) == "function",
+        "mesh runtime exposes an explicit boundary")
+do
+  local runtime = MeshRuntime.new()
+  local released = 0
+  local old = { release = function() released = released + 1 end }
+  local replacement = { release = function() released = released + 1 end }
+  local entry = { full = old, figures = { { mesh = replacement } } }
+  runtime.swap(entry, "full", false)
+  T.eq(released, 1, "mesh runtime releases a replaced GPU slot")
+  runtime.releaseEntry(entry)
+  T.eq(released, 2, "mesh runtime releases figure meshes with the entry")
+  T.check(entry.full == nil and entry.figures == nil,
+          "mesh runtime clears released cache ownership")
+end
 do
   local target = { run = function(_, value) return value end }
   local installs = 0

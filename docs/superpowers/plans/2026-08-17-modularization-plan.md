@@ -75,10 +75,11 @@
 
 **Files:** `lib/ChunkMesher.lua`, new `lib/GeometryBuilder.lua`, new `lib/MeshQueue.lua`, new `lib/MeshRuntime.lua`, worker/thread tests
 
-- [ ] Characterize stream counts, fingerprints, job ordering, budget slicing, worker messages, and runtime mesh eviction.
+- [x] Characterize stream counts, fingerprints, job ordering, budget slicing, worker messages, and runtime mesh eviction.
 - [ ] Move map-to-stream construction into `GeometryBuilder` with no engine or queue dependencies.
 - [ ] Move sliced scheduling and job state into `MeshQueue`.
-- [ ] Move GPU mesh creation, live-set ownership, and eviction into `MeshRuntime`.
+- [x] Move GPU mesh upload and cache-entry release/swap rules into `MeshRuntime`.
+- [ ] Move live-set ownership and eviction into `MeshRuntime`.
 - [ ] Keep the worker protocol and `ChunkMesher` public calls stable; verify serial/threaded equivalence.
 
 ## Task 7: Split diagnostics data, transport, and presentation
