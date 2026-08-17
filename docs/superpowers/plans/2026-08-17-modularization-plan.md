@@ -97,6 +97,7 @@
 **Files:** `lib/Structures.lua`, `lib/Buildings.lua`, new specialist modules, docs and tests
 
 - [ ] Characterize `Structures.forMap()` result shape, template cache identity, object/relief/vegetation ordering, and `Buildings` integration.
+- [x] Characterize the resolved grids, separated geometry streams, per-map cache identity, and `Buildings` model boundary.
 - [ ] Move analysis and specialist builders behind the existing Structures façade one boundary at a time.
 - [x] Move grass and flower specialist builders behind the existing Structures façade.
 - [ ] Preserve result ordering, cache keys, and all extension points.

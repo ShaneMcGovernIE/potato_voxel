@@ -20,6 +20,8 @@ local fakeGame = { save = { options = optionsState },
 local Prebuild = exports.lib.require("CachePrebuild")
 local MeshCache = exports.lib.require("MeshCache")
 local ChunkMesher = exports.lib.require("ChunkMesher")
+local Structures = exports.lib.require("Structures")
+local Buildings = exports.lib.require("Buildings")
 local WorkerPool = exports.lib.require("WorkerPool")
 local Brick = exports.brick
 local Battles = exports.lib.require("OverworldBattle")
@@ -910,6 +912,22 @@ do
           "buildGeometryData returns terrain streams")
   T.check(gdata.water ~= nil and gdata.aux ~= nil,
           "buildGeometryData returns water + aux records")
+  local structureState = Structures.forMap(realMap)
+  T.check(type(structureState.shapeAt) == "table"
+          and type(structureState.tileAt) == "table",
+          "structures exposes resolved shape and tile grids")
+  T.check(type(structureState.objectQuads) == "table"
+          and type(structureState.runs) == "table"
+          and type(structureState.skip) == "table",
+          "structures exposes object, volume, and claim outputs")
+  T.check(type(structureState.grassQuads) == "table"
+          and type(structureState.flowerQuads) == "table"
+          and type(structureState.figures) == "table",
+          "structures keeps vegetation and figure streams separate")
+  T.eq(Structures.forMap(realMap), structureState,
+       "structures reuses the same per-map analysis result")
+  T.check(type(Buildings.stats()) == "table",
+          "buildings retains an inspectable template-model boundary")
   MeshCache.configure({ maps = maps, tilesets = {} })
   local okT = MeshCache.saveTerrain(realMap, "body", gdata.terrain.buf,
                                     gdata.terrain.n, gdata.terrain.idx,
