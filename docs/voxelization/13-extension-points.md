@@ -61,9 +61,9 @@ A companion mod can rebuild/refresh meshes off the same events, or read
 4. **The `Assets.register` boot handoff** is a delicate dance (skip the
    first callback; skip on Switch until `builtAnything`). Any engine
    change to asset invalidation ordering needs re-verification.
-5. **`TileRenderer.animFrame` fallback chain** reaches into `tick`'s
-   upvalues via `debug.getupvalue` — an engine refactor of that module
-   silently loses the shared clock (falls back to wall time).
+5. **`TileRenderer.animFrame` fallback chain** uses the exported engine clock
+   when available and otherwise falls back to wall time. It no longer reaches
+   into private `tick` upvalues, keeping the runtime within the sandbox API.
 6. **The map's `doorTiles` fold** assumes door graphics; a tileset that
    reuses a door tile for something else needs the profile pin to win
    (it does — pins override the fold, Structures.lua:264-294).

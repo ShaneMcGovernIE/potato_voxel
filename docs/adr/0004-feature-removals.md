@@ -25,3 +25,12 @@ The 1.6.1 sandbox release deletes five features wholesale:
 Deleting rather than stubbing matters: the sandbox's own gate greps the
 mod folder for banned patterns, so unreachable code that mentioned them
 would still fail the gate.
+
+## Current diagnostics state
+
+The 1.6.1 removal described above is historical. PotatoVoxel now has a
+sandbox-safe diagnostics replacement: an optional overlay records bounded
+state through scoped mod storage and can use the engine's declared log
+service. It does not restore the removed raw-file, OS-query, native, VR, or
+forest integrations, and the old environment-variable/`Perf` instrumentation
+is not present.

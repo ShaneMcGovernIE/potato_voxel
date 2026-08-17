@@ -25,8 +25,9 @@
 -- The panel draws through render.hud over every screen; lines go to the
 -- console and, when scoped storage is reachable, to the bytes key
 -- "debug/log". Repeated identical messages collapse to "xN"; storage
--- writes throttle to once a second. DELIBERATELY TEMPORARY -- removed
--- before the 1.6.1 release.
+-- writes throttle to once a second. The module remains a compatibility façade
+-- for the public debug export; state, environment, and transport live in
+-- focused modules so the HUD can be changed independently.
 
 -- the mod namespace (see main.lua): V.require loads a sibling module
 local V = ...
@@ -36,6 +37,7 @@ local Overlay = {}
 local PlayerId = V.require("PlayerId")
 local DiagnosticsStore = V.require("DiagnosticsStore")
 local DiagnosticsEnvironment = V.require("DiagnosticsEnvironment")
+local DiagnosticsTransport = V.require("DiagnosticsTransport")
 
 local running = true     -- capture starts at boot, even while hidden
 local visible = false    -- F9 only changes panel visibility
@@ -145,61 +147,6 @@ end
 Overlay._platformSlug = function()
   return Environment.platformSlug()
 end
-
--- The organized JSON document the send carries (schema 3).  Top-level
--- identity fields let the server name and sort the file without parsing
--- log lines; boot evidence ships once per session; the ring is a delta
--- (only lines newer than the last acked send); status is the structured
--- snapshot, not a flat text excerpt.
-local function jsonPayload()
-  local id = Environment.identityFields()
-  local out = {
-    schema = 3,
-    session = tostring(diagnostics.sessionId),
-    frame = health.frame,
-    platform = id.platform,
-    engine = id.engine,
-    mod = id.mod,
-    love = id.love,
-    gpu = id.gpu,
-    date = os.date("%d_%m_%Y"),
-  }
-  -- the per-install support token: random, persisted in OPTIONS, visible
-  -- in the debugger; it only identifies a player once they share it
-  -- (PlayerId). Omitted entirely when the store could not be read.
-  local pid = PlayerId.get()
-  if pid then out.playerId = pid end
-  if not diagnostics.bootSent and #diagnostics.bootLog > 0 then
-    out.boot = {}
-    for _, line in ipairs(diagnostics.bootLog) do out.boot[#out.boot + 1] = line end
-  end
-  local ring = diagnostics.ringDelta()
-  if ring then
-    out.ring = ring
-  end
-  out.status = snapshot()
-  return out
-end
-
--- The engine's link-protocol JSON encoder (data-only tables, arrays,
--- strings, numbers, booleans, null).  Resolved once at first send.
-local Json = nil
-local function jsonEncode(v)
-  if Json == nil then
-    local ok, mod = pcall(require, "src.link.Json")
-    Json = ok and mod and mod.encode or false
-  end
-  return Json and Json(v) or nil
-end
-
--- The structured status object ships inside the JSON payload (the
--- server stores the organized document as-is).  The ring only covers
--- what has happened since boot, so a send made early in a session would
--- otherwise carry no rendering, prebuild, or cache evidence; the
--- snapshot aggregates all of it.  The playthroughId stays local.  The
--- one identifier the upload carries is playerId, the player-facing
--- 8-digit support token (PlayerId): random per install, visible in the
--- debugger, and unlinkable to any player who has not shared it.
 
 local function managerLog(kind, msg)
   local mod = V.mod
@@ -548,79 +495,24 @@ function Overlay.toggleVerbose()
   Overlay.note("verbosity %s", verbose and "ALL" or "IMPORTANT")
 end
 
+local Transport = DiagnosticsTransport.new({
+  store = diagnostics,
+  environment = Environment,
+  snapshot = snapshot,
+  note = Overlay.note,
+  trace = Overlay.trace,
+  clock = clock,
+})
+
+function Overlay.sendLogs()
+  return Transport.send()
+end
+
 -- F8's loghook companion: ship the stored evidence to the manifest-declared
 -- log_url, one-way.  Engine feature #1363 (mod.postLog); silently no-ops on
 -- engines without it or without a log_url.  Fire-and-forget: the job is
 -- polled once on the next frame and released when it settles, so a hung
 -- endpoint never accumulates in the worker pool.
-local sendHandle = nil
-local sendAt = 0   -- wall clock when the current send was submitted
-
-function Overlay.sendLogs()
-  local mod = V.mod
-  if not (mod and type(mod.postLog) == "function") then return false end
-  if not (mod.manifest and mod.manifest.log_url) then return false end
-  -- The organized JSON document (schema 3): identity fields at the top
-  -- (the server names and sorts the file from them), boot evidence once
-  -- per session, a ring DELTA (only lines newer than the last acked
-  -- send), and the structured status snapshot.  The engine's postLog
-  -- ceiling is 512 KiB since engine PR #1382 (64 KiB before); a delta is
-  -- normally <2 KiB, and the first send of a session (boot + full ring)
-  -- still fits the conservative budget.  If the engine rejects the JSON
-  -- as too large, retry once with boot omitted and the ring capped.
-  local function buildBody(slim)
-    local payload = jsonPayload()
-    if slim then
-      payload.boot = nil
-      if payload.ring and #payload.ring > 200 then
-        local kept = {}
-        for i = #payload.ring - 199, #payload.ring do
-          kept[#kept + 1] = payload.ring[i]
-        end
-        payload.ring = kept
-      end
-    end
-    local body = jsonEncode(payload)
-    if not body then
-      Overlay.note("log send failed: JSON encoder unavailable")
-      return nil
-    end
-    return body
-  end
-  local body = buildBody(false)
-  if not body then return false end
-  -- The engine rejects a send by returning nil plus a REASON (too large,
-  -- too many in flight, bad URL...); pcall forwards both returns, so the
-  -- reason is captured and shown instead of reading as a bare nil.
-  local ok, handle, reason = pcall(mod.postLog, mod, body, { format = "text" })
-  if not ok or not handle and reason and reason:find("too large") then
-    -- An engine without PR #1382 caps at 64 KiB: retry once with the
-    -- conservative budget before reporting a failure.
-    Overlay.trace("log send: payload too large for this engine; retrying trimmed")
-    body = buildBody(true)
-    if not body then return false end
-    ok, handle, reason = pcall(mod.postLog, mod, body, { format = "text" })
-  end
-  if not ok or not handle then
-    Overlay.note("log send failed: %s",
-      tostring(handle or reason or "engine rejected the send"))
-    return false
-  end
-  -- Acknowledged: advance the delta watermark so the next send carries
-  -- only newer lines.  On a failed send the watermark stays put, so the
-  -- next send retries the same delta (at-least-once, same as today).
-  -- The watermark is captured AFTER the confirmation note below appends
-  -- its own ring line, so the send's self-lines are never re-sent and
-  -- the idle gate (seq == lastSentSeq) can actually trip once the send
-  -- settles; the poll half advances it again past its confirmation trace.
-  diagnostics.bootSent = true
-  sendHandle = handle
-  sendAt = clock()
-  Overlay.note("log sent to loghook")
-  diagnostics.lastSentSeq = diagnostics.seq
-  return true
-end
-
 -- ------- log-send opt-out
 --
 -- F8, the SEND LOGS row and the START chord all ship the stored evidence
@@ -636,9 +528,7 @@ end
 -- plus a manifest log_url. The gate only exists where a send would
 -- actually happen, so a local-only export never sends.
 function Overlay.canSend()
-  local mod = V.mod
-  return not not (mod and type(mod.postLog) == "function"
-                  and mod.manifest and mod.manifest.log_url)
+  return Transport.canSend()
 end
 
 -- Whether the player has opted out. Read live through the options API
@@ -736,39 +626,9 @@ local IDLE_HEARTBEAT_EVERY = 300
 local lastAutoSendElapsed = 0   -- game time of the last auto-send (heartbeat cap anchor)
 
 function Overlay.frame(dt, renderMs)
-  if sendHandle and V.mod and V.mod.fetch
-      and type(V.mod.fetch.poll) == "function" then
-    local ok, st = pcall(V.mod.fetch.poll, V.mod.fetch, sendHandle)
-    if ok and st and st.status ~= "pending" then
-      -- The job settled.  The engine worker does not report through the
-      -- send notice, so surface its result here: a failure is important
-      -- (stored in the support log and shown), a success is a trace.
-      if st.status == "ok" then
-        Overlay.trace("log send confirmed")
-        diagnostics.lastSentSeq = diagnostics.seq
-      else
-        Overlay.note("log send failed: %s", tostring(st.err or st.status))
-      end
-      pcall(V.mod.fetch.release, V.mod.fetch, sendHandle)
-      sendHandle = nil
-    elseif ok and clock() - sendAt > 40 then
-      -- A worker that hangs (e.g. a stuck process spawn) leaves the job
-      -- pending forever; every further F8 then trips the engine's
-      -- 4-in-flight ceiling ("log send failed: nil").  Cancel and drop the
-      -- handle so the next send starts clean.
-      Overlay.note("log send timed out after %ds; cancelling",
-                   math.floor(clock() - sendAt))
-      pcall(V.mod.fetch.cancel, V.mod.fetch, sendHandle)
-      pcall(V.mod.fetch.release, V.mod.fetch, sendHandle)
-      sendHandle = nil
-    elseif not ok then
-      Overlay.note("log send poll failed: %s", tostring(st))
-      pcall(V.mod.fetch.release, V.mod.fetch, sendHandle)
-      sendHandle = nil
-    end
-  end
+  Transport.poll()
   if Overlay.canSend() and Overlay.sendingAllowed()
-      and not sendHandle and autoSendElapsed >= nextAutoAt then
+      and not Transport.pending() and autoSendElapsed >= nextAutoAt then
     if diagnostics.bootSent and diagnostics.seq == diagnostics.lastSentSeq
         and nextAutoAt < lastAutoSendElapsed + IDLE_HEARTBEAT_EVERY then
       -- Nothing new since the last send and the heartbeat window is

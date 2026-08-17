@@ -73,6 +73,9 @@ local DiagnosticsBridge = exports.lib.require("DiagnosticsBridge")
 T.check(type(DiagnosticsBridge.trace) == "function"
         and type(DiagnosticsBridge.count) == "function",
         "feature diagnostics use an optional transport boundary")
+local DiagnosticsTransport = exports.lib.require("DiagnosticsTransport")
+T.check(type(DiagnosticsTransport.new) == "function",
+        "diagnostics transport exposes a data/transport boundary")
 do
   local store = DiagnosticsStore.new({
     sessionId = "test-session", maxLines = 2, logKeep = 4, bootKeep = 2,
@@ -102,6 +105,9 @@ T.check(type(StructureMatcher.each) == "function",
 local StairBuilder = exports.lib.require("StairBuilder")
 T.check(type(StairBuilder.build) == "function",
         "stair builder exposes the specialist boundary")
+local BookcaseBuilder = exports.lib.require("BookcaseBuilder")
+T.check(type(BookcaseBuilder.build) == "function",
+        "bookcase builder exposes the specialist boundary")
 do
   local runtime = MeshRuntime.new()
   local released = 0

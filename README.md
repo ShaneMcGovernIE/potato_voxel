@@ -57,7 +57,11 @@ the reasoning:
   impossible without raw file reads) — the 3D-BTL ladder is now
   2D-3D A / 2D-3D B / OFF
 - **VR** (the OpenXR loader and its rigs)
-- the **DEBUG diagnostics panel** and its instrumentation
+
+The diagnostics overlay is retained as a sandbox-safe, optional compatibility
+feature. It uses scoped mod storage and the engine's declared log service; it
+does not use raw files, native interop, OS queries, or the removed VR/forest
+integrations.
 
 ## Install
 

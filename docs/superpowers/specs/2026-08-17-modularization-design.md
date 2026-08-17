@@ -13,24 +13,26 @@ documents, and recent release history. The main structural risks are:
 
 - `main.lua` is the composition root, hook installer, render-pipeline owner,
   settings schema, input adapter, cache gate, and diagnostics coordinator in
-  one 1,842-line file.
-- `Structures.lua` combines map analysis, object detection, building/relief
-  construction, figure extraction, vegetation, and global template caches in
-  3,892 lines.
-- `ChunkMesher.lua` combines pure geometry generation, queue scheduling,
-  sliced execution, GPU upload, runtime mesh lifetime, and cache handoff.
+  one 1,517-line file.
+- `Structures.lua` combines map analysis, object detection, round/building
+  geometry, region extraction, and global template caches in 2,959 lines;
+  vegetation, stairs, bookcases, and shared pattern matching now have
+  specialist boundaries.
+- `ChunkMesher.lua` combines the remaining mesh orchestration, GPU upload,
+  and cache handoff; pure geometry, queue policy, and runtime ownership are
+  now separate services.
 - `MeshCache.lua` combines storage access, compression, identity, manifests,
   validation, and payload serialization.
-- `DebugOverlay.lua` combines the diagnostic ring buffer, counters, status
-  snapshots, network transport, settings rows, and HUD rendering.
-- The same packed coordinate key was implemented independently in Structures,
-  Buildings, ShapeDebug, and ChunkMesher. The first refactor slice moves this
-  contract into `lib/GridKey.lua`.
+- `DebugOverlay.lua` remains the public diagnostics façade and HUD, while
+  store, environment, bridge, and transport ownership live in focused
+  services.
+- The packed coordinate key is centralized in `lib/GridKey.lua`; the previous
+  independent helpers are gone.
 - VR is explicitly removed and `VR.supported()` is permanently false, while
   dormant VR camera, battle, scene, input, and Pokedex paths remain in the
   shipped code. These paths require characterization before deletion.
-- Buildings still carries a disabled `Perf` object after the diagnostics Perf
-  surface was removed.
+- The disabled `Perf` object and its no-op counters were removed after the
+  diagnostics surface was characterized.
 
 ## Design principles
 
@@ -68,7 +70,13 @@ domain / services
   ├── CacheStorage       storage and codec boundary
   ├── CacheIdentity      build identity and invalidation policy
   ├── CacheManifest      completion records and resume scans
-  └── Diagnostics        ring, counters, status, transport, and panel
+  ├── DiagnosticsStore   ring, counters, and status data
+  ├── DiagnosticsEnvironment capability and identity capture
+  ├── DiagnosticsTransport schema payload and postLog lifecycle
+  ├── VegetationBuilder  grass and flower specialists
+  ├── StairBuilder       profile-pinned stair geometry
+  ├── BookcaseBuilder    authored bookcase detection and relief
+  └── StructureMatcher   shared authored-pattern matching
 ```
 
 The existing `ChunkMesher`, `MeshCache`, and `DebugOverlay` names remain as
@@ -133,6 +141,17 @@ analysis, specialist builders, and reusable template caches. `Buildings` is
 the first specialist boundary because it already has a distinct profile and
 reference implementation. The public `Structures.forMap()` result remains
 stable while internals move.
+
+## Implementation status — 2026-08-17
+
+Phases 1–4 are implemented and verified. Phase 5 has moved vegetation,
+authored pattern matching, stairs, and bookcases behind the existing
+`Structures` façade. The remaining coupled core is the claim-order
+coordinator plus cylinders/round hulls, relief, volume fill, and region/object
+extraction. Those paths share mutable intermediate grids and remain in
+`Structures` until dedicated characterization makes another extraction
+behaviorally safe. VR compatibility guards also remain reachable and are not
+deleted by this pass.
 
 ## Verification contract
 

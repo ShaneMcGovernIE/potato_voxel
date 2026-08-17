@@ -50,7 +50,7 @@
 - [ ] Move the remaining engine wrappers and hook registrations into `RuntimeHooks` after their order is characterized.
 - [x] Extract settings schema, live settings summary, and settings-row ownership into `SettingsFeature`.
 - [x] Pass an explicit context table from `main.lua`; keep module loading and exports unchanged.
-- [ ] Verify settings, loading, runtime seam, and shadow suites before and after extraction.
+- [x] Verify settings, loading, runtime seam, and shadow suites before and after extraction.
 
 ## Task 4: Extract cache readiness and prebuild gating
 
@@ -81,7 +81,7 @@
 - [x] Move budget-slice orchestration into `MeshQueue`; retain worker dispatch in `CachePrebuild`/`WorkerPool`, where map loading and protocol handoff are owned.
 - [x] Move GPU mesh upload, cache-entry release/swap rules, and live-set eviction into `MeshRuntime`.
 - [x] Consolidate auxiliary stream decode and figure/mesh release across sliced, cached, and synchronous paths.
-- [ ] Keep the worker protocol and `ChunkMesher` public calls stable; verify serial/threaded equivalence.
+- [x] Keep the worker protocol and `ChunkMesher` public calls stable; verify serial/threaded equivalence.
 
 ## Task 7: Split diagnostics data, transport, and presentation
 
@@ -91,26 +91,28 @@
 - [x] Extract a data-only diagnostics store and preserve current logging calls.
 - [x] Extract capability/environment collection from HUD rendering behind `DiagnosticsEnvironment`.
 - [x] Keep overlay registration optional and prevent cache/meshing modules from depending on presentation code.
-- [ ] Verify diagnostics behavior and sandbox API compliance.
+- [x] Move schema-3 payload construction and postLog polling behind `DiagnosticsTransport`.
+- [x] Verify diagnostics behavior and sandbox API compliance.
 
 ## Task 8: Decompose Structures and complete verification
 
 **Files:** `lib/Structures.lua`, `lib/Buildings.lua`, new specialist modules, docs and tests
 
-- [ ] Characterize `Structures.forMap()` result shape, template cache identity, object/relief/vegetation ordering, and `Buildings` integration.
+- [x] Characterize `Structures.forMap()` result shape, template cache identity, object/relief/vegetation ordering, and `Buildings` integration.
 - [x] Characterize the resolved grids, separated geometry streams, per-map cache identity, and `Buildings` model boundary.
-- [ ] Move analysis and specialist builders behind the existing Structures façade one boundary at a time.
+- [x] Move analysis and specialist builders behind the existing Structures façade one boundary at a time.
 - [x] Move grass and flower specialist builders behind the existing Structures façade.
 - [x] Centralize the shared authored-pattern scan used by figure and mounted-object specialists.
 - [x] Move profile-pinned stair geometry behind the existing Structures façade.
-- [ ] Preserve result ordering, cache keys, and all extension points.
-- [ ] Run the complete suite, syntax checks, sandbox scan, mod lint, mod pack, and a final static reachability scan.
-- [ ] Update the design spec and ADR notes with completed boundaries, retained compatibility seams, and known residual risks.
+- [x] Move bookcase detection and relief emission behind the existing Structures façade.
+- [x] Preserve result ordering, cache keys, and all extension points.
+- [x] Run the complete suite, syntax checks, sandbox scan, mod lint, mod pack, and a final static reachability scan.
+- [x] Update the design spec and ADR notes with completed boundaries, retained compatibility seams, and known residual risks.
 
 ## Completion checklist
 
-- [ ] All focused and complete suites pass with exit status zero.
-- [ ] No unreviewed `keyOf` duplicates, disabled instrumentation shims, or new cross-feature imports remain.
-- [ ] Cache and worker protocols remain compatible with the baseline.
-- [ ] `git diff --check` and project lint/pack checks pass.
-- [ ] Final review identifies any remaining legacy code explicitly instead of implying total removal.
+- [x] All focused and complete suites pass with exit status zero.
+- [x] No unreviewed `keyOf` duplicates, disabled instrumentation shims, or new cross-feature imports remain.
+- [x] Cache and worker protocols remain compatible with the baseline.
+- [x] `git diff --check` and project lint/pack checks pass.
+- [x] Final review identifies any remaining legacy code explicitly instead of implying total removal.

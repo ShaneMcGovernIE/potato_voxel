@@ -35,6 +35,7 @@ local forbidden = {
   { "os.rename", "os%.rename" },
   { "os.exit", "os%.exit" },
   { "os.tmpname", "os%.tmpname" },
+  { "debug library", "debug%.[%w_]+" },
   { "ffi require", "require%s*%(%s*[\"']ffi[\"']%s*%)" },
   { "package", "require%s*%(%s*[\"']package[\"']%s*%)" },
   { "dofile", "dofile%s*%(" },

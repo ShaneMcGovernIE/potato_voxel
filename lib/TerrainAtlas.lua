@@ -401,38 +401,16 @@ end
 -- the one the flat path is drawing from.
 --
 --   1. TileRenderer.animFrame(), where the build exports it.
---   2. else the counter itself, off tick()'s upvalues. It is a plain local
---      in that module, so this is exact and live -- the same number, not an
---      approximation of it. Reading engine internals is what this mod's
---      "engine_internals" permission is declared for, and this one is
---      read-only and entirely optional.
---   3. else wall time in 60Hz steps. Free-running, but the water moves,
+--   2. else wall time in 60Hz steps. Free-running, but the water moves,
 --      which beats a frozen pond. Derived from absolute time rather than
 --      accumulated deltas because animate() is called once per map in the
 --      neighbourhood, so a per-call accumulator would run several times
 --      too fast.
-local clockUpvalue = nil        -- nil = not looked for yet, false = absent
-
-local function findClockUpvalue()
-  if not (debug and debug.getupvalue) then return false end
-  if type(TileRenderer.tick) ~= "function" then return false end
-  for i = 1, 32 do
-    local ok, name, value = pcall(debug.getupvalue, TileRenderer.tick, i)
-    if not (ok and name) then break end
-    if name == "animFrame" and type(value) == "number" then return i end
-  end
-  return false
-end
 
 local function animFrame()
   if TileRenderer.animFrame then
     local ok, f = pcall(TileRenderer.animFrame)
     if ok and type(f) == "number" then return f end
-  end
-  if clockUpvalue == nil then clockUpvalue = findClockUpvalue() end
-  if clockUpvalue then
-    local ok, _, value = pcall(debug.getupvalue, TileRenderer.tick, clockUpvalue)
-    if ok and type(value) == "number" then return value end
   end
   if love.timer and love.timer.getTime then
     return math.floor(love.timer.getTime() * 60)
