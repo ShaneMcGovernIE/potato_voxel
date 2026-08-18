@@ -480,7 +480,7 @@ do
       if name == "DiagnosticsBridge" then
         return { note = function() end, warn = function() end }
       end
-      if name == "Brick" then
+      if name == "BrickProfile" then
         return { isBrick = function() return false end }
       end
       error("unexpected worker dependency: " .. tostring(name))
@@ -492,6 +492,34 @@ do
         "mobile geometry workers must stay disabled")
   check(mobilePool.workerCount() == 0,
         "mobile geometry worker count must be zero")
+
+  -- The brick gate, on a platform that would otherwise take workers. Every
+  -- other fixture answers isBrick() == false, so the gate's own branch is
+  -- never entered and a gate that cannot fire at all still passes: a require
+  -- of a module that does not exist throws, the pcall swallows it, and the
+  -- result is indistinguishable from "not a brick". Pin isBrick() == true so
+  -- the disable path is exercised.
+  package.loaded["src.core.Platform"] = {
+    detect = function() return {} end,
+  }
+  local brickV = {
+    require = function(name)
+      if name == "MeshCache" then return { GEOMETRY_VERSION = 27 } end
+      if name == "ChunkMesher" or name == "GeometrySnapshot" then return {} end
+      if name == "DiagnosticsBridge" then
+        return { note = function() end, warn = function() end }
+      end
+      if name == "BrickProfile" then
+        return { isBrick = function() return true end }
+      end
+      error("unexpected worker dependency: " .. tostring(name))
+    end,
+    mod = {},
+  }
+  local brickPool = assert(loadfile("lib/WorkerPool.lua"))(brickV)
+  check(not brickPool.enabled(),
+        "brick profile geometry workers must stay disabled")
+
   package.loaded["src.core.Platform"] = oldPlatform
   _G.love = oldLove
 end
