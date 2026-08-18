@@ -151,7 +151,9 @@ loading, and map invalidation policy; `SettingsFeature` owns settings rows and
 menu refresh; `CacheFeature` owns cache lifecycle wrappers; `InputFeature` and
 `BattleFeature` own their respective engine seams. `main.lua` retains update
 order plus the intentionally cross-feature `game.ready`, save, and
-`world.tod` composition callbacks.
+`world.tod` composition callbacks. The separate Horde minigame was then
+removed completely, including its dynamic screens, render/input branches, and
+supporting audio/crowd modules.
 Phase 5 has moved vegetation,
 authored pattern matching, stairs, and bookcases behind the existing
 `Structures` façade. The remaining coupled core is the claim-order

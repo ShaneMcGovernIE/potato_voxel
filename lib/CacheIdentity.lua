@@ -44,6 +44,8 @@ function CacheIdentity.new(ctx)
 
   local function datasetRevision(data)
     local hash = 17
+    hash = hashString(hash, data and data.profileRevision)
+    hash = hashString(hash, data and data.voxelProfileRevision)
     local maps = data and data.maps or {}
     for _, id in ipairs(sortedKeys(maps)) do
       local def = maps[id]
@@ -51,6 +53,7 @@ function CacheIdentity.new(ctx)
       hash = hashString(hash, def.width)
       hash = hashString(hash, def.height)
       hash = hashString(hash, def.tileset)
+      hash = hashString(hash, def.outdoor)
       hash = hashString(hash, def.borderBlock)
       hash = hashValues(hash, def.blocks)
       local connections = def.connections or {}
@@ -67,8 +70,11 @@ function CacheIdentity.new(ctx)
       local tileset = tilesets[id]
       hash = hashString(hash, id)
       hash = hashString(hash, tileset.image)
+      hash = hashString(hash, tileset.imageWidth)
+      hash = hashString(hash, tileset.imageHeight)
       hash = hashString(hash, tileset.trueColor)
       hash = hashString(hash, tileset.tilesPerRow)
+      hash = hashString(hash, tileset.profileRevision)
       hash = hashValues(hash, tileset.blocks)
       hash = hashValues(hash, tileset.walkable)
       hash = hashValues(hash, tileset.counterTiles)
@@ -89,7 +95,7 @@ function CacheIdentity.new(ctx)
     local voidFill = (okTR and TileRenderer and TileRenderer.voidFill) or "trees"
     local profile = Brick.isBrick() and "b" or "f"
     return {
-      format = "PVMC1",
+      format = "PVMC2",
       version = ctx.geometryVersion,
       activeVersion = activeVersion(),
       profile = profile,

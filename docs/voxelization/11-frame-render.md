@@ -26,7 +26,7 @@ The pipeline's `drawWorld` hook (main.lua:414-548) drives it.
 11. grass:        tuft rows, pulled camera-ward like the characters
 12. flowers:      cutouts, pull minus 8·sin(angle)
 13. overlays:     field FX as ordinary 2D draws anchored via
-                  Voxel3D.project, Horde HUD
+                  Voxel3D.project
 ```
 
 There is **no y-sort anywhere** — the depth buffer resolves occlusion,

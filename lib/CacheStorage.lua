@@ -146,7 +146,17 @@ function CacheStorage.new()
   function service.deleteKey(key)
     local store_ = facade()
     if not store_ or not store_.delete then return false end
-    return pcall(store_.delete, store_, liveGame(), key)
+    local ok, result, code, message = pcall(store_.delete, store_,
+                                            liveGame(), key)
+    if not ok then
+      callFail("delete", key, "exception", result)
+      return false
+    end
+    if result ~= true then
+      callFail("delete", key, code, message)
+      return false
+    end
+    return true
   end
 
   return service

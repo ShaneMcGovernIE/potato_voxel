@@ -41,15 +41,15 @@ points intact while moving isolated algorithms behind narrow boundaries.
 
 | Module | Lines | Responsibility |
 |---|---:|---|
-| `main.lua` | 833 | Composition root, cross-feature event wiring, and update order |
+| `main.lua` | 810 | Composition root, cross-feature event wiring, and update order |
 | `lib/Structures.lua` | 2,959 | Map analysis, claims, remaining authored geometry |
 | `lib/ChunkMesher.lua` | 955 | Mesh orchestration, GPU upload, cache handoff |
 | `lib/MeshCache.lua` | 1,246 | Scoped storage, identity, manifest, payload validation |
 | `lib/Voxel3D.lua` | 1,655 | Camera, shading, fog, wireframe, world draw |
-| `lib/VoxelScene.lua` | 1,328 | Render-pass composition |
-| `lib/InputFeature.lua` | 133 | Hotkeys, voxel ladder, and `Game:keypressed` policy |
+| `lib/VoxelScene.lua` | 1,311 | Render-pass composition |
+| `lib/InputFeature.lua` | 123 | Hotkeys, voxel ladder, and `Game:keypressed` policy |
 | `lib/BattleFeature.lua` | 65 | Staged battle, sprite, and exit integration |
-| `lib/WorldFeature.lua` | 209 | World render policy, loading, and map invalidation hooks |
+| `lib/WorldFeature.lua` | 207 | World render policy, loading, and map invalidation hooks |
 | `lib/SettingsFeature.lua` | 267 | Settings schema, rows, engine pins, and menu refresh |
 | `lib/CacheFeature.lua` | 194 | Cache gate, prebuild UI, and save lifecycle wrappers |
 | `lib/Water.lua` | 1,503 | Water planes, waves, reflections |
@@ -97,6 +97,10 @@ points intact while moving isolated algorithms behind narrow boundaries.
 - Removed the unreachable VR-only `Pokedex` module and its scene hook after
   verifying that the permanently disabled VR façade provided no caller,
   export, or test seam for it.
+- Removed the Horde minigame and its seven supporting modules (2,722 lines):
+  state machine, gun, crowd AI, HUD, synthesized sound, exit prompt, and game
+  over screen. Normal free movement, pointer input, scene rendering, and
+  world overlays no longer carry Horde branches.
 
 ## Deliberately retained seams
 
@@ -134,7 +138,7 @@ tests load the repository copy without modifying the engine checkout:
 
 | Gate | Result |
 |---|---|
-| Main headless suite | 358/358 checks |
+| Main headless suite | 365/365 checks |
 | Cache suite | 194/194 checks |
 | Sandbox API scan | clean |
 | Shadow runtime | 16 passed, 0 failed |

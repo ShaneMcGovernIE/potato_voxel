@@ -17,8 +17,6 @@ function InputFeature.new(ctx)
   local WorldCurve = ctx.WorldCurve
   local Water = ctx.Water
   local OverworldBattle = ctx.OverworldBattle
-  local Horde = ctx.Horde
-  local HordeGun = ctx.HordeGun
   local CamControl = ctx.CamControl
   local DebugOverlay = ctx.DebugOverlay
   local ShapeDebug = ctx.ShapeDebug
@@ -46,7 +44,6 @@ function InputFeature.new(ctx)
   -- to the same path as the original wrapper.
   local function cycleVoxel(game)
     local Pipelines = require("src.render.Pipelines")
-    if Horde.viewLocked() then return false end
     local top = game.stack and game.stack:top()
     if not Pipelines.canToggle("voxel", top, game.overworld) then
       return false
@@ -80,13 +77,6 @@ function InputFeature.new(ctx)
     RuntimeHooks.wrapOnce(Game, "keypressed",
       "dramaticShapeKeypressedHook", function(inner)
         return function(self, key)
-          if Horde.active then
-            if key == "r" then
-              HordeGun.reload()
-              return
-            end
-            if hotkeys[key] then return end
-          end
           local claim = hotkeys[key]
           local top = self.stack and self.stack:top()
           if (key == "q" or key == "e")

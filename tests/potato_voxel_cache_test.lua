@@ -27,6 +27,9 @@ local Brick = exports.brick
 local Battles = exports.lib.require("OverworldBattle")
 local QualityMode = exports.lib.require("QualityMode")
 
+T.eq(MeshCache.GEOMETRY_VERSION, 27,
+     "v27 invalidates save-time quantized terrain payloads")
+
 -- Platform switching for the Switch-gated cache fixes: stub the OS the
 -- engine Platform module answers, exactly like the main suite does, and
 -- restore afterwards. The mod's own Platform wrapper has no state of its
@@ -76,10 +79,12 @@ local maps = {
 }
 
 local jobs = Prebuild.enumerate(maps)
-T.eq(#jobs, 4, "prebuild enumerates body and full variants")
+T.check(type(Prebuild.rebuild) == "function",
+        "prebuild exposes a destructive rebuild action")
+T.eq(#jobs, 4, "prebuild enumerates body and ring variants")
 T.eq(jobs[1].id, "A", "prebuild sorts map ids")
-T.eq(jobs[1].slot, "body", "body runs before full")
-T.eq(jobs[2].slot, "full", "full follows body")
+T.eq(jobs[1].slot, "body", "body runs before ring")
+T.eq(jobs[2].slot, "ring", "ring follows body")
 T.eq(Prebuild.activationDecision("PREBUILD", false), "start",
      "incomplete cache starts a build")
 T.eq(Prebuild.activationDecision("READY", false), "confirm_rebuild",
@@ -227,11 +232,35 @@ if MeshCache.available() then
   -- write_failed on Windows while terrain/water in the same directory
   -- succeeded. The on-disk segment is remapped to "deco"; the internal
   -- kind and every trace stay "aux".
-  T.check(fakeStore.peekBytes()["maps/A/body/deco"] ~= nil,
-          "aux payloads land under the non-reserved 'deco' segment")
-  T.check(fakeStore.peekBytes()["maps/A/body/aux"] == nil
-          and fakeStore.peekBytes()["maps/A/body/aux.bin"] == nil,
+  T.check(fakeStore.peekBytes()["maps/A/shared/deco"] ~= nil,
+          "aux payloads use one shared non-reserved map key")
+  T.check(fakeStore.peekBytes()["maps/A/shared/aux"] == nil
+          and fakeStore.peekBytes()["maps/A/shared/aux.bin"] == nil,
           "no Windows-reserved aux base name is ever used")
+  local bodyAux = MeshCache.jobRecord(fakeMap, "body").aux
+  local auxWrites = 0
+  local payloadReads = 0
+  local realWriteBytes = fakeStore.writeBytes
+  local realReadBytes = fakeStore.readBytes
+  fakeStore.writeBytes = function(_, game, key, value)
+    if key == "maps/A/shared/deco" then auxWrites = auxWrites + 1 end
+    return realWriteBytes(_, game, key, value)
+  end
+  fakeStore.readBytes = function(...)
+    payloadReads = payloadReads + 1
+    return realReadBytes(...)
+  end
+  T.check(MeshCache.verifyJob(fakeMap, "body"),
+          "committed metadata verifies a cache job")
+  MeshCache.saveAux(fakeMap, "ring", { figures = {} }, true)
+  fakeStore.writeBytes = realWriteBytes
+  fakeStore.readBytes = realReadBytes
+  T.eq(MeshCache.jobRecord(fakeMap, "ring").aux, bodyAux,
+       "body and ring jobs reference one shared aux payload")
+  T.eq(auxWrites, 0,
+       "a second slot never rewrites an already-valid shared aux payload")
+  T.eq(payloadReads, 0,
+       "verification and shared-aux skips never reread large payload bytes")
   fakeStore.delete(nil, nil, "manifest")
   local ready = MeshCache.ready({ { id = "A", slot = "body" } })
   T.check(ready, "complete cache without a manifest reports READY")
@@ -244,7 +273,7 @@ if MeshCache.available() then
           "wipe cache removes precache payloads")
   T.check(fakeStore.peekBytes()["maps/A/body/terrain"] == nil
           and fakeStore.peekBytes()["maps/A/body/water"] == nil
-          and fakeStore.peekBytes()["maps/A/body/deco"] == nil,
+          and fakeStore.peekBytes()["maps/A/shared/deco"] == nil,
           "wipe cache removes all payload variants")
 
   -- --- Switch: a wipe that does not land is reported, not swallowed -----
@@ -287,10 +316,10 @@ if MeshCache.available() then
   local oldData = testLove.data
   local packed = {}
   local serial = 0
+  local codecCalls = {}
   testLove.data = {
     compress = function(_, format, body)
-      -- Simulate the shipped runtime: no zstd codec, lz4 only. A format
-      -- that is not lz4 returns nil so packPayload falls back to lz4.
+      codecCalls[#codecCalls + 1] = format
       if format ~= "lz4" then return nil end
       serial = serial + 1
       local key = "packed" .. serial
@@ -321,99 +350,68 @@ if MeshCache.available() then
   T.eq(MeshCache.compressionStatus(), "compressed",
        "cache status identifies compressed payloads")
   T.eq(MeshCache.codec(), "lz4",
-       "cache status identifies the codec (lz4 fallback without zstd)")
+       "cache status identifies the universal lz4 codec")
+  for _, format in ipairs(codecCalls) do
+    T.eq(format, "lz4", "cache writes never probe another codec")
+  end
   T.check(MeshCache.ready({ { id = "A", slot = "body" } }),
           "manifest READY check uses bounded meta summaries")
   testLove.data.decompress = oldDecompress
 
-  -- A runtime WITH zstd: the same payload compressed as zstd writes codec
-  -- byte 2, and codec() reports "zstd" -- the READY (ZSTD) label path.
-  testLove.data.compress = function(_, format, body)
-    if format ~= "zstd" then return nil end
-    serial = serial + 1
-    local key = "zpacked" .. serial
-    packed[key] = body
-    return key
-  end
-  MeshCache.saveTerrain(fakeMap, "body", vertices, 128)
-  MeshCache.saveWater(fakeMap, "body", nil, 0)
-  MeshCache.saveAux(fakeMap, "body", { figures = {} })
-  local zloaded = MeshCache.loadTerrain(fakeMap, "body")
-  T.check(zloaded ~= nil and zloaded.n == 128,
-          "zstd-compressed payload loads through the codec-aware decoder")
-  T.check(MeshCache.ready({ { id = "A", slot = "body" } }),
-          "zstd cache reports READY from summaries")
-  T.eq(MeshCache.codec(), "zstd",
-       "cache status identifies the zstd codec")
-
-  -- A runtime WITHOUT zstd but WITH zlib (the TrimUI brick's LÖVE ships
-  -- lz4 + zlib only): packPayload falls through to zlib before lz4, and
-  -- the codec-aware decoder + status report it as codec byte 3 / "zlib".
-  testLove.data.compress = function(_, format, body)
-    if format ~= "zlib" then return nil end
-    serial = serial + 1
-    local key = "zlib" .. serial
-    packed[key] = body
-    return key
-  end
-  MeshCache.saveTerrain(fakeMap, "body", vertices, 128)
-  MeshCache.saveWater(fakeMap, "body", nil, 0)
-  MeshCache.saveAux(fakeMap, "body", { figures = {} })
-  local zlibbed = fakeStore.peekBytes()["maps/A/body/terrain"]
-  local zlibCodec = zlibbed
-    and zlibbed:byte(9 + (zlibbed:byte(5) + zlibbed:byte(6) * 256
-                         + zlibbed:byte(7) * 65536 + zlibbed:byte(8) * 16777216))
-    or nil
-  T.eq(zlibCodec, 3,
-       "cache writes codec byte 3 when only zlib is available")
-  local zl = MeshCache.loadTerrain(fakeMap, "body")
-  T.check(zl ~= nil and zl.n == 128,
-          "zlib-compressed payload loads through the codec-aware decoder")
-  T.check(MeshCache.ready({ { id = "A", slot = "body" } }),
-          "zlib cache reports READY from summaries")
-  T.eq(MeshCache.codec(), "zlib",
-       "cache status identifies the zlib codec")
-
-  -- --- Switch: lz4 preferred over zlib when zstd is absent --------------
-  -- The Switch-port logs showed the same prebuild tail running ~2x
-  -- faster with lz4 (codec lz4 manifest) than with zlib (codec zlib
-  -- manifest). With both zlib and lz4 available and no zstd, desktop
-  -- keeps the zlib preference; on Switch packPayload must pick lz4.
-  local function codecByte(bytes)
-    if not bytes then return nil end
-    return bytes:byte(9 + (bytes:byte(5) + bytes:byte(6) * 256
-                           + bytes:byte(7) * 65536
-                           + bytes:byte(8) * 16777216))
-  end
-  testLove.data.compress = function(_, format, body)
-    if format ~= "zlib" and format ~= "lz4" then return nil end
-    serial = serial + 1
-    local key = "dual" .. serial
-    packed[key] = body
-    return key
-  end
-  MeshCache.saveTerrain(fakeMap, "body", vertices, 128)
-  MeshCache.saveWater(fakeMap, "body", nil, 0)
-  MeshCache.saveAux(fakeMap, "body", { figures = {} })
-  T.eq(codecByte(fakeStore.peekBytes()["maps/A/body/terrain"]), 3,
-       "off-Switch: zlib still wins over lz4 when both are available")
-  T.check(MeshCache.ready({ { id = "A", slot = "body" } }),
-          "dual-codec cache reports READY (off-Switch)")
-  T.eq(MeshCache.codec(), "zlib",
-       "off-Switch: codec status stays zlib")
+  -- LZ4 may expand already-compressed data. Store it raw rather than trying
+  -- a slower second codec.
   MeshCache.wipe({ { id = "A", slot = "body" } })
-  withOS("NX", function()
-    MeshCache.saveTerrain(fakeMap, "body", vertices, 128)
-    MeshCache.saveWater(fakeMap, "body", nil, 0)
-    MeshCache.saveAux(fakeMap, "body", { figures = {} })
-    T.eq(codecByte(fakeStore.peekBytes()["maps/A/body/terrain"]), 1,
-         "Switch: lz4 preferred over zlib when zstd is absent")
-    T.check(MeshCache.ready({ { id = "A", slot = "body" } }),
-            "dual-codec cache reports READY (Switch)")
-    T.eq(MeshCache.codec(), "lz4",
-         "Switch: codec status identifies lz4")
-    MeshCache.wipe({ { id = "A", slot = "body" } })
-  end)
+  testLove.data.compress = function(_, format, body)
+    codecCalls[#codecCalls + 1] = format
+    return body
+  end
+  MeshCache.saveTerrain(fakeMap, "body", vertices, 128)
+  MeshCache.saveWater(fakeMap, "body", nil, 0)
+  T.eq(fakeStore.peekBytes()["maps/A/body/terrain"]:byte(4), 1,
+       "incompressible payloads stay raw instead of using zlib")
+  T.eq(codecCalls[#codecCalls], "lz4",
+       "raw fallback still makes one lz4 attempt")
+  local packedTerrain, packedWater, packedStages =
+    MeshCache.loadTerrainPacked(fakeMap, "body")
+  T.check(packedTerrain and packedTerrain.packed
+          and packedTerrain.format == "native"
+          and packedTerrain.verts == nil
+          and packedWater and packedWater.packed
+          and packedWater.format == "native",
+          "runtime cache loader returns GPU-ready bytes without float tables")
+  T.check(packedStages and type(packedStages.readMs) == "number"
+          and packedStages.readMs >= 0
+          and type(packedStages.decompressMs) == "number"
+          and packedStages.decompressMs >= 0
+          and packedStages.decodeMs == 0,
+          "packed cache loader reports read/decompress and skips float decode")
+  local decodedTerrain, decodedWater, decodedStages =
+    MeshCache.loadTerrain(fakeMap, "body")
+  T.check(decodedTerrain and decodedWater
+          and decodedStages and type(decodedStages.decodeMs) == "number"
+          and decodedStages.decodeMs >= 0,
+          "compatibility cache loader reports its float decode stage")
+
+  local loadCodecCalls, loadWrites = 0, 0
+  local realWriteBytes = fakeStore.writeBytes
+  fakeStore.writeBytes = function(...)
+    loadWrites = loadWrites + 1
+    return realWriteBytes(...)
+  end
+  testLove.data.compress = function(_, format, body)
+    loadCodecCalls = loadCodecCalls + 1
+    serial = serial + 1
+    local key = "late" .. serial
+    packed[key] = body
+    return key
+  end
+  local rawReload = MeshCache.loadTerrainPacked(fakeMap, "body")
+  fakeStore.writeBytes = realWriteBytes
+  T.check(rawReload ~= nil, "raw runtime payload still loads")
+  T.eq(loadCodecCalls, 0,
+       "runtime cache entry never retries compression")
+  T.eq(loadWrites, 0,
+       "runtime cache entry never rewrites payload storage")
 
   testLove.data = oldData
   _G.love = oldLove
@@ -551,11 +549,40 @@ if MeshCache.available() then
   MeshCache.wipe({ buildJob })
 
   -- --- F3: an interrupted build leaves a manifest naming finished jobs --
-  local jobSet = Prebuild.enumerate(maps)   -- A body/full, B body/full
+  local jobSet = Prebuild.enumerate(maps)   -- A body/ring, B body/ring
   local fakeMapB = {
     id = "B", tileset = { image = "tileset.png", trueColor = false },
     renderer = { gbcAtlas = false },
   }
+  do
+    MeshCache.configure({ maps = maps, tilesets = {} })
+    MeshCache.begin()
+    local records = {}
+    for _, job in ipairs(jobSet) do
+      local map = job.id == "A" and fakeMap or fakeMapB
+      MeshCache.saveTerrain(map, job.slot, nil, 0)
+      MeshCache.saveWater(map, job.slot, nil, 0)
+      MeshCache.saveAux(map, job.slot, { figures = {} }, true)
+      local record = MeshCache.jobRecord(map, job.slot)
+      records[record.key] = record
+    end
+    T.check(MeshCache.writeManifest(records, #jobSet),
+            "rebuild test starts from a READY cache")
+    local rebuildGame = { data = { maps = maps, tilesets = {} } }
+    T.check(Prebuild.bootstrap(rebuildGame),
+            "rebuild test bootstraps the complete cache")
+    T.check(Prebuild.rebuild(rebuildGame),
+            "confirmed rebuild wipes and starts a fresh build")
+    local rebuildDone, rebuildTotal, rebuildRunning = Prebuild.progress()
+    T.check(rebuildRunning and rebuildDone == 0
+            and rebuildTotal == #jobSet,
+            "rebuild never resumes already-complete payloads")
+    T.check(fakeStore.peekBytes()["maps/A/body/terrain"] == nil,
+            "rebuild removes the prior terrain before starting")
+    Prebuild.cancel()
+    Prebuild.update(false)
+    MeshCache.wipe(jobSet)
+  end
   MeshCache.configure({ maps = maps, tilesets = {} })
   MeshCache.begin()
   MeshCache.saveTerrain(fakeMap, "body", nil, 0)
@@ -572,7 +599,7 @@ if MeshCache.available() then
   MeshCache.configure({ maps = maps, tilesets = {} })
   local complete, doneCount = MeshCache.scanComplete(jobSet)
   T.eq(doneCount, 1, "scanComplete finds exactly the one finished job")
-  T.check(complete["A/body"] ~= nil and complete["A/full"] == nil
+  T.check(complete["A/body"] ~= nil and complete["A/ring"] == nil
           and complete["B/body"] == nil,
           "scanComplete names the finished job and skips the rest")
   local readyOk, resumeCount = MeshCache.ready(jobSet)
@@ -785,6 +812,22 @@ T.check(not WorkerPool.enabled(),
 T.check(not WorkerPool.working(),
         "headless: no workers are ever started")
 
+-- One Android worker measured 1.15 jobs/s and the packed CPU-only experiment
+-- measured 1.3 jobs/s, versus 2.9 jobs/s for the established serial queue.
+-- Mobile must stay on that proven serial path.
+local originalLove = _G.love
+_G.love = { thread = {} }
+withOS("Android", function()
+  T.check(not WorkerPool.enabled(),
+          "Android keeps geometry workers disabled despite love.thread")
+  T.eq(WorkerPool.workerCount(), 0,
+       "Android schedules no geometry workers")
+  T.check(not (WorkerPool.cpuOnlyPrebuild
+               and WorkerPool.cpuOnlyPrebuild()),
+          "Android avoids the regressed packed CPU-only precache path")
+end)
+_G.love = originalLove
+
 local serSrc = WorkerPool.serializeMap(fakeMap)
 local serChunk = assert(load(serSrc, "@ser", "t"))
 local serMap = serChunk()
@@ -892,7 +935,7 @@ do
   local realMap = {
     id = "PARITY_CITY",
     def = { width = 4, height = 4, blocks = testBlocks,
-            borderBlock = 1, tileset = "OVERWORLD" },
+            borderBlock = 1, tileset = "PARITY" },
     tileset = {
       id = "PARITY", image = "parity.png", tilesPerRow = 16,
       imageWidth = 128, imageHeight = 48,
@@ -912,6 +955,36 @@ do
           "buildGeometryData returns terrain streams")
   T.check(gdata.water ~= nil and gdata.aux ~= nil,
           "buildGeometryData returns water + aux records")
+  local chunkData = ChunkMesher.buildGeometryChunkData(realMap, true, {})
+  T.check(chunkData and chunkData.terrain
+          and type(chunkData.terrain.chunks) == "table"
+          and #chunkData.terrain.chunks > 0,
+          "worker geometry returns bounded terrain chunks")
+  T.check(chunkData.terrain.buf == nil and chunkData.terrain.idx == nil,
+          "worker geometry does not return whole-map terrain tables")
+  T.eq(chunkData.terrain.n, gdata.terrain.n,
+       "packed worker chunks preserve terrain vertex count")
+  local pair = ChunkMesher.buildGeometryPairData(realMap, {})
+  T.check(pair and pair.body and pair.ring and pair.aux,
+          "pair geometry builds body + ring streams with one aux result")
+  T.check(pair.body.terrain.n > 0 and pair.ring.terrain.n > 0,
+          "pair geometry returns both terrain streams")
+  local fullData = ChunkMesher.buildGeometryData(realMap, false, {})
+  T.eq(pair.body.terrain.n, gdata.terrain.n,
+       "paired body stream matches the standalone body build")
+  T.eq(pair.body.terrain.n + pair.ring.terrain.n, fullData.terrain.n,
+       "body plus ring vertices exactly replace duplicate full geometry")
+  T.eq(pair.body.terrain.m + pair.ring.terrain.m, fullData.terrain.m,
+       "body plus ring indices exactly replace duplicate full geometry")
+  local seamMasks = { { 128, 0, 256, 128 } }
+  local maskedPair = ChunkMesher.buildGeometryPairData(realMap, seamMasks)
+  local maskedFull = ChunkMesher.buildGeometryData(realMap, false, seamMasks)
+  T.eq(maskedPair.body.terrain.n + maskedPair.ring.terrain.n,
+       maskedFull.terrain.n,
+       "body plus ring remains exact where a neighbour masks the seam")
+  T.eq(maskedPair.body.terrain.m + maskedPair.ring.terrain.m,
+       maskedFull.terrain.m,
+       "body plus ring index parity survives a masked map seam")
   local structureState = Structures.forMap(realMap)
   T.check(type(structureState.shapeAt) == "table"
           and type(structureState.tileAt) == "table",
@@ -926,6 +999,11 @@ do
           "structures keeps vegetation and figure streams separate")
   T.eq(Structures.forMap(realMap), structureState,
        "structures reuses the same per-map analysis result")
+  T.check(Structures.release(realMap.id),
+          "structures releases completed worker map analysis")
+  WorkerPool.serializeMap(realMap)
+  T.check(WorkerPool.forgetMap(realMap.id),
+          "worker pool releases completed serialized map source")
   T.check(type(Buildings.stats()) == "table",
           "buildings retains an inspectable template-model boundary")
   MeshCache.configure({ maps = maps, tilesets = {} })
@@ -938,9 +1016,16 @@ do
   local tdata = MeshCache.loadTerrain(realMap, "body")
   T.check(tdata ~= nil and tdata.n == gdata.terrain.n,
           "worker terrain reads back at the same vertex count")
+  local okTC = MeshCache.saveTerrainChunks(realMap, "ring", chunkData.terrain)
+  local okWC = MeshCache.saveWaterChunks(realMap, "ring", chunkData.water)
+  T.check(okTC and okWC,
+          "packed worker chunks save without float-table expansion")
+  local packedRead = MeshCache.loadTerrain(realMap, "ring")
+  T.check(packedRead ~= nil and packedRead.n == chunkData.terrain.n,
+          "packed worker terrain reads back at the same vertex count")
 end
 
--- --- 1.7.11: worker save-call regression + payload fallback --------------
+-- --- 1.7.11/1.7.12: worker save-call regression + payload fallback ------
 -- 1.7.10 field sessions failed at MeshCache.lua:533 because finishThreaded
 -- passed an extra receiver to dot-defined saveTerrain, shifting the worker
 -- streams until terrain.n was a TABLE. The healthy path below locks the call
@@ -1040,6 +1125,21 @@ Prebuild._applyWorkerResult(healthy, { job = Prebuild.enumerate(maps)[1],
 local hDone = select(1, Prebuild.progress())
 T.eq(hDone, 1, "a healthy worker payload still completes a job")
 T.eq(Prebuild._workerFailures(), 0, "the healthy job is not a failure")
+Prebuild.cancel()
+Prebuild.update(false)
+
+-- A worker that cannot open the atlas must return to the serial asset
+-- resolver, not mark the map as a permanently failed cache job.
+Prebuild.wipe(owGame)
+T.check(Prebuild.start(owGame), "missing atlas: build running")
+Prebuild._applyWorkerResult({ gen = 4244,
+                              error = "tileset pixel data unavailable" },
+                             { job = Prebuild.enumerate(maps)[1],
+                               map = fakeMap })
+local pixelDone, _, pixelRunning = Prebuild.progress()
+T.eq(pixelDone, 0, "missing atlas does not advance the cache job")
+T.check(pixelRunning, "missing atlas keeps the build alive for serial fallback")
+T.eq(Prebuild._workerFailures(), 0, "missing atlas is not a cache failure")
 Prebuild.cancel()
 Prebuild.update(false)
 
@@ -1155,6 +1255,22 @@ end
 local bigGame = { data = { maps = bigMaps, tilesets = {} } }
 local bigJobs = Prebuild.enumerate(bigMaps)
 T.check(#bigJobs > 16, "scan test: big set exceeds the inline threshold")
+T.check(type(Prebuild.pendingJobs) == "function",
+        "resume planner exposes pending-job filtering")
+local scatteredPending = Prebuild.pendingJobs(bigJobs, {
+  ["M01/body"] = {},
+  ["M40/ring"] = {},
+})
+T.eq(#scatteredPending, #bigJobs - 2,
+     "resume planner removes every survivor, not only the leading run")
+T.eq(scatteredPending[1].id, "M01",
+     "resume planner keeps first missing map")
+T.eq(scatteredPending[1].slot, "ring",
+     "resume planner skips leading body survivor")
+T.eq(scatteredPending[#scatteredPending].id, "M40",
+     "resume planner keeps final map when only its ring slot survived")
+T.eq(scatteredPending[#scatteredPending].slot, "body",
+     "resume planner skips noncontiguous final survivor")
 MeshCache.configure({ maps = bigMaps, tilesets = {} })
 local survivor = { id = "M01", tileset = { image = "tileset.png",
                                            trueColor = false },
@@ -1172,7 +1288,7 @@ T.check(not ChunkMesher.jobPending("M01", true),
         "scan test: no dispatch before the resume scan completes")
 ChunkMesher.pump = function() end   -- dispatch only: jobs never run
 for _ = 1, 10 do Prebuild.update(false) end
-T.check(ChunkMesher.jobPending("M01", false),
+T.check(ChunkMesher.jobPending("M01", "ring"),
         "scan test: dispatch begins at the first missing job")
 T.check(not ChunkMesher.jobPending("M01", true),
         "scan test: the surviving M01/body job is skipped")

@@ -38,8 +38,8 @@
 -- the queue inside a few-millisecond budget (BuildBudget suspends the
 -- job's coroutine mid-loop when the slice is spent). Until a mesh lands
 -- the scene simply draws without it: the engine's flat path while the
--- current map has nothing, the body-only variant while the full one (the
--- border ring) is still cooking, neighbours popping in as they finish.
+-- current map has nothing, its body while the ring delta is still cooking,
+-- neighbours popping in as they finish.
 -- The synchronous get() remains for probes and tests.
 --
 -- Meshes are cached per map id and EVICTED down to the live set (current
@@ -58,6 +58,8 @@ local MeshCache = V.require("MeshCache")
 local MeshRuntime = V.require("MeshRuntime")
 local MeshQueue = V.require("MeshQueue")
 local GeometryBuilder = V.require("GeometryBuilder")
+local GeometryStream = V.require("GeometryStream")
+local CacheDecodePool = V.require("CacheDecodePool")
 local Diagnostics = V.require("DiagnosticsBridge")
 
 -- ffi is gone (sandbox) and this engine's love.data ByteData carries no
@@ -68,8 +70,13 @@ local ChunkMesher = {}
 local Runtime = MeshRuntime.new()
 local Queue = MeshQueue.new()
 
-local cache = {}     -- map id -> { full = mesh|false, body = ..., grass = ... }
+local cache = {}     -- map id -> { body = mesh|false, ring = ..., grass = ... }
 local gen = {}       -- map id -> generation, bumped by invalidate/evict
+
+local function slotFor(variant)
+  if variant == "body" or variant == "ring" then return variant end
+  return variant and "body" or "ring"
+end
 
 -- ------------------------------------------------------------ vertex sinks
 
@@ -151,6 +158,47 @@ end
 -- float buffers are gone with them.
 local function newSink()
   return newTableSink()
+end
+
+-- Worker sink. Quads go straight into bounded numeric writers. At the
+-- worker boundary only packed chunk strings leave this module; no per-vertex
+-- row tables, flat whole-map buffers, or nested index tables cross threads.
+local function newStreamSink(kind)
+  local writer = GeometryStream.Writer.new(kind or "terrain")
+  local chunks = {}
+  local vertices, indices = 0, 0
+
+  local function flush()
+    local chunk = writer:flush()
+    if chunk then
+      chunks[#chunks + 1] = chunk
+      vertices = vertices + chunk.vertexCount
+      indices = indices + chunk.indexCount
+    end
+  end
+
+  return {
+    push = function(c, uv, shade)
+      if writer:full(4, 6) then flush() end
+      local base = writer:vertexCount()
+      local flat = type(shade) ~= "table"
+      for i = 1, 4 do
+        local cc, t = c[i], uv[i]
+        writer:pushVertex(cc[1], cc[2], cc[3], t[1], t[2],
+                          flat and shade or shade[i])
+      end
+      writer:pushIndex(base + 1)
+      writer:pushIndex(base + 2)
+      writer:pushIndex(base + 3)
+      writer:pushIndex(base + 1)
+      writer:pushIndex(base + 3)
+      writer:pushIndex(base + 4)
+    end,
+    results = function()
+      flush()
+      return { chunks = chunks, n = vertices, m = indices }
+    end,
+  }
 end
 
 -- -------------------------------------------------------------- geometry
@@ -304,14 +352,33 @@ end
 
 -- The water surface that came out of a terrain slot's own build. Kept
 -- beside it rather than in a slot of its own because the two are ONE
--- answer: a full mesh drawn beside a body build's water would draw the
--- ring's ponds twice and miss the body's own.
+-- answer: each geometry slot owns its matching water surface.
 local waterSlot = Runtime.waterSlot
 local releaseEntry = Runtime.releaseEntry
 
 -- ---------------------------------------------------------- async builds
 
 local clock = (love and love.timer and love.timer.getTime) or os.clock
+
+local function mergeStages(target, stages)
+  if not stages then return target end
+  target = target or {}
+  for _, key in ipairs({ "queueMs", "readMs", "decompressMs",
+                          "decodeMs", "uploadMs" }) do
+    target[key] = (target[key] or 0) + (stages[key] or 0)
+  end
+  return target
+end
+
+local function traceStages(label, id, slot, stages, totalMs)
+  stages = stages or {}
+  Diagnostics.trace(
+    "%s %s/%s queue=%.1fms read=%.1fms decompress=%.1fms "
+      .. "decode=%.1fms upload=%.1fms total=%.1fms",
+    label, tostring(id), tostring(slot), stages.queueMs or 0,
+    stages.readMs or 0, stages.decompressMs or 0, stages.decodeMs or 0,
+    stages.uploadMs or 0, totalMs or 0)
+end
 
 local function finishJob(job, ok, err)
   local key = Queue.key(job.id, job.slot)
@@ -326,6 +393,7 @@ local function finishJob(job, ok, err)
     Diagnostics.count("jobs")
     Diagnostics.note("mesh done %s (%dms)", key, jobMs or 0)
   end
+  traceStages("mesh stages", job.id, job.slot, job.stages, jobMs or 0)
   -- Per-job build health for the status snapshot: slices taken, the
   -- longest single resume (the freeze evidence), and how many resumes
   -- blew their budget.
@@ -395,9 +463,11 @@ local function fillAux(job)
   local current = (gen[job.id] or 0) == job.gen
 
   if MeshCache.available() then
-    local aux = MeshCache.loadAux(map, job.slot)
+    local aux, cacheStages = MeshCache.loadAuxPacked(map, job.slot)
     if aux then
-      local auxMeshes = fromAux(aux)
+      local auxMeshes, meshStages = fromAux(aux)
+      job.stages = mergeStages(job.stages, cacheStages)
+      job.stages = mergeStages(job.stages, meshStages)
       if not current then
         releaseAux(auxMeshes)
         return false
@@ -414,8 +484,9 @@ local function fillAux(job)
   if MeshCache.available() then
     local okFlat, flat = pcall(flattenAux, map)
     if okFlat and flat then
-      MeshCache.saveAux(map, job.slot, flat)
-      local auxMeshes = fromAux(flat)
+      MeshCache.saveAux(map, job.slot, flat, true)
+      local auxMeshes, meshStages = fromAux(flat)
+      job.stages = mergeStages(job.stages, meshStages)
       grass, flowers, figures = auxMeshes.grass, auxMeshes.flowers,
                                 auxMeshes.figures
     end
@@ -439,6 +510,10 @@ end
 -- job was queued under -- invalidate/evict bump it to cancel in-flight
 -- work whose inputs went stale.
 local function runJob(job)
+  job.stages = job.stages or {}
+  if job.queuedAt then
+    job.stages.queueMs = math.max(0, (clock() - job.queuedAt) * 1000)
+  end
   local c = entry(job.id)
   job.phase = "load"
   local map = job.map
@@ -461,10 +536,14 @@ local function runJob(job)
   job.phase = "cache-load"
   local current = (gen[job.id] or 0) == job.gen
   if MeshCache.available() then
-    local tdata, wdata = MeshCache.loadTerrain(map, job.slot)
+    local tdata, wdata, cacheStages =
+      MeshCache.loadTerrainPacked(map, job.slot)
+    job.stages = mergeStages(job.stages, cacheStages)
     if tdata and wdata then
-      local mesh = meshFromData(tdata)
-      local water = meshFromData(wdata)
+      local mesh, meshStages = meshFromData(tdata)
+      local water, waterStages = meshFromData(wdata)
+      job.stages = mergeStages(job.stages, meshStages)
+      job.stages = mergeStages(job.stages, waterStages)
       if not current then
         if mesh and mesh.release then pcall(mesh.release, mesh) end
         if water and water.release then pcall(water.release, water) end
@@ -474,7 +553,7 @@ local function runJob(job)
       swapSlot(c, waterSlot(job.slot), water or false)
       if c.stale then
         c.stale[job.slot] = nil
-        if not (c.stale.full or c.stale.body or c.stale.aux) then
+        if not (c.stale.ring or c.stale.body or c.stale.aux) then
           c.stale = nil
         end
       end
@@ -484,9 +563,11 @@ local function runJob(job)
   job.phase = "geometry"
   local sink = newSink()
   local waterSink = newSink()
-  GeometryBuilder.emit(map, job.slot == "body", job.masks, sink, waterSink)
-  local mesh = sink.finish()
-  local water = waterSink.finish()
+  GeometryBuilder.emit(map, job.slot, job.masks, sink, waterSink)
+  local mesh, meshStages = sink.finish()
+  local water, waterStages = waterSink.finish()
+  job.stages = mergeStages(job.stages, meshStages)
+  job.stages = mergeStages(job.stages, waterStages)
   if MeshCache.available() then
     job.phase = "save"
     local buf, n, idx, m = sink.buffer()
@@ -504,7 +585,7 @@ local function runJob(job)
   swapSlot(c, waterSlot(job.slot), water or false)
   if c.stale then
     c.stale[job.slot] = nil
-    if not (c.stale.full or c.stale.body or c.stale.aux) then
+    if not (c.stale.ring or c.stale.body or c.stale.aux) then
       c.stale = nil
     end
   end
@@ -516,18 +597,81 @@ end
 -- love.thread worker; the main thread turns the returned buffers into cache
 -- files exactly like the serial path's save phase (saveTerrain/saveWater/
 -- saveAux) and never uploads a mesh it does not draw.
-function ChunkMesher.buildGeometryData(map, bodyOnly, masks)
-  local sink = newSink()
-  local waterSink = newSink()
+local function appendStream(out, stream)
+  for _, chunk in ipairs(stream.chunks or {}) do
+    local decoded, err = GeometryStream.decode(chunk)
+    if not decoded then error("geometry chunk decode failed: " .. tostring(err), 0) end
+    local vertexOffset = out.n
+    for i = 1, decoded.n * 6 do
+      out.buf[vertexOffset * 6 + i] = decoded.buf[i]
+    end
+    for i = 1, decoded.m do
+      out.idx[out.m + i] = decoded.idx[i] + vertexOffset
+    end
+    out.n = out.n + decoded.n
+    out.m = out.m + decoded.m
+  end
+end
+
+local function materializeStream(stream)
+  local out = { buf = {}, n = 0, idx = {}, m = 0 }
+  appendStream(out, stream)
+  return out
+end
+
+local function geometryChunkStreams(map, bodyOnly, masks)
+  local sink = newStreamSink()
+  local waterSink = newStreamSink("water")
   GeometryBuilder.emit(map, bodyOnly, masks, sink, waterSink)
-  local okFlat, flat = pcall(flattenAux, map)
-  local tb, tn, ti, tm = sink.buffer()
-  local wb, wn, wi, wm = waterSink.buffer()
   return {
-    terrain = { buf = tb, n = tn, idx = ti, m = tm },
-    water = { buf = wb, n = wn, idx = wi, m = wm },
-    aux = okFlat and flat or nil,
+    terrain = sink.results(),
+    water = waterSink.results(),
   }
+end
+
+local function geometryStreams(map, bodyOnly, masks)
+  local chunks = geometryChunkStreams(map, bodyOnly, masks)
+  return {
+    terrain = materializeStream(chunks.terrain),
+    water = materializeStream(chunks.water),
+  }
+end
+
+function ChunkMesher.buildGeometryChunkData(map, bodyOnly, masks)
+  local data = geometryChunkStreams(map, bodyOnly, masks)
+  local okFlat, flat = pcall(flattenAux, map)
+  data.aux = okFlat and flat or nil
+  return data
+end
+
+function ChunkMesher.buildGeometryData(map, bodyOnly, masks)
+  local data = geometryStreams(map, bodyOnly, masks)
+  local okFlat, flat = pcall(flattenAux, map)
+  data.aux = okFlat and flat or nil
+  return data
+end
+
+-- Body and ring are disjoint views of the same map analysis. Drawing both is
+-- byte-for-byte equivalent in counts to the old full mesh, without storing
+-- or uploading the body twice.
+function ChunkMesher.buildGeometryPairData(map, masks)
+  local body = geometryStreams(map, true, masks)
+  local ring = geometryStreams(map, "ring", masks)
+  local okFlat, flat = pcall(flattenAux, map)
+  return { body = body, ring = ring, aux = okFlat and flat or nil }
+end
+
+function ChunkMesher.buildGeometryPairChunkData(map, masks)
+  local body = geometryChunkStreams(map, true, masks)
+  local ring = geometryChunkStreams(map, "ring", masks)
+  local okFlat, flat = pcall(flattenAux, map)
+  return { body = body, ring = ring, aux = okFlat and flat or nil }
+end
+
+-- Worker-only analysis release. Do not call ChunkMesher.release here: that
+-- also mutates main-thread mesh queues and cache state.
+function ChunkMesher.releaseAnalysis(mapId)
+  return Structures.release and Structures.release(mapId) or false
 end
 
 -- Queue a build unless the slot is already cached or queued. Returns the
@@ -540,47 +684,20 @@ end
 -- `force` is used by the disk-cache prebuilder. Runtime cache state is not
 -- evidence that the serialized terrain/aux files exist (or are current), so
 -- a map visited earlier this session must still be allowed to run the job.
-function ChunkMesher.request(map, bodyOnly, masks, urgent, force)
-  local slot = bodyOnly and "body" or "full"
+function ChunkMesher.request(map, bodyOnly, masks, urgent, force, priority)
+  local slot = slotFor(bodyOnly)
   -- Create the entry HERE, at request time -- not in runJob when the
   -- build starts. The entry is the "seen this session" marker the
   -- crossing rule keys on: a map requested as a neighbour (its body
   -- job queued, maybe not started) must already be `seen()` by the
-  -- time the player crosses into it, or the full build would wrongly
+  -- time the player crosses into it, or the ring build would wrongly
   -- go urgent.
   local c = entry(map.id)
-  -- Cold-entry cache fast path: a destination with a VALID prebuilt
-  -- payload loads it right here, synchronously, on the entry frame. The
-  -- read + decompress + decode is bounded work the warp fade already
-  -- covers -- and taking it out of the job queue is what makes a
-  -- prebuilt map enter without the BUILDING VOXELS cover: a queued load
-  -- sliced through 12ms pump budgets and outlived the fade on large
-  -- maps, flashing the cover over terrain the cache had all along. The
-  -- async queue still owns real builds, seam crossings (a body mesh
-  -- stands in there, so the full cooks at idle) and the prebuilder
-  -- (force). One attempt per entry: a rejected payload falls through to
-  -- the job, which rebuilds and rewrites it, and noDisk stops later
-  -- frames from re-attempting the same synchronous read.
-  if not force and not bodyOnly and MeshCache.available()
-     and c[slot] == nil and c.body == nil and not c.noDisk then
-    local tdata, wdata = MeshCache.loadTerrain(map, slot)
-    if tdata and wdata then
-      local mesh = meshFromData(tdata)
-      local water = meshFromData(wdata)
-      swapSlot(c, slot, mesh or false)
-      swapSlot(c, waterSlot(slot), water or false)
-      if c.stale then c.stale[slot] = nil end
-      -- the aux pair rides along now rather than hitching the first
-      -- visible frame (ChunkMesher.get loads it on demand otherwise)
-      local aux = MeshCache.loadAux(map, slot)
-      if aux then
-        swapAux(c, fromAux(aux))
-        if c.stale then c.stale.aux = nil end
-      end
-      return c[slot] or nil
-    end
-    c.noDisk = true
-  end
+  -- Cache hydration always runs through the cooperative queue. A previous
+  -- direct cache fast path decoded terrain, water, and aux meshes on the
+  -- map-entry frame. Large Android maps therefore froze for up to 1.27s
+  -- before Voxel.loading could cover the transition. runJob keeps the same
+  -- cache-hit path but yields between bounded decode and upload slices.
   if force then
     -- Force the job to validate/load the disk payloads or rebuild them.
     -- Mark aux too: a populated in-memory slot can otherwise skip
@@ -595,12 +712,14 @@ function ChunkMesher.request(map, bodyOnly, masks, urgent, force)
   if not job then
     job = { id = map.id, map = map, slot = slot, masks = masks,
             urgent = urgent or false, prebuild = force or false,
+            priority = priority or (urgent and 1 or 0),
             gen = gen[map.id] or 0,
             queuedAt = love and love.timer and love.timer.getTime
                        and love.timer.getTime() or nil }
     Queue.enqueue(job, force)
   else
     if urgent then job.urgent = true end
+    Queue.promote(map.id, slot, priority or (urgent and 1 or 0))
     if force then job.prebuild = true end
     if force then Queue.enqueue(job, true) end
   end
@@ -614,7 +733,7 @@ end
 -- Every other field behaves exactly like request(): same queue, same
 -- force/prebuild semantics, same completion record.
 function ChunkMesher.requestMapId(mapId, bodyOnly, masks, urgent, force, loader)
-  local slot = bodyOnly and "body" or "full"
+  local slot = slotFor(bodyOnly)
   local c = entry(mapId)
   if force then
     c.stale = c.stale or {}
@@ -644,11 +763,11 @@ end
 -- A precise queue probe used by cooperative tooling. It does not inspect or
 -- retain the mesh; it only answers whether a slot is still in flight.
 function ChunkMesher.jobPending(mapId, bodyOnly)
-  return Queue.jobPending(mapId, bodyOnly and "body" or "full")
+  return Queue.jobPending(mapId, slotFor(bodyOnly))
 end
 
 function ChunkMesher.jobStatus(mapId, bodyOnly)
-  return Queue.status(mapId, bodyOnly and "body" or "full")
+  return Queue.status(mapId, slotFor(bodyOnly))
 end
 
 -- Release a completed prebuild map immediately. Unlike invalidate(), this
@@ -662,6 +781,7 @@ function ChunkMesher.release(mapId)
   -- cancelled prebuild cannot keep a map/Structures graph alive in a closure.
   gen[mapId] = (gen[mapId] or 0) + 1
   Queue.removeIf(function(job) return job.id == mapId end, "cancelled")
+  CacheDecodePool.cancel(mapId)
   Structures.invalidate(mapId)
   return had
 end
@@ -737,15 +857,15 @@ end
 -- Meshes for `map`, built SYNCHRONOUSLY on first use -- the historical
 -- contract, kept for probes and any direct caller. `false` is cached for
 -- a map whose mesh could not be built so a headless run does not retry
--- every frame. `masks` (the full variant's neighbour-body rects) is
+-- every frame. `masks` (the ring variant's neighbour-body rects) is
 -- static per map id -- a map's connections never change -- so it caches
 -- like everything else.
 function ChunkMesher.get(map, bodyOnly, masks)
-  local slot = bodyOnly and "body" or "full"
+  local slot = slotFor(bodyOnly)
   local c = entry(map.id)
   if c.grass == nil or c.flowers == nil or (c.stale and c.stale.aux) then
     if MeshCache.available() then
-      local aux = MeshCache.loadAux(map, slot)
+      local aux = MeshCache.loadAuxPacked(map, slot)
       if aux then
         swapAux(c, fromAux(aux))
         if c.stale then c.stale.aux = nil end
@@ -766,14 +886,14 @@ function ChunkMesher.get(map, bodyOnly, masks)
   end
   if c[slot] == nil or (c.stale and c.stale[slot]) then
     if MeshCache.available() then
-      local tdata, wdata = MeshCache.loadTerrain(map, slot)
+      local tdata, wdata = MeshCache.loadTerrainPacked(map, slot)
       if tdata and wdata then
         local mesh = meshFromData(tdata)
         local water = meshFromData(wdata)
         swapSlot(c, slot, mesh or false)
         swapSlot(c, waterSlot(slot), water or false)
         if c.stale then c.stale[slot] = nil end
-        if c.stale and not (c.stale.full or c.stale.body or c.stale.aux) then
+        if c.stale and not (c.stale.ring or c.stale.body or c.stale.aux) then
           c.stale = nil
         end
         return c[slot] or nil
@@ -789,7 +909,7 @@ function ChunkMesher.get(map, bodyOnly, masks)
     swapSlot(c, waterSlot(slot), (ok and water) or false)
     if c.stale then
       c.stale[slot] = nil
-      if not (c.stale.full or c.stale.body or c.stale.aux) then
+      if not (c.stale.ring or c.stale.body or c.stale.aux) then
         c.stale = nil
       end
     end
@@ -802,7 +922,7 @@ end
 -- The cached mesh, or nil -- never builds. The async path's read side.
 function ChunkMesher.peek(map, bodyOnly)
   local c = cache[map.id]
-  local mesh = c and c[bodyOnly and "body" or "full"]
+  local mesh = c and c[slotFor(bodyOnly)]
   return mesh or nil
 end
 
@@ -810,24 +930,18 @@ end
 -- answer. Never builds, like peek.
 --
 -- Both or neither, always from the SAME slot: the water was cut out of that
--- exact geometry, so pairing a full mesh with a body build's water would
--- draw the border ring's ponds twice and leave the body's as holes. Callers
--- that fall back from one variant to the other fall back through this, so
--- there is nowhere for the two to be chosen separately.
+-- exact geometry, so body and ring surfaces cannot be accidentally crossed.
 function ChunkMesher.pair(map, bodyOnly)
   local c = cache[map.id]
   if not c then return nil, nil end
-  local slot = bodyOnly and "body" or "full"
+  local slot = slotFor(bodyOnly)
   return c[slot] or nil, c[waterSlot(slot)] or nil
 end
 
 -- Has this map been requested at all this session? The crossing rule:
 -- a destination that was ever a neighbour (its cache entry was created
--- when prefetch asked for its body) builds its full mesh at IDLE --
--- the body stands in meanwhile, and the crossing never spends the
--- urgent slice on visible frames. Only a map never seen (the first
--- voxel frame, a warp into somewhere unseen -- both hidden behind a
--- fade or the toggle itself) deserves the urgent full. Unlike
+-- when prefetch asked for its body) already has the scene-gating geometry.
+-- Only its smaller ring delta may remain. Unlike
 -- pair(), this is RACE-FREE: it is true from the first neighbour
 -- request, not only once the body mesh has finished building.
 function ChunkMesher.seen(mapId)
@@ -861,17 +975,18 @@ function ChunkMesher.refresh(mapId)
   if not mapId then return ChunkMesher.invalidate() end
   local c = cache[mapId]
   -- nothing drawable cached: the plain drop costs nothing visible
-  if not (c and (c.full or c.body)) then
+  if not (c and (c.ring or c.body)) then
     return ChunkMesher.invalidate(mapId)
   end
   MeshCache.invalidate(mapId)
+  CacheDecodePool.cancel(mapId)
   Structures.invalidate(mapId)
   gen[mapId] = (gen[mapId] or 0) + 1
   Queue.removeIf(function(job) return job.id == mapId end)
   -- false-cached slots count as stale too: a retry after a failed build
   -- is exactly a rebuild
   c.stale = { aux = true,
-              full = (c.full ~= nil) or nil,
+              ring = (c.ring ~= nil) or nil,
               body = (c.body ~= nil) or nil }
 end
 
@@ -889,13 +1004,20 @@ end
 local prevLive = {}
 
 function ChunkMesher.setLive(live)
+  -- Route transitions change which queued job is the destination. Clear the
+  -- old runtime ranking before VoxelScene re-promotes the new current map and
+  -- its neighbours; prebuild work keeps its independent scheduling state.
+  Queue.resetPriorities(function(job) return not job.prebuild end)
   prevLive = Runtime.evict({
     cache = cache,
     queue = Queue,
     live = live,
     previous = prevLive,
     generations = gen,
-    onEvict = function(id) Structures.invalidate(id) end,
+    onEvict = function(id)
+      CacheDecodePool.cancel(id)
+      Structures.invalidate(id)
+    end,
   })
 end
 
@@ -905,6 +1027,7 @@ end
 -- the generation counter.
 function ChunkMesher.invalidate(mapId)
   MeshCache.invalidate(mapId)
+  CacheDecodePool.cancel(mapId)
   Structures.invalidate(mapId)
   if mapId then
     local c = cache[mapId]

@@ -20,17 +20,19 @@ local ShadowCast = {}
 -- sun (thin casters keep contact with their feet). `scene` provides:
 --   map          : the host map (flowers/textures resolve from it)
 --   atlasFor(map): texture for a map's mesh
---   terrain, water: host meshes (nil draws are no-ops)
+--   terrain, ring, water, ringWater: host body/delta meshes
 --   neighbors    : { map, ox, oy } list
 --   nbMesh, nbWater: per-neighbour meshes
 function ShadowCast.terrainAndWater(ShadowMap, ChunkMesher, scene)
   local atlasFor = scene.atlasFor
   ShadowMap.draw(scene.terrain, atlasFor(scene.map), nil)
+  ShadowMap.draw(scene.ring, atlasFor(scene.map), nil)
   for i, nb in ipairs(scene.neighbors or {}) do
     ShadowMap.draw(scene.nbMesh and scene.nbMesh[i], atlasFor(nb.map),
                    Mat4.translate(nb.ox, 0, nb.oy))
   end
   ShadowMap.draw(scene.water, atlasFor(scene.map), nil)
+  ShadowMap.draw(scene.ringWater, atlasFor(scene.map), nil)
   for i, nb in ipairs(scene.neighbors or {}) do
     ShadowMap.draw(scene.nbWater and scene.nbWater[i], atlasFor(nb.map),
                    Mat4.translate(nb.ox, 0, nb.oy))

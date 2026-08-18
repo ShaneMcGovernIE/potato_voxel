@@ -102,15 +102,9 @@ local FreeMove = V.require("FreeMove")
 local CamControl = V.require("CamControl")
 local InputFeature = V.require("InputFeature")
 local VR = V.require("VR")
--- HORDE MODE: the konami code's minigame. Horde owns the state machine and
--- every hook; the other four are the gun, the crowd, the readout and the
--- chip-synthesized sounds it fires. See lib/Horde.lua for the whole design.
-local Horde = V.require("Horde")
-local HordeGun = V.require("HordeGun")
 local CachePrebuild = V.require("CachePrebuild")
 local CacheFeature = V.require("CacheFeature")
 local MeshCache = V.require("MeshCache")
-local HordeSfx = V.require("HordeSfx")
 local MapAtmos = V.require("MapAtmos")
 local Weather = V.require("Weather")
 local WorldFeature = V.require("WorldFeature")
@@ -338,12 +332,6 @@ mod.content.render_pipelines:register("voxel", {
     -- and the whole battle. Ahead of the active() gate below, because a 3D
     -- battle does not require the free-roam mode to be switched on.
     OverworldBattle.update(dt)
-    -- The horde, on the same always-running tick and for the same reason:
-    -- it owns no pass of the frame, it is a MODE over the overworld, and
-    -- it has to keep thinking while a warp's wipe covers the screen (the
-    -- crowd follows the player through the door) and under the GAME OVER
-    -- card, which is a pushed state that stops everything below it.
-    Horde.update(dt)
     -- VOID FILL picks the block the border ring is made of, and in this
     -- mode that ring is BAKED INTO THE MESH rather than drawn each frame.
     -- So the option has to reach the cache or nothing happens on screen
@@ -639,8 +627,6 @@ local Input = InputFeature.new({
   WorldCurve = WorldCurve,
   Water = Water,
   OverworldBattle = OverworldBattle,
-  Horde = Horde,
-  HordeGun = HordeGun,
   CamControl = CamControl,
   DebugOverlay = DebugOverlay,
   ShapeDebug = ShapeDebug,
@@ -731,18 +717,9 @@ FreeMove.install()
 -- the free-roam look is not driving.
 CamControl.install()
 
--- ------- the konami code, and everything it turns on
---
--- Installed last of the input seams so its handleInput reasoning sits
--- outside FreeMove's. The detector itself does not live on
--- handleInput at all -- it reads the fixed step's own press queue, which
--- is where keyboard, pad and touch have all already become the same
--- eight buttons. See lib/Horde.lua.
-Horde.install()
-
 -- BattleFeature owns the staged battle events, sprite override, and exit
--- transition. These calls stay after Horde's install and before DayTint so the
--- engine hook/event registration order remains unchanged.
+-- transition. These calls stay before DayTint so the engine hook/event
+-- registration order remains unchanged.
 Battle.installEvents()
 Battle.installExit()
 
@@ -821,7 +798,7 @@ mod.hooks:wrap("world.tod", function(next, tod, ctx)
   return DayNight.tod()
 end)
 
-mod.exports.version = "1.7.11"
+mod.exports.version = "1.7.12"
 -- exposed so a companion mod can pin its own tiles' shapes or read the
 -- camera without reaching into this mod's file layout
 mod.exports.lib = V

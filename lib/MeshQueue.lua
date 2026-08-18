@@ -26,6 +26,24 @@ function MeshQueue.new()
     return job
   end
 
+  function queue.promote(id, slot, priority)
+    local job = index[queue.key(id, slot)]
+    if not job or type(priority) ~= "number" then return job end
+    if type(job.priority) ~= "number" or priority > job.priority then
+      job.priority = priority
+    end
+    return job
+  end
+
+  function queue.resetPriorities(predicate)
+    for _, job in ipairs(pending) do
+      if not predicate or predicate(job) then
+        job.priority = 0
+        job.urgent = false
+      end
+    end
+  end
+
   function queue.finish(job, ok)
     local key = queue.key(job.id, job.slot)
     index[key] = nil
@@ -73,14 +91,13 @@ function MeshQueue.new()
     return completion[key]
   end
 
-  function queue.pick(urgent)
-    local pick = pending[1]
-    if urgent then
-      for _, job in ipairs(pending) do
-        if job.urgent then
-          pick = job
-          break
-        end
+  function queue.pick()
+    local pick, best = pending[1], -math.huge
+    for _, job in ipairs(pending) do
+      local priority = type(job.priority) == "number" and job.priority
+                       or (job.urgent and 1 or 0)
+      if priority > best then
+        pick, best = job, priority
       end
     end
     return pick
@@ -94,14 +111,14 @@ function MeshQueue.new()
   function queue.pump(options)
     if #pending == 0 then return false end
     local clock = options.clock
-    local pick = queue.pick(true)
+    local pick = queue.pick()
     local deadline = clock() + options.slice(pick)
     while pick do
       local state, err = options.step(pick, deadline)
       if state == "yield" then return true end
       options.complete(pick, state == "complete", err)
       if clock() >= deadline or #pending == 0 then return true end
-      pick = queue.pick(true)
+      pick = queue.pick()
     end
     return true
   end

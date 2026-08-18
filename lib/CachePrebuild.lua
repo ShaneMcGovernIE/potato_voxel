@@ -1,12 +1,16 @@
 -- Cooperative all-map mesh-cache prebuilder.
 -- Keeps only one runtime map resident while ChunkMesher's normal sliced queue
--- does the actual body/full/aux work and writes terrain, water, and aux files.
+-- does the actual body/ring/aux work and writes terrain, water, and aux files.
 local V = ...
 local Prebuild = {}
 
 local ChunkMesher = V.require("ChunkMesher")
 local MeshCache = V.require("MeshCache")
 local WorkerPool = V.require("WorkerPool")
+local GeometryStream = V.require("GeometryStream")
+local GeometryProfile = V.require("GeometryProfile")
+local Structures = V.require("Structures")
+local Budget = V.require("BuildBudget")
 local Diagnostics = V.require("DiagnosticsBridge")
 
 -- Use the engine's own placement routine so prebuilt FULL masks cover the same
@@ -41,6 +45,25 @@ local RESUME_SCAN_INLINE = 16
 local SCAN_IDLE_MS = 0.008
 local SCAN_COVERED_MS = 0.020
 local SCAN_MAX_JOBS = 32
+
+Prebuild.MAX_CHUNK_VERTICES = 16384
+Prebuild.MAX_CHUNK_INDICES = 24576
+Prebuild.MAX_IN_FLIGHT_CHUNKS = 4
+
+local metrics = {
+  peakInFlightBytes = 0,
+  workerFallbacks = 0,
+  mainThreadMapLoadMs = 0,
+  mainThreadEncodeMs = 0,
+  mainThreadStorageMs = 0,
+  commits = 0,
+  commitFailures = 0,
+  cancelledJobs = 0,
+  duplicateResults = 0,
+  worstFrameMs = 0,
+  cpuOnlyPairs = 0,
+  cpuOnlyJobs = 0,
+}
 
 -- BUG-1 pre-warm latch: the first map's body mesh primes from the cache
 -- exactly once per session (see Prebuild.primeFirst).
@@ -87,11 +110,26 @@ Prebuild.enumerate = function(maps)
   for _, id in ipairs(ids) do
     local masks = masksFor(maps, id)
     jobs[#jobs + 1] = { id = id, slot = "body", masks = masks }
-    jobs[#jobs + 1] = { id = id, slot = "full", masks = masks }
+    jobs[#jobs + 1] = { id = id, slot = "ring", masks = masks }
   end
   return jobs
 end
 Prebuild.masksFor = masksFor
+
+-- Resume records may be scattered through the sorted job set.  Keeping only
+-- the leading completed run makes those later survivors count as done and
+-- then rebuilds them anyway, so progress can reach total before the frontier
+-- is exhausted.  Build the actual pending frontier once instead.
+function Prebuild.pendingJobs(jobs, completed)
+  local pending = {}
+  for _, job in ipairs(jobs or {}) do
+    local key = tostring(job.id) .. "/" .. tostring(job.slot)
+    if not (completed and completed[key]) then
+      pending[#pending + 1] = job
+    end
+  end
+  return pending
+end
 
 function Prebuild.available()
   return MeshCache.available()
@@ -208,6 +246,32 @@ local function releaseMap(id, game)
 end
 
 local function finish(cancelled)
+  -- Completion can arrive through both the worker drain and the update
+  -- frontier in the same frame. Only the first caller may write the final
+  -- manifest or shut down the pool.
+  if not state.running or state.finishing then
+    metrics.duplicateResults = metrics.duplicateResults + 1
+    return
+  end
+  state.finishing = true
+  if cancelled then
+    local cancelledCount = 0
+    for cancelIndex, entry in pairs(state.threaded or {}) do
+      WorkerPool.cancel(cancelIndex)
+      cancelledCount = cancelledCount + 1
+      releaseMap(entry.job.id, state.game)
+    end
+    metrics.cancelledJobs = metrics.cancelledJobs + cancelledCount
+    state.threaded = {}
+    if state.cpuTask then
+      metrics.cancelledJobs = metrics.cancelledJobs
+        + #(state.cpuTask.jobs or {})
+      releaseMap(state.cpuTask.job.id, state.game)
+      state.cpuTask = nil
+    end
+    pcall(MeshCache.writeProgress, state.completed, state.total)
+    WorkerPool.shutdown()
+  end
   if state.index > 0 and state.maps[state.index] then
     releaseMap(state.maps[state.index].id, state.game)
   end
@@ -216,19 +280,31 @@ local function finish(cancelled)
     if not state.ready then
       state.failed = true
       state.error = MeshCache.saveError() or "manifest write failed"
+      metrics.commitFailures = metrics.commitFailures + 1
     else
+      metrics.commits = metrics.commits + 1
       local secs = state.startedAt and
         (love and love.timer and love.timer.getTime
          and love.timer.getTime() - state.startedAt) or 0
       local rate = secs and secs > 0 and (state.total / secs) or 0
       Diagnostics.trace("prebuild finished READY in %.1fs (%.1f jobs/s)",
                         secs, rate)
+      local compressed = MeshCache.compressionMetrics
+                       and MeshCache.compressionMetrics()
+      if compressed then
+        Diagnostics.trace("prebuild lz4: %d payloads, %d -> %d bytes, %.1fms",
+                          compressed.attempts or 0, compressed.rawBytes or 0,
+                          compressed.packedBytes or 0,
+                          compressed.milliseconds or 0)
+      end
     end
+    WorkerPool.shutdown()
   end
   state.running, state.cancelled = false, cancelled or false
   state.slot = nil
   state.game = nil
   state.eta = nil
+  state.finishing = false
 end
 
 local function now()
@@ -257,6 +333,8 @@ function Prebuild.start(game)
     return false
   end
   pumpPause = 0
+  state.finishing = false
+  for key in pairs(metrics) do metrics[key] = 0 end
   -- An explicit start overrides nothing: the session's decline and gate
   -- history survive the row build (so a cancel then a wipe cannot
   -- silently re-arm the auto-start). Only bootstrap -- a fresh boot --
@@ -290,14 +368,9 @@ function Prebuild.start(game)
   end
   -- The pending chunked scan must survive the state rebuild below.
   local pendingScan = state.scan
-  local index = 1
-  for i, job in ipairs(jobs) do
-    local key = tostring(job.id) .. "/" .. tostring(job.slot)
-    if not completed[key] then index = i; break end
-    index = i + 1
-  end
+  local pending = pendingScan and jobs or Prebuild.pendingJobs(jobs, completed)
   WorkerPool.start()
-  state = { running = true, cancelled = false, maps = jobs, index = index,
+  state = { running = true, cancelled = false, maps = pending, index = 1,
             slot = nil, done = countKeys(completed), total = #jobs,
             game = game, scan = pendingScan,
             startedAt = now(), eta = nil, ready = false,
@@ -305,7 +378,7 @@ function Prebuild.start(game)
             declined = sessionDeclined, gateRan = sessionGateRan,
             threaded = {} }
   Diagnostics.trace("prebuild start: %d/%d done, %d jobs",
-                    index - 1, #jobs, #jobs)
+                    countKeys(completed), #jobs, #jobs)
   return true
 end
 
@@ -361,6 +434,16 @@ function Prebuild.wipe(game)
     state.scan = nil   -- a stale survivor scan describes the old cache
   end
   return ok
+end
+
+-- A confirmed REBUILD is intentionally different from start/resume: delete
+-- every committed payload first, clear the survivor set, then build all jobs
+-- from zero. This keeps the UI promise honest and prevents a READY cache from
+-- merely validating and re-uploading its existing records.
+function Prebuild.rebuild(game)
+  if state.running then return false end
+  if not Prebuild.wipe(game) then return false end
+  return Prebuild.start(game)
 end
 
 -- Re-evaluate readiness against the live identity and files, and update
@@ -430,101 +513,366 @@ local function progressTick()
   end
 end
 
--- One threaded job completed: write the payloads, verify, record, advance.
--- The worker returned the raw sink streams + flattened aux -- exactly what
--- the serial path's save phase consumes -- so the cache files are
--- byte-identical to a main-thread build.
-local function finishThreaded(result)
-  local entry = state.threaded[result.gen]
-  state.threaded[result.gen] = nil
-  if not entry then return end
-  local job, map = entry.job, entry.map
-  local fail = function(reason)
-    state.failedJobs = (state.failedJobs or 0) + 1
-    Diagnostics.error("prebuild job failed (%d/%d): %s -- %s/%s",
-                      state.failedJobs, state.total, tostring(reason),
-                      tostring(job.id), tostring(job.slot))
-    releaseMap(job.id, state.game)
-    state.done = state.done + 1
-    if state.done >= state.total then finish(false) end
+-- A worker error is a capability/transport failure, not a cache failure.
+-- Drop the pool and replay the frontier through the serial resolver; this is
+-- especially important when a worker cannot open a generated tileset image.
+local function fallbackThreaded(entry, reason)
+  metrics.workerFallbacks = metrics.workerFallbacks + 1
+  Diagnostics.warn("geometry worker fallback: %s", tostring(reason))
+  WorkerPool.shutdown()
+  local rewind = #state.maps + 1
+  for i, candidate in ipairs(state.maps) do
+    if candidate == entry.job
+       or (candidate.id == entry.job.id
+           and candidate.slot == entry.job.slot) then
+      rewind = i
+      break
+    end
   end
-  if result.error then
-    fail("worker: " .. tostring(result.error))
-    return
+  for _, pending in pairs(state.threaded) do
+    releaseMap(pending.job.id, state.game)
   end
-  -- 1.7.10 field: every threaded job failed at the save stage on every
-  -- platform. The logged `n is a table` value was caused by passing the
-  -- module table as an extra receiver to the dot-defined saveTerrain below,
-  -- which shifted every worker stream argument. Keep this boundary check as
-  -- defense-in-depth for genuinely malformed worker payloads.
-  local streams = result.data
-  local function streamOk(s)
-    return type(s) == "table" and type(s.buf) == "table"
-       and type(s.n) == "number" and type(s.idx) == "table"
-       and type(s.m) == "number"
+  state.threaded = {}
+  releaseMap(entry.job.id, state.game)
+  state.done = countKeys(state.completed)
+  state.index = rewind
+  while state.index <= #state.maps do
+    local candidate = state.maps[state.index]
+    local key = tostring(candidate.id) .. "/" .. tostring(candidate.slot)
+    if not state.completed[key] then break end
+    state.index = state.index + 1
   end
-  if not (streams and streamOk(streams.terrain) and streamOk(streams.water)) then
-    WorkerPool.shutdown()
-    local rewind = #state.maps + 1
-    for i, candidate in ipairs(state.maps) do
-      if candidate == job
-         or (candidate.id == job.id and candidate.slot == job.slot) then
-        rewind = i
-        break
+  state.slot = nil
+end
+
+local function streamOk(s)
+  return type(s) == "table" and type(s.n) == "number"
+     and type(s.m) == "number"
+     and ((type(s.buf) == "table" and type(s.idx) == "table")
+          or type(s.chunks) == "table")
+end
+
+-- Decode one packed worker stream on demand. Main thread materializes only
+-- current stream being committed; workers never send whole-map Lua arrays.
+local function materializeThreadStream(stream)
+  if type(stream.buf) == "table" and type(stream.idx) == "table" then
+    return stream
+  end
+  local out = { buf = {}, n = 0, idx = {}, m = 0 }
+  for _, chunk in ipairs(stream.chunks or {}) do
+    local decoded, err = GeometryStream.decode(chunk)
+    if not decoded then return nil, "chunk decode: " .. tostring(err) end
+    local vertexOffset = out.n
+    for i = 1, decoded.n * 6 do
+      out.buf[vertexOffset * 6 + i] = decoded.buf[i]
+    end
+    for i = 1, decoded.m do
+      out.idx[out.m + i] = decoded.idx[i] + vertexOffset
+    end
+    out.n = out.n + decoded.n
+    out.m = out.m + decoded.m
+  end
+  if out.n ~= stream.n or out.m ~= stream.m then
+    return nil, "chunk count mismatch"
+  end
+  return out
+end
+
+local function saveThreadedSlot(map, job, data)
+  if not (data and streamOk(data.terrain) and streamOk(data.water)) then
+    return false
+  end
+  local started = now()
+  local chunked = type(data.terrain.chunks) == "table"
+                  and type(data.water.chunks) == "table"
+  if chunked and MeshCache.saveTerrainChunks
+     and MeshCache.saveWaterChunks then
+    local okT, terrainSaved = pcall(MeshCache.saveTerrainChunks, map, job.slot,
+                                    data.terrain)
+    if not okT or not terrainSaved then return false end
+    Budget.check()
+    local okW, waterSaved = pcall(MeshCache.saveWaterChunks, map, job.slot,
+                                  data.water)
+    if not okW or not waterSaved then return false end
+  else
+    local terrain, terrainErr = materializeThreadStream(data.terrain)
+    local water, waterErr = materializeThreadStream(data.water)
+    if not terrain or not water then
+      Diagnostics.warn("worker stream materialization failed: %s",
+                       tostring(terrainErr or waterErr))
+      return false
+    end
+    local okT, terrainSaved = pcall(MeshCache.saveTerrain, map, job.slot,
+                                    terrain.buf, terrain.n,
+                                    terrain.idx, terrain.m)
+    if not okT or not terrainSaved then return false end
+    Budget.check()
+    local okW, waterSaved = pcall(MeshCache.saveWater, map, job.slot,
+                                  water.buf, water.n,
+                                  water.idx, water.m)
+    if not okW or not waterSaved then return false end
+  end
+  if not data.aux then return false end
+  local okA, aux = pcall(MeshCache.saveAux, map, job.slot, data.aux, true)
+  if not okA or not aux then return false end
+  Budget.check()
+  local elapsed = started and now()
+  if started and elapsed then
+    metrics.mainThreadStorageMs = metrics.mainThreadStorageMs
+      + (elapsed - started) * 1000
+  end
+  return MeshCache.verifyJob(map, job.slot)
+end
+
+-- Mobile serial path. One worker regressed Android throughput by 60%, while
+-- the old serial fallback built throwaway GPU meshes for every cache slot.
+-- Build packed body/ring geometry inside one cooperative coroutine, share one
+-- Structures analysis, commit bytes directly, and never touch love.graphics.
+local function cpuPairAtFrontier()
+  local job = state.maps[state.index]
+  if not job then return nil end
+  local nextJob = state.maps[state.index + 1]
+  local pair = nil
+  if job.slot == "body" and nextJob
+     and nextJob.id == job.id and nextJob.slot == "ring"
+     and not state.completed[tostring(job.id) .. "/body"]
+     and not state.completed[tostring(job.id) .. "/ring"] then
+    pair = nextJob
+  end
+  return job, pair
+end
+
+local function startCpuTask()
+  local job, pair = cpuPairAtFrontier()
+  if not job then return nil end
+  local task = {
+    job = job,
+    jobs = pair and { job, pair } or { job },
+    pair = pair,
+    results = {},
+    phase = "load",
+  }
+  task.co = coroutine.create(function()
+    local MapLoader = require("src.world.MapLoader")
+    local data = state.game and state.game.data
+    local started = now()
+    task.map = MapLoader.load(data, job.id)
+    local loadedAt = now()
+    if started and loadedAt then
+      local loadMs = (loadedAt - started) * 1000
+      metrics.mainThreadMapLoadMs = metrics.mainThreadMapLoadMs + loadMs
+      if loadMs > 250 then
+        Diagnostics.warn("prebuild map load overshot: %s %.0fms",
+                         tostring(job.id), loadMs)
       end
     end
-    -- Any other worker results are now stale. Release their maps and clear
-    -- their entries before switching to the serial pump; completed results
-    -- already recorded in this poll remain skipped by their cache keys.
-    for _, pending in pairs(state.threaded) do
-      releaseMap(pending.job.id, state.game)
+    if not task.map then error("map load failed", 0) end
+    Budget.check()
+
+    task.phase = "geometry"
+    local built
+    if pair then
+      built = ChunkMesher.buildGeometryPairChunkData(task.map, job.masks)
+      if not (built and built.body and built.ring and built.aux) then
+        error("paired geometry failed", 0)
+      end
+      built.body.aux = built.aux
+      built.ring.aux = built.aux
+      task.payloads = { built.body, built.ring }
+      metrics.cpuOnlyPairs = metrics.cpuOnlyPairs + 1
+    else
+      local variant = job.slot == "body" and true or "ring"
+      built = ChunkMesher.buildGeometryChunkData(task.map, variant, job.masks)
+      if not (built and built.terrain and built.water and built.aux) then
+        error("geometry failed", 0)
+      end
+      task.payloads = { built }
     end
-    state.threaded = {}
-    releaseMap(job.id, state.game)
-    state.done = countKeys(state.completed)
-    state.index = rewind
-    while state.index <= #state.maps do
-      local candidate = state.maps[state.index]
-      local key = tostring(candidate.id) .. "/" .. tostring(candidate.slot)
-      if not state.completed[key] then break end
-      state.index = state.index + 1
+    Budget.check()
+
+    task.phase = "save"
+    for i, candidate in ipairs(task.jobs) do
+      task.results[i] = saveThreadedSlot(task.map, candidate,
+                                         task.payloads[i]) == true
+      Budget.check()
     end
-    state.slot = nil
+  end)
+  state.cpuTask = task
+  return task
+end
+
+local function finishCpuTask(task, errorMessage)
+  local successes = 0
+  for i, job in ipairs(task.jobs) do
+    if not errorMessage and task.results[i] then
+      state.completed[tostring(job.id) .. "/" .. tostring(job.slot)] =
+        MeshCache.jobRecord(task.map, job.slot)
+      successes = successes + 1
+      Diagnostics.trace("prebuild %d/%d done %s/%s (cpu-only)",
+                        state.done + i, state.total, tostring(job.id),
+                        tostring(job.slot))
+    else
+      state.failedJobs = (state.failedJobs or 0) + 1
+      Diagnostics.error("prebuild job failed (%d/%d): %s -- %s/%s",
+                        state.failedJobs, state.total,
+                        tostring(errorMessage or MeshCache.saveError()
+                          or "cache verification failed"),
+                        tostring(job.id), tostring(job.slot))
+    end
+  end
+  metrics.cpuOnlyJobs = metrics.cpuOnlyJobs + #task.jobs
+  state.done = state.done + #task.jobs
+  state.index = state.index + #task.jobs
+  state.cpuTask = nil
+  state.slot = nil
+  if successes > 0 then progressTick() end
+  releaseMap(task.job.id, state.game)
+
+  local maxFailures = math.max(4, math.floor(state.total / 10))
+  if (state.failedJobs or 0) > maxFailures then
+    state.failed = true
+    state.error = ("%d jobs failed"):format(state.failedJobs)
+    finish(false)
     return
   end
-  local okSave = true
-  local okT, terrain = pcall(MeshCache.saveTerrain, map,
-                             job.slot, result.data.terrain.buf,
-                             result.data.terrain.n, result.data.terrain.idx,
-                             result.data.terrain.m)
-  local okW = true
-  if okT and terrain then
-    okW = MeshCache.saveWater(map, job.slot, result.data.water.buf,
-                              result.data.water.n, result.data.water.idx,
-                              result.data.water.m)
-  else
-    okSave = false
-  end
-  if okSave and result.data.aux then
-    okSave = MeshCache.saveAux(map, job.slot, result.data.aux)
-  end
-  if not okSave or not MeshCache.verifyJob(map, job.slot) then
-    fail(MeshCache.saveError() or "worker payload verification failed")
-    return
-  end
-  state.completed[tostring(job.id) .. "/" .. tostring(job.slot)] =
-    MeshCache.jobRecord(map, job.slot)
-  progressTick()
-  releaseMap(job.id, state.game)
-  state.done = state.done + 1
-  Diagnostics.trace("prebuild %d/%d done %s/%s (worker)", state.done,
-                    state.total, tostring(job.id), tostring(job.slot))
   local elapsed = state.startedAt and now()
   if elapsed and state.startedAt and state.done > 0 then
     state.eta = (elapsed - state.startedAt) * (state.total - state.done)
              / state.done
   end
   if state.done >= state.total then finish(false) end
+end
+
+local function updateCpuOnly(covered)
+  local task = state.cpuTask or startCpuTask()
+  if not task then finish(false); return end
+  local slice = covered and PREBUILD_COVERED_SLICE or PREBUILD_IDLE_SLICE
+  local started = now()
+  Budget.begin(task.co, slice)
+  local ok, err = coroutine.resume(task.co)
+  Budget.finish()
+  local finishedAt = now()
+  local elapsedMs = started and finishedAt and (finishedAt - started) * 1000 or 0
+  if elapsedMs > metrics.worstFrameMs then metrics.worstFrameMs = elapsedMs end
+  if elapsedMs > slice * 1000 * 4 then
+    pumpPause = 1
+    Diagnostics.warn("prebuild CPU overshot: %s/%s in %s %.0fms vs %.0fms "
+                    .. "slice; pausing next tick", tostring(task.job.id),
+                    tostring(task.job.slot), tostring(task.phase), elapsedMs,
+                    slice * 1000)
+  end
+  if not ok then
+    finishCpuTask(task, err)
+  elseif coroutine.status(task.co) == "dead" then
+    finishCpuTask(task)
+  end
+end
+
+-- One threaded result writes one or two slots. Pair jobs share the worker's
+-- Structures analysis and aux flattening, then release the map once.
+local function finishThreaded(result)
+  local entry = state.threaded[result.gen]
+  if not entry then return end
+  if result.kind == "chunk" then
+    local bucket = entry.chunks[result.stream]
+    if not bucket then
+      bucket = { chunks = {}, n = 0, m = 0, nextSequence = 1 }
+      entry.chunks[result.stream] = bucket
+    end
+    local chunk = result.chunk
+    if not chunk or chunk.sequence ~= bucket.nextSequence then
+      fallbackThreaded(entry, "worker chunk sequence mismatch")
+      return
+    end
+    bucket.chunks[#bucket.chunks + 1] = chunk
+    bucket.n = bucket.n + (chunk.vertexCount or 0)
+    bucket.m = bucket.m + (chunk.indexCount or 0)
+    bucket.nextSequence = bucket.nextSequence + 1
+    WorkerPool.ack(result.gen, result.stream, chunk.sequence)
+    return
+  end
+  state.threaded[result.gen] = nil
+  if result.kind == "cancelled" then
+    metrics.cancelledJobs = metrics.cancelledJobs + 1
+    releaseMap(entry.job.id, state.game)
+    return
+  end
+  if result.error then
+    fallbackThreaded(entry, "worker: " .. tostring(result.error))
+    return
+  end
+  if result.kind == "complete" then
+    local function packed(prefix)
+      local terrain = entry.chunks[prefix .. ".terrain"]
+                         or { chunks = {}, n = 0, m = 0 }
+      local water = entry.chunks[prefix .. ".water"]
+                       or { chunks = {}, n = 0, m = 0 }
+      return { terrain = terrain, water = water,
+               aux = result.data and result.data.aux }
+    end
+    if entry.pair then
+      result.data = { body = packed("body"), ring = packed("ring"),
+                      aux = result.data and result.data.aux }
+    else
+      result.data = packed("single")
+    end
+  end
+  local map = entry.map
+  local jobs = { entry.job }
+  if entry.pair then jobs[#jobs + 1] = entry.pair end
+  local payloads
+  if entry.pair then
+    payloads = { result.data and result.data.body,
+                 result.data and result.data.ring }
+  else
+    payloads = { result.data }
+  end
+  for i, job in ipairs(jobs) do
+    local payload = payloads[i]
+    if payload then payload.aux = result.data.aux end
+    if not saveThreadedSlot(map, job, payload) then
+      fallbackThreaded(entry, MeshCache.saveError()
+        or "worker payload verification failed")
+      return
+    end
+    state.completed[tostring(job.id) .. "/" .. tostring(job.slot)] =
+      MeshCache.jobRecord(map, job.slot)
+    state.done = state.done + 1
+    Diagnostics.trace("prebuild %d/%d done %s/%s (worker)", state.done,
+                      state.total, tostring(job.id), tostring(job.slot))
+  end
+  progressTick()
+  releaseMap(entry.job.id, state.game)
+  WorkerPool.forgetMap(entry.job.id)
+  local elapsed = state.startedAt and now()
+  if elapsed and state.startedAt and state.done > 0 then
+    state.eta = (elapsed - state.startedAt) * (state.total - state.done)
+             / state.done
+  end
+  if state.done >= state.total then finish(false) end
+end
+
+-- WorkerPool can observe a thread exit before any result reaches its output
+-- channel. Rewind the earliest stranded entry so every submitted job returns
+-- through the serial resolver; otherwise state.index has already advanced
+-- past it and the build can finish without ever committing that job.
+local function recoverDeadWorkers()
+  local first, firstIndex = nil, #state.maps + 1
+  for _, entry in pairs(state.threaded) do
+    for i, candidate in ipairs(state.maps) do
+      if candidate == entry.job
+         or (candidate.id == entry.job.id
+             and candidate.slot == entry.job.slot) then
+        if i < firstIndex then
+          first, firstIndex = entry, i
+        end
+        break
+      end
+    end
+  end
+  if not first then return false end
+  fallbackThreaded(first, "worker exited unexpectedly")
+  return true
 end
 
 -- Dispatch the next frontier job to the pool. The map loads here, on the
@@ -534,6 +882,14 @@ end
 local function dispatchThreaded(covered)
   local job = state.maps[state.index]
   if not job then return false end
+  local nextJob = state.maps[state.index + 1]
+  local pair = nil
+  if job.slot == "body" and nextJob
+     and nextJob.id == job.id and nextJob.slot == "ring"
+     and not state.completed[tostring(job.id) .. "/body"]
+     and not state.completed[tostring(job.id) .. "/ring"] then
+    pair = nextJob
+  end
   local MapLoader = require("src.world.MapLoader")
   local data = state.game and state.game.data
   local t0 = love and love.timer and love.timer.getTime
@@ -541,24 +897,20 @@ local function dispatchThreaded(covered)
   local map = MapLoader.load(data, job.id)
   local loadMs = (love and love.timer and love.timer.getTime
                  and (love.timer.getTime() - t0) * 1000) or 0
+  metrics.mainThreadMapLoadMs = metrics.mainThreadMapLoadMs + loadMs
   if not map then
     state.failedJobs = (state.failedJobs or 0) + 1
     Diagnostics.error("prebuild job failed (%d/%d): map load failed -- %s/%s",
                       state.failedJobs, state.total, tostring(job.id),
                       tostring(job.slot))
-    state.done = state.done + 1
-    state.index = state.index + 1
+    local count = pair and 2 or 1
+    state.done = state.done + count
+    state.index = state.index + count
     return true
   end
   if loadMs > 250 then
     Diagnostics.warn("prebuild map load overshot: %s %.0fms",
                      tostring(job.id), loadMs)
-  end
-  local tileImage = nil
-  local okA, Assets = pcall(require, "src.render.Assets")
-  if okA and Assets and Assets.imageData then
-    local okI, img = pcall(Assets.imageData, map.tileset.image)
-    if okI then tileImage = img or false end
   end
   local okTR, TileRenderer = pcall(require, "src.render.TileRenderer")
   local voidFill = (okTR and TileRenderer and TileRenderer.voidFill)
@@ -575,14 +927,21 @@ local function dispatchThreaded(covered)
   local gen = WorkerPool.submit({
     version = MeshCache.GEOMETRY_VERSION,
     mapSrc = mapSrc,
-    bodyOnly = job.slot == "body",
+    mapId = job.id,
+    variant = job.slot,
+    pair = pair ~= nil,
     masks = job.masks,
     voidFill = tostring(voidFill),
-    tileImage = tileImage,
+    tilePath = map.tileset and map.tileset.image,
+    imageWidth = map.tileset and map.tileset.imageWidth,
+    imageHeight = map.tileset and map.tileset.imageHeight,
+    geometryProfile = GeometryProfile.capture(Structures),
   })
   if not gen then return false end
-  state.threaded[gen] = { job = job, map = map, at = now() }
-  state.index = state.index + 1
+  state.threaded[gen] = { job = job, pair = pair, map = map, at = now(),
+                          chunks = {} }
+  state.index = state.index + (pair and 2 or 1)
+  if pair then WorkerPool.forgetMap(job.id) end
   return true
 end
 
@@ -650,14 +1009,8 @@ local function adoptScan()
   local records = state.completed or {}
   state.done = countKeys(records)
   if not state.running then return end
-  local index = 1
-  for i = state.index, #state.maps do
-    local job = state.maps[i]
-    local key = tostring(job.id) .. "/" .. tostring(job.slot)
-    if not records[key] then index = i; break end
-    index = i + 1
-  end
-  state.index = index
+  state.maps = Prebuild.pendingJobs(state.maps, records)
+  state.index = 1
 end
 
 function Prebuild.update(covered)
@@ -687,6 +1040,9 @@ function Prebuild.update(covered)
     -- picks it up next boot).
     for _, res in ipairs(WorkerPool.poll()) do
       finishThreaded(res)
+    end
+    if not WorkerPool.working() and recoverDeadWorkers() then
+      return
     end
     local poolSize = WorkerPool.workerCount()
     -- One dispatch per tick (BUG-2a): every dispatch blocks on a
@@ -720,13 +1076,15 @@ function Prebuild.update(covered)
       finish(false)
       return
     end
-    local stuck = nil
-    for gen, entry in pairs(state.threaded) do
-      if entry.at and (now() or 0) - entry.at > 60 then stuck = gen end
-    end
-    if stuck then
-      Diagnostics.error("geometry worker stalled: falling back to serial")
-      WorkerPool.shutdown()
+    local stalled = WorkerPool.stalled and WorkerPool.stalled(60) or {}
+    if #stalled > 0 then
+      local stuck = stalled[1]
+      local entry = state.threaded[stuck]
+      if entry then
+        Diagnostics.error("geometry worker heartbeat timeout gen=%s: "
+                         .. "falling back to serial", tostring(stuck))
+        fallbackThreaded(entry, "heartbeat timeout")
+      end
     end
     if not WorkerPool.working() and state.index <= #state.maps
        and not state.cancelled then
@@ -734,6 +1092,11 @@ function Prebuild.update(covered)
     else
       return
     end
+  end
+
+  if WorkerPool.cpuOnlyPrebuild and WorkerPool.cpuOnlyPrebuild() then
+    updateCpuOnly(covered)
+    return
   end
 
   local job = state.maps[state.index]
@@ -747,7 +1110,7 @@ function Prebuild.update(covered)
     local MapLoader = require("src.world.MapLoader")
     local data = state.game and state.game.data
     state.slot = true
-    ChunkMesher.requestMapId(job.id, job.slot == "body", job.masks,
+    ChunkMesher.requestMapId(job.id, job.slot, job.masks,
                              false, true, function()
       return MapLoader.load(data, job.id)
     end)
@@ -759,6 +1122,7 @@ function Prebuild.update(covered)
   -- see Prebuild.pump -- and a resume that blows it pauses the NEXT
   -- tick so the freeze does not compound.
   local pumpMs = Prebuild.pump(covered) or 0
+  if pumpMs > metrics.worstFrameMs then metrics.worstFrameMs = pumpMs end
   local sliceMs = covered and PREBUILD_COVERED_SLICE or PREBUILD_IDLE_SLICE
   if pumpMs > sliceMs * 1000 * 4 then
     pumpPause = 1
@@ -766,8 +1130,7 @@ function Prebuild.update(covered)
                      .. "pausing next tick", pumpMs, sliceMs * 1000)
     return
   end
-  local bodyOnly = job.slot == "body"
-  local jobStatus = ChunkMesher.jobStatus(job.id, bodyOnly)
+  local jobStatus = ChunkMesher.jobStatus(job.id, job.slot)
   if jobStatus == "pending" then return end
   local okLoader, MapLoader = pcall(require, "src.world.MapLoader")
   local slotMap = okLoader and MapLoader and MapLoader.cached(job.id)
@@ -840,17 +1203,24 @@ function Prebuild.progress()
   return state.done, state.total, state.running, state.eta
 end
 
+function Prebuild.metrics()
+  local out = {}
+  for key, value in pairs(metrics) do out[key] = value end
+  out.maxChunkVertices = Prebuild.MAX_CHUNK_VERTICES
+  out.maxChunkIndices = Prebuild.MAX_CHUNK_INDICES
+  out.maxInFlightChunks = Prebuild.MAX_IN_FLIGHT_CHUNKS
+  return out
+end
+
 function Prebuild.isReady()
   return state.ready and not MeshCache.isDirty()
 end
 
 -- BUG-1 pre-warm: the FIRST map's body mesh primes from the cache before
 -- the pipeline's first full scene render (main.lua calls this ahead of
--- the first prefetch). The entry frame's synchronous full-slot load --
--- ChunkMesher's cold-entry fast path -- bursts a whole map's GPU upload
--- on the first visible frame; priming the BODY slot ahead of it leaves
--- the first scene drawing a small mesh that is already in memory, and
--- the full ring cooks in the sliced pump. One-shot, and conservative by
+-- the first prefetch). Priming the BODY slot ahead of it leaves the first
+-- scene drawing its essential mesh from memory while the ring delta can
+-- hydrate separately. One-shot, and conservative by
 -- contract: a running prebuild owns the cache, and a map with no
 -- payloads has nothing to prime -- it never builds fresh (that would
 -- just move the freeze).

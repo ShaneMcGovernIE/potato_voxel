@@ -83,6 +83,37 @@ end
 
 local WorkerPool = V.require("WorkerPool")
 local MeshCache = V.require("MeshCache")
+local geometryProfile = {
+  ROUND_RING = 12,
+  HULL_BILLBOARDS = true,
+  BILLBOARD_CROSS = true,
+}
+
+local function waitFor(gen, timeout)
+  local streams = {}
+  local deadline = love.timer.getTime() + (timeout or 60)
+  while love.timer.getTime() < deadline do
+    for _, item in ipairs(WorkerPool.poll()) do
+      if item.gen == gen then
+        if item.kind == "chunk" then
+          local stream = streams[item.stream]
+          if not stream then
+            stream = { n = 0, m = 0, chunks = 0 }
+            streams[item.stream] = stream
+          end
+          stream.n = stream.n + (item.chunk.vertexCount or 0)
+          stream.m = stream.m + (item.chunk.indexCount or 0)
+          stream.chunks = stream.chunks + 1
+          WorkerPool.ack(gen, item.stream, item.chunk.sequence)
+        else
+          return item, streams
+        end
+      end
+    end
+    love.timer.sleep(0.01)
+  end
+  return nil, streams
+end
 
 -- a tiny flat map: 4x4 grass blocks, no structures to speak of
 local blocks = {}
@@ -123,30 +154,58 @@ local gen = WorkerPool.submit({
   bodyOnly = false,
   masks = {},
   voidFill = "trees",
-  tileImage = nil,
+  tilePath = "smoke.png",
+  allowMissingPixels = true,
+  geometryProfile = geometryProfile,
 })
 assert(gen, "job submitted")
 
-local deadline = love.timer.getTime() + 60
-local result = nil
-while love.timer.getTime() < deadline do
-  local items = WorkerPool.poll()
-  if #items > 0 then
-    result = items[1]
-    break
-  end
-  love.timer.sleep(0.01)
-end
-
+local result, streams = waitFor(gen)
 assert(result, "worker returned a result within 60s")
 assert(not result.error, "result carries no error: " .. tostring(result.error))
 local d = result.data
-assert(d and d.terrain and d.terrain.n and d.terrain.n > 0,
-       "terrain stream has vertices")
-assert(d.terrain.n * 6 == #d.terrain.buf, "terrain buffer matches count")
-assert(d.water and d.aux, "water + aux present")
+assert(result.kind == "complete" and d and d.aux,
+       "worker returns a complete result with aux")
+assert(streams["single.terrain"] and streams["single.terrain"].n > 0,
+       "terrain stream has bounded chunks with vertices")
 
-print("THREADED GEOMETRY OK: terrain=" .. d.terrain.n .. " verts, "
+-- 3. sequential job with a different atlas path.  The worker must keep the
+-- resolver stable rather than replacing it with the previous job's image.
+local secondGen = WorkerPool.submit({
+  version = MeshCache.GEOMETRY_VERSION,
+  mapSrc = src,
+  mapId = "SMOKE_CITY_2",
+  bodyOnly = true,
+  masks = {},
+  voidFill = "trees",
+  tilePath = "other-smoke.png",
+  allowMissingPixels = true,
+  geometryProfile = geometryProfile,
+})
+assert(secondGen, "second atlas job submitted")
+local second = waitFor(secondGen)
+assert(second and not second.error, "second atlas job returned cleanly")
+
+-- 4. Cancellation is terminal at the pool boundary even if the worker had
+-- already completed the CPU call before it observed the cancel command.
+local cancelGen = WorkerPool.submit({
+  version = MeshCache.GEOMETRY_VERSION,
+  mapSrc = src,
+  mapId = "SMOKE_CANCEL",
+  bodyOnly = true,
+  masks = {},
+  voidFill = "trees",
+  tilePath = "cancel-smoke.png",
+  allowMissingPixels = true,
+  geometryProfile = geometryProfile,
+})
+assert(cancelGen and WorkerPool.cancel(cancelGen), "cancel requested")
+local cancelled = waitFor(cancelGen)
+assert(cancelled and cancelled.kind == "cancelled",
+       "cancelled generation cannot return payload")
+
+print("THREADED GEOMETRY OK: terrain="
+      .. streams["single.terrain"].n .. " verts, "
       .. "aux grass=" .. tostring(d.aux.grass and d.aux.grass.n or 0)
       .. " figures=" .. tostring(#d.aux.figures))
 WorkerPool.shutdown()

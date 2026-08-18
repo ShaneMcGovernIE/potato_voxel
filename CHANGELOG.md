@@ -1,5 +1,58 @@
 # Changelog
 
+## [1.7.12] - 2026-08-17
+
+### Fixed: precache memory growth and sprite regression
+
+- Tree canopies and grey gym bollards now use their authored round/can
+  geometry again.
+- Worker threads now receive the live Brick geometry profile before meshing.
+  Precached trees therefore keep their sprite-cross stacks after rapid map
+  changes evict and reload meshes instead of reverting to carved voxel hulls.
+- Body and border-ring cache views now share one worker analysis per map.
+  The ring is a disjoint delta, so the body is no longer stored, decoded, or
+  uploaded twice for the current map.
+- Worker map analyses and serialized map sources are released as soon as
+  their flat output is handed off, preventing long builds from retaining the
+  whole world and exhausting memory.
+- Workers load tileset pixels themselves and fail closed to the serial asset
+  resolver when unavailable. Trees, posts, and grey bollards cannot silently
+  degrade into voxel volumes.
+- Cache geometry version 27 forces one clean rebuild so stale prop-slab,
+  default-profile, v26 quantized, and duplicate-full payloads cannot survive.
+- Terrain and water use native GPU-ready records again. This removes v26's
+  whole-map quantization during precaching and expansion during map loads;
+  normal LZ4 compression still keeps storage bounded.
+- Android and iOS keep geometry workers disabled. Device logs measured one
+  worker at 1.15 jobs/s versus 2.90 jobs/s serial because map serialization
+  and channel copies outweighed one worker's CPU gain.
+- Mobile serial precaching now builds packed body and ring streams together
+  in one cooperative CPU coroutine. It shares one map analysis and commits
+  cache bytes directly, without creating throwaway GPU meshes.
+- Mobile cache decompression runs on one dedicated worker while storage reads
+  and GPU uploads remain on the main thread. Route transitions no longer pay
+  a one-shot 15-53ms LZ4 decode stall; cancelled map jobs drop worker results.
+- Ring geometry now visits only the outer ring spans instead of scanning every
+  body cell and discarding it, reducing the tail cost of each border pass.
+- Cache hits now hydrate through the same cooperative queue as fresh builds:
+  entering a large cached route cannot synchronously decode terrain, water,
+  and decorations on the map-entry frame.
+- All indexed cached meshes upload their raw uint32 map through LÖVE
+  ByteData, avoiding a second giant Lua index table at runtime.
+- Map-entry work is scheduled current body first, direct destination bodies
+  second, the current border ring third, and distant visible neighbours last.
+  A large ring can no longer hold the next route behind it. Route changes
+  cancel off-screen jobs and re-rank retained work.
+- Only the destination terrain atlas prewarms during a transition. Neighbour
+  atlases resolve when their body becomes drawable, removing unnecessary
+  two-hop image work from map entry; static atlas entries no longer inflate
+  fallback diagnostics.
+- Confirming REBUILD CACHE now wipes committed payloads before starting,
+  instead of scanning and reusing a READY cache while claiming to rebuild it.
+- Raw cache payloads are no longer recompressed and rewritten during normal
+  loads. Stage timings now separate queue, storage read, decompression,
+  decoding, and GPU upload delays in test logs.
+
 ## [1.7.11] - 2026-08-17
 
 ### Fixed: threaded precache failed while saving every worker result

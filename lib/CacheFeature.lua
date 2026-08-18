@@ -147,7 +147,7 @@ function CacheFeature.new(ctx)
             local ChoiceBox = require("src.ui.ChoiceBox")
             g.stack:push(TextBox.new(g, "REBUILD CACHE?", function()
               g.stack:push(ChoiceBox.new(g, function(yes)
-                if yes then ctx.CachePrebuild.start(g) end
+                if yes then ctx.CachePrebuild.rebuild(g) end
               end, { defaultNo = true }))
             end))
           end

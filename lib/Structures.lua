@@ -2945,13 +2945,22 @@ end
 -- cannot change, so only the full drop clears them (atlas reload).
 function Structures.invalidate(mapId)
   if mapId then
-    cache[mapId] = nil
+    return Structures.release(mapId)
   else
     cache = {}
     atlasData = {}
     roundCache = {}
     Buildings.invalidate()
   end
+end
+
+-- Worker lifetime boundary. A worker reuses this module for the whole
+-- prebuild, so retaining one analysis per map grows until the process dies.
+-- The returned geometry owns flat output tables, not this analysis graph.
+function Structures.release(mapId)
+  if not mapId or cache[mapId] == nil then return false end
+  cache[mapId] = nil
+  return true
 end
 
 Assets.register(function() Structures.invalidate() end)

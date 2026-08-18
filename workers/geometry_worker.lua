@@ -17,14 +17,18 @@
 --   Assets.imageData                        (void-tile pixel scan)
 --   Assets.register                         (no-op: no runtime cache here)
 --
--- Job payload:  { cmd="geometry", gen, mapSrc, bodyOnly, masks,
---                 voidFill, tileImage }
+-- Job payload:  { cmd="geometry", gen, mapSrc, variant, masks,
+--                 voidFill, tilePath, pair, geometryProfile }
 --   mapSrc   Lua-source dump of the map's data tables (WorkerPool.serializeMap)
---   tileImage  a love ImageData for the tileset (or false) -- the SAME
---            object the main thread's Assets.imageData returned, so the
---            pixel scan is byte-identical to the serial path
--- Result:    { gen, data={ terrain={buf,n,idx,m}, water={...}, aux={..} } }
---         or { gen, error = msg } -- main falls back to the serial pump.
+--   tilePath  the tileset image path. The worker loads its own ImageData;
+--             ImageData userdata is never copied through a channel.
+--   pair      when true, return body+ring streams from one analysis.
+--   geometryProfile  the main VM's round-hull switches. main.lua does not
+--             execute in worker VMs, so this is required for visual parity.
+-- Result:    one { gen, kind="chunk", stream, chunk } at a time, followed by
+--            { gen, kind="complete", data={ aux=... } }.
+--            Each chunk waits for a main-thread ACK, bounding channel memory.
+--            Errors fall back to the serial pump.
 
 require("love.thread")
 require("love.timer")
@@ -47,11 +51,16 @@ function TileRenderer.borderBlockFor(map)
   return map.def.borderBlock
 end
 
+local root = ""
 local Assets = {}
 function Assets.register() end
-function Assets.imageData(path)
+local function loadImageData(path, baseRoot)
   if not (love and love.image and love.image.newImageData) then return nil end
   local ok, data = pcall(love.image.newImageData, path)
+  if (not ok or not data) and baseRoot ~= "" and type(path) == "string"
+     and path:sub(1, #baseRoot + 1) ~= baseRoot .. "/" then
+    ok, data = pcall(love.image.newImageData, baseRoot .. "/" .. path)
+  end
   return ok and data or nil
 end
 
@@ -117,7 +126,6 @@ package.loaded["src.world.Map"] = Map
 -- for load-time symmetry. `root` is the love.filesystem prefix to the mod
 -- dir, set per job ("" for a dev harness, "mods/<id>" in the game).
 local libs = {}
-local root = ""
 local V = { mod = {}, path = "potato_voxel" }
 function V.require(name)
   local hit = libs[name]
@@ -141,18 +149,94 @@ function V.data(name)
   return chunk(V)
 end
 
+-- The worker's V.require resolves relative to `root`, which is supplied in
+-- the first job.  Loading this at thread startup resolves against the engine
+-- root in packaged builds (not mods/potato_voxel) and makes LÖVE terminate
+-- the worker before it can report a job result.
+local WorkerAtlas = nil
+local atlas = nil
+local atlasRoot = nil
+function Assets.imageData(path)
+  if not atlas then return nil end
+  return atlas:get(path, root)
+end
+
 -- ChunkMesher loads lazily on the first job: its lib path needs the
 -- job's fs root, which is only known once the pool has started.
 local ChunkMesher = nil
+local Structures = nil
+local GeometryProfile = nil
 
 -- -------------------------------------------------------------- loop
 
 local cmdCh = love.thread.getChannel("pv_geom_cmd")
 local outCh = love.thread.getChannel("pv_geom_out")
+local cancelled = {}
+local finished = {}
+local cancelAll = false
+
+local function waitChunkAck(gen, stream, sequence)
+  local ackCh = love.thread.getChannel("pv_geom_ack_" .. tostring(gen))
+  while true do
+    if cancelled[gen] or cancelAll then return false end
+    local ack = ackCh:pop()
+    if ack and ack.cancel then return false end
+    if ack and ack.stream == stream and ack.sequence == sequence then
+      return true
+    end
+    love.timer.sleep(0.001)
+  end
+end
+
+local function emitStream(gen, name, stream)
+  local chunks = stream and stream.chunks or {}
+  for i = 1, #chunks do
+    local chunk = chunks[i]
+    if cancelled[gen] or cancelAll then return false end
+    outCh:push({ gen = gen, kind = "chunk", stream = name, chunk = chunk })
+    if not waitChunkAck(gen, name, chunk.sequence) then return false end
+    -- Release worker ownership after main ACK. Do not retain whole-map byte
+    -- strings while later chunks are emitted.
+    chunks[i] = nil
+  end
+  return true
+end
+
+local function emitResult(cmd, data)
+  local streams = {}
+  if cmd.pair then
+    streams.body = data.body
+    streams.ring = data.ring
+  else
+    streams.single = data
+  end
+  for name, payload in pairs(streams) do
+    if not emitStream(cmd.gen, name .. ".terrain", payload.terrain)
+       or not emitStream(cmd.gen, name .. ".water", payload.water) then
+      return false
+    end
+  end
+  outCh:push({ gen = cmd.gen, kind = "complete", data = { aux = data.aux } })
+  return true
+end
 
 local function handleGeometry(cmd)
-  root = cmd.root or ""
-  if not ChunkMesher then ChunkMesher = V.require("ChunkMesher") end
+  local nextRoot = cmd.root or ""
+  if atlasRoot ~= nil and atlasRoot ~= nextRoot and atlas then atlas:clear() end
+  root = nextRoot
+  atlasRoot = root
+  if not WorkerAtlas then
+    WorkerAtlas = V.require("WorkerAtlas")
+    atlas = WorkerAtlas.new(loadImageData)
+  end
+  if not ChunkMesher then
+    ChunkMesher = V.require("ChunkMesher")
+    Structures = V.require("Structures")
+    GeometryProfile = V.require("GeometryProfile")
+  end
+  local profileOk, profileErr =
+    GeometryProfile.apply(Structures, cmd.geometryProfile)
+  if not profileOk then error(profileErr, 0) end
   TileRenderer.voidFill = cmd.voidFill or "trees"
   local chunk, err = load(cmd.mapSrc, "@pv-job-map", "t")
   if not chunk then
@@ -165,26 +249,59 @@ local function handleGeometry(cmd)
                           "isWalkableCell", "isGrassCell", "isWaterCell" }) do
     map[name] = Map[name]
   end
-  if cmd.tileImage then
-    -- same pixel source the main thread scanned with
-    Assets.imageData = function() return cmd.tileImage end
-  else
-    Assets.imageData = function() return nil end
+  -- Pixel classification is load-bearing for sprite-stacked trees, posts,
+  -- and bollards. Never silently fall back to volume voxels when the atlas
+  -- is unavailable: fail this worker job and let the main thread's serial
+  -- path rebuild it with the engine asset resolver.
+  local tilePath = cmd.tilePath or (map.tileset and map.tileset.image)
+  local tileImage = Assets.imageData(tilePath)
+  if not tileImage and not cmd.allowMissingPixels then
+    error("tileset pixel data unavailable: " .. tostring(tilePath), 0)
   end
-  local data = ChunkMesher.buildGeometryData(map, cmd.bodyOnly, cmd.masks)
+  if tileImage and (cmd.imageWidth or cmd.imageHeight)
+     and not WorkerAtlas.dimensionsMatch(tileImage, cmd.imageWidth,
+                                         cmd.imageHeight) then
+    error(("atlas dimensions mismatch gen=%s map=%s path=%s expected=%sx%s")
+            :format(tostring(cmd.gen), tostring(cmd.mapId), tostring(tilePath),
+                    tostring(cmd.imageWidth), tostring(cmd.imageHeight)), 0)
+  end
+  local ok, data = pcall(function()
+    if cmd.pair then
+      return ChunkMesher.buildGeometryPairChunkData(map, cmd.masks)
+    end
+    return ChunkMesher.buildGeometryChunkData(map, cmd.variant, cmd.masks)
+  end)
+  if Structures and Structures.release then Structures.release(map.id) end
+  if not ok then error(data, 0) end
   return { gen = cmd.gen, data = data }
 end
 
 while true do
   local cmd = cmdCh:pop()
   if cmd then
-    if cmd.cmd == "quit" then break end
-    if cmd.cmd == "geometry" then
-      local ok, res = pcall(handleGeometry, cmd)
-      if ok then
-        outCh:push(res)
+    if cmd.cmd == "cancel" then
+      if not finished[cmd.gen] then cancelled[cmd.gen] = true end
+    elseif cmd.cmd == "cancel_all" then
+      cancelAll = true
+    elseif cmd.cmd == "quit" then
+      break
+    elseif cmd.cmd == "geometry" then
+      if cancelled[cmd.gen] or cancelAll then
+        outCh:push({ gen = cmd.gen, kind = "cancelled" })
+        finished[cmd.gen] = true
       else
+      outCh:push({ gen = cmd.gen, kind = "heartbeat" })
+      local ok, res = pcall(handleGeometry, cmd)
+      if ok and not cancelled[cmd.gen] and not cancelAll then
+        if not emitResult(cmd, res.data) then
+          outCh:push({ gen = cmd.gen, kind = "cancelled" })
+        end
+      elseif not ok and not cancelled[cmd.gen] and not cancelAll then
         outCh:push({ gen = cmd.gen, error = tostring(res) })
+      else
+        outCh:push({ gen = cmd.gen, kind = "cancelled" })
+      end
+      finished[cmd.gen] = true
       end
     end
   else

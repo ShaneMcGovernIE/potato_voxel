@@ -151,10 +151,11 @@ local function prefetchArena(state, host)
   for _, nb in ipairs(state.neighbors or {}) do live[nb.map.id] = true end
   ChunkMesher.setLive(live)
   TerrainAtlas.setLive(live)
-  ChunkMesher.request(host, false, nil, true)
-  local terrain, water = ChunkMesher.pair(host, false)
-  if not terrain then terrain, water = ChunkMesher.pair(host, true) end
-  return terrain, {}, water, {}
+  ChunkMesher.request(host, "body", nil, true)
+  ChunkMesher.request(host, "ring", nil, true)
+  local terrain, water = ChunkMesher.pair(host, "body")
+  local ring, ringWater = ChunkMesher.pair(host, "ring")
+  return terrain, {}, water, {}, ring, ringWater
 end
 
 -- ------- the sun
@@ -310,14 +311,14 @@ end
 -- -- goes in the signature; the terrain half of the answer would otherwise
 -- keep a stale pass alive and freeze the shadows in whatever pose they were
 -- first drawn in.
-local function shadowSignature(state, arena, terrain, nbMesh, token)
+local function shadowSignature(state, arena, terrain, ring, nbMesh, token)
   local host = arena.map or state.map
   -- `turn` is in the signature with the corner and the shape: the same corner
   -- turned a quarter is a different footprint standing on different ground,
   -- and a cast kept from the other one freezes the shadows across it
   local parts = { "battle", host.id, arena.x, arena.y, arena.shape,
                   tostring(arena.turn or 0),
-                  tostring(terrain), tostring(token or 0),
+                  tostring(terrain), tostring(ring), tostring(token or 0),
                   -- the cycle keeps running through a fight, and an arena lit
                   -- from somewhere new must be re-cast from there
                   math.floor(ShadowMap.KX * 128),
@@ -326,12 +327,12 @@ local function shadowSignature(state, arena, terrain, nbMesh, token)
   return table.concat(parts, ",")
 end
 
-local function castShadows(state, arena, terrain, nbMesh, cx, cy, vw, vh,
+local function castShadows(state, arena, terrain, ring, nbMesh, cx, cy, vw, vh,
                            atlasFor, cards, token, host, neighbors,
-                           water, nbWater, groundY, actorShadows)
+                           water, ringWater, nbWater, groundY, actorShadows)
   if not ShadowMap.available() then return end
-  local worldSig = shadowSignature(state, arena, terrain, nbMesh)
-  local spriteSig = shadowSignature(state, arena, terrain, nbMesh, token)
+  local worldSig = shadowSignature(state, arena, terrain, ring, nbMesh)
+  local spriteSig = shadowSignature(state, arena, terrain, ring, nbMesh, token)
   local worldStale = ShadowMap.stale(worldSig, false)
   local spriteStale = actorShadows and ShadowMap.stale(spriteSig, true) or false
   if not worldStale and not spriteStale then return end
@@ -348,7 +349,8 @@ local function castShadows(state, arena, terrain, nbMesh, cx, cy, vw, vh,
       -- the one shared world-layer run (lib/ShadowCast.lua)
       ShadowCast.terrainAndWater(ShadowMap, ChunkMesher, {
         map = host, atlasFor = atlasFor,
-        terrain = terrain, water = water,
+        terrain = terrain, ring = ring,
+        water = water, ringWater = ringWater,
         neighbors = neighbors,
         nbMesh = nbMesh, nbWater = nbWater,
       })
@@ -496,14 +498,15 @@ function BattleScene.render(state, arena, textures, token)
 
   -- shares the free-roam mode's request/evict bookkeeping, so a battle warms
   -- exactly the meshes walking around would have and nothing extra
-  local terrain, nbMesh, water, nbWater
+  local terrain, nbMesh, water, nbWater, ring, ringWater
   if discs then
     -- and nothing is meshed for a disc fight, which is the other half of why
     -- the rung works everywhere: there is no waiting for a chunk to build, so
     -- the first frame of the first battle on a cold map is the finished shot
-    nbMesh, water, nbWater = {}, nil, {}
+    nbMesh, water, nbWater, ring, ringWater = {}, nil, {}, nil, nil
   else
-    terrain, nbMesh, water, nbWater = prefetchArena(state, host)
+    terrain, nbMesh, water, nbWater, ring, ringWater =
+      prefetchArena(state, host)
     if not terrain then return nil end
   end
 
@@ -543,9 +546,9 @@ function BattleScene.render(state, arena, textures, token)
   -- the main pass sends sunDark=0 and the mons stand flat-lit).
   local battleShadows = ShadowSettings.enabled()
   if battleShadows then
-    castShadows(state, arena, terrain, nbMesh, cx, cy, vw, vh, atlasFor,
-                cards, token, host, neighbors, water, nbWater, groundY,
-                actorShadows)
+    castShadows(state, arena, terrain, ring, nbMesh, cx, cy, vw, vh,
+                atlasFor, cards, token, host, neighbors,
+                water, ringWater, nbWater, groundY, actorShadows)
   else
     ShadowMap.off()
   end
@@ -610,6 +613,7 @@ function BattleScene.render(state, arena, textures, token)
       V.require("DiscArena").draw(arena, groundY)
     else
     Voxel3D.draw(terrain, atlasFor(host), nil)
+    Voxel3D.draw(ring, atlasFor(host), nil)
     for i, nb in ipairs(neighbors) do
       Voxel3D.draw(nbMesh[i], atlasFor(nb.map),
                    Mat4.translate(nb.ox, 0, nb.oy))
@@ -624,6 +628,7 @@ function BattleScene.render(state, arena, textures, token)
     -- (No mirror also means the mons need no second draw into one -- they
     -- just composite over the water below, like everything else on the set.)
     if water then Voxel3D.draw(water, atlasFor(host)) end
+    if ringWater then Voxel3D.draw(ringWater, atlasFor(host)) end
     for i, nb in ipairs(neighbors) do
       if nbWater and nbWater[i] then
         Voxel3D.draw(nbWater[i], atlasFor(nb.map),

@@ -8,7 +8,7 @@ return {
            "battle", "low-end" },
   differences = {
     changed = {
-      "PotatoVoxel (fork of Dramatic Shape Voxel Mod, formerly the TrimUI Brick build): the low-end tuning is the DEFAULT everywhere, and the VOXEL ladder is a set of quality MODES -- OFF / HIGH / MEDIUM / LOW / POTATO / CUSTOM. Picking a mode applies its tuned defaults to every quality knob (WATER, AA, V-CURVE, V-GRID, 3D-BTL, SHADOWS) and to the RENDER SCALE knob (100% / 75% / 50% / 33%, folded back with ordinary canvas filtering; no dedicated upscaling shader or RCAS pass); touching any knob flips the mode to CUSTOM. Desktop HIGH keeps the full two-layer actor shadow map, including moving actor/sprite casters; MEDIUM and lower use contact/blob actor shadows. Every quality knob is tuned for a quad-A53/PowerVR/998MB device and DEFAULTS OFF -- WATER, AA, V-CURVE, V-GRID, 3D-BTL (flat card battles) -- but each is a switchable row on the VOXEL SETTINGS submenu, and the voxel mesh build budget is halved per frame so chunk carving yields to gameplay on four cores. There is one build for every device -- no desktop environment switch; the mesh cache lives in the mod sandbox's scoped storage. 1.7.11 runs under the mod sandbox: FOREST FX, the frosted battle-HUD glass, Stadium model import, and VR are removed; bounded diagnostics remain sandbox-safe, and shadows run on every device that can do them.",
+      "PotatoVoxel (fork of Dramatic Shape Voxel Mod, formerly the TrimUI Brick build): the low-end tuning is the DEFAULT everywhere, and the VOXEL ladder is a set of quality MODES -- OFF / HIGH / MEDIUM / LOW / POTATO / CUSTOM. Picking a mode applies its tuned defaults to every quality knob (WATER, AA, V-CURVE, V-GRID, 3D-BTL, SHADOWS) and to the RENDER SCALE knob (100% / 75% / 50% / 33%, folded back with ordinary canvas filtering; no dedicated upscaling shader or RCAS pass); touching any knob flips the mode to CUSTOM. Desktop HIGH keeps the full two-layer actor shadow map, including moving actor/sprite casters; MEDIUM and lower use contact/blob actor shadows. Every quality knob is tuned for a quad-A53/PowerVR/998MB device and DEFAULTS OFF -- WATER, AA, V-CURVE, V-GRID, 3D-BTL (flat card battles) -- but each is a switchable row on the VOXEL SETTINGS submenu, and the voxel mesh build budget is halved per frame so chunk carving yields to gameplay on four cores. There is one build for every device -- no desktop environment switch; the mesh cache lives in the mod sandbox's scoped storage. 1.7.12 runs under the mod sandbox: sprite-preserving, bounded threaded precaching; FOREST FX, the frosted battle-HUD glass, Stadium model import, VR, and Horde are removed; bounded diagnostics remain sandbox-safe, and shadows run on every device that can do them.",
       "with VOXEL on, the overworld draws as 3D geometry instead of flat tiles",
       "occlusion comes from a depth buffer rather than a y-sort, so buildings really hide what is behind them",
       "with 3D-BTL on 2D-3D A, a battle draws over the map's nearest clear ground instead of over a white field",
@@ -33,15 +33,12 @@ return {
       "an over-the-shoulder battle camera on a slow parallax orbit, with a depth-of-field pass that holds both mons sharp",
       "a sky behind the diorama at the 75-degree rung, outdoor maps only",
       "a hand-authored tile shape profile (data/voxel_heights.lua) a mod can extend",
-      "HORDE MODE, on the konami code (Up Up Down Down Left Right Left Right B A) standing in the overworld -- the sky drops to a starless violet night, waves of people walk out of the dark, score per kill, no pausing",
-      "the horde's gunshot, dry fire, magazine and slide sounds, synthesized on the game's own emulated Game Boy sound hardware (no audio files ship with the mod)",
     },
     known = {
       "needs shader and depth-canvas support; without them the rows still cycle but the world stays 2D and battles draw plainly",
       "terrain meshes are cached per map in the mod's scoped storage, so the first frame after entering a large map costs a build",
       "1ST and 3RD need the 3D pass like every rung; without it the level still persists but the world stays 2D",
       "rooms have no ceilings, so a first-person look over an interior wall shows the void the diorama always had behind it",
-      "HORDE MODE needs the 3D pass; a run is not saved -- the score and best score ride the save slot, the mode itself has no state to resume",
     },
   },
   credits = {

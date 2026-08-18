@@ -13,6 +13,27 @@ local GridKey = V.require("GridKey")
 
 local GeometryBuilder = {}
 
+-- Return the disjoint horizontal spans that make up a ring around the body.
+-- Interior rows need only the left and right bands; rows above and below the
+-- body are one contiguous span. Keeping this as a pure helper makes the
+-- traversal contract easy to test and avoids visiting every body cell just
+-- to discard it with `if ringOnly and inBody`.
+function GeometryBuilder.ringRanges(tw, th, r)
+  assert(type(tw) == "number" and type(th) == "number"
+         and type(r) == "number" and tw >= 0 and th >= 0 and r >= 0,
+         "ring dimensions must be non-negative numbers")
+  if r == 0 then return {} end
+  local rows = {}
+  for ty = -r, th + r - 1 do
+    if ty < 0 or ty >= th then
+      rows[#rows + 1] = { { -r, tw + r - 1 } }
+    else
+      rows[#rows + 1] = { { -r, -1 }, { tw, tw + r - 1 } }
+    end
+  end
+  return rows
+end
+
 local RING = 3
 local INSET = 0.02
 local VOLUME_TOP_SHADE = 0.85
@@ -24,6 +45,12 @@ local SIDES = {
 }
 
 function GeometryBuilder.emit(map, bodyOnly, masks, sink, waterSink)
+  local variant = type(bodyOnly) == "string" and bodyOnly
+                  or (bodyOnly and "body" or "full")
+  local bodyOnly = variant == "body"
+  local ringOnly = variant == "ring"
+  assert(bodyOnly or ringOnly or variant == "full",
+         "unknown geometry variant: " .. tostring(variant))
   local push = sink.push
   local waterPush = waterSink and waterSink.push or nil
   local tileset = map.tileset
@@ -252,8 +279,13 @@ function GeometryBuilder.emit(map, bodyOnly, masks, sink, waterSink)
     return false
   end
 
+  local ringRows = ringOnly and GeometryBuilder.ringRanges(tw, th, r)
+  local fullRowRanges = { { -r, tw + r - 1 } }
   for ty = -r, th + r - 1 do
-    for tx = -r, tw + r - 1 do
+    local rowRanges = ringRows and ringRows[ty + r + 1]
+                     or fullRowRanges
+    for _, txRange in ipairs(rowRanges) do
+      for tx = txRange[1], txRange[2] do
       -- check() (clock every call, not every 8th): the geometry
       -- emission below is the heaviest per-cell work in the whole
       -- build -- billboard cards, side bands, shoreline faces -- and a
@@ -262,6 +294,7 @@ function GeometryBuilder.emit(map, bodyOnly, masks, sink, waterSink)
       local k = GridKey.of(tx, ty)
       local s, tile = S.shapeAt[k], S.tileAt[k]
       local inBody = tx >= 0 and ty >= 0 and tx < tw and ty < th
+      if ringOnly and inBody then s = nil end
       if not inBody and masked(tx * 8, ty * 8, tx * 8 + 8, ty * 8 + 8) then
         s = nil
       end
@@ -473,6 +506,7 @@ function GeometryBuilder.emit(map, bodyOnly, masks, sink, waterSink)
           end
         end
       end
+      end
     end
   end
 
@@ -493,6 +527,9 @@ function GeometryBuilder.emit(map, bodyOnly, masks, sink, waterSink)
   local function keepQuad(x0, z0, x1, z1)
     local overBody = x1 > 0 and x0 < bw and z1 > 0 and z0 < bh
     if bodyOnly then return overBody end
+    if ringOnly then
+      return not overBody and not maskedClosed(x0, z0, x1, z1)
+    end
     return overBody or not maskedClosed(x0, z0, x1, z1)
   end
 
@@ -555,7 +592,7 @@ function GeometryBuilder.emit(map, bodyOnly, masks, sink, waterSink)
     -- the edge keep-rules entirely: its eave legitimately overhangs the
     -- boundary plane into the neighbour's airspace, and no variant of
     -- the neighbour will ever draw that geometry
-    if q.own or outwardOnEdge(drawQ, x0, z0, x1, z1)
+    if (not ringOnly and (q.own or outwardOnEdge(drawQ, x0, z0, x1, z1)))
        or keepQuad(x0, z0, x1, z1) then
       push({ drawQ[1], drawQ[2], drawQ[3], drawQ[4] },
            quadUV(q), groundShades(q, q.shade))
@@ -599,6 +636,18 @@ function GeometryBuilder.emit(map, bodyOnly, masks, sink, waterSink)
       -- (the per-quad slice), which read as a tree cut in half.
       local centreInBody = mx >= 0 and mx <= bw and mz >= 0 and mz <= bh
       skipAll = not centreInBody
+    elseif ringOnly then
+      local centreInBody = mx >= 0 and mx <= bw and mz >= 0 and mz <= bh
+      local centreInMask = false
+      if masks then
+        for _, mk in ipairs(masks) do
+          if mx >= mk[1] and mx <= mk[3] and mz >= mk[2] and mz <= mk[4] then
+            centreInMask = true
+            break
+          end
+        end
+      end
+      skipAll = centreInBody or centreInMask
     else
       -- Full variant: the mask rects are where connected neighbour
       -- BODIES sit. A trunk under one is a tree that would rise through

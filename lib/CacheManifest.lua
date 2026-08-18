@@ -17,7 +17,7 @@ function CacheManifest.new(ctx)
     if not ctx.available() then return nil, "no_store" end
     local manifest = ctx.readTable("manifest")
     if not manifest then return nil, "missing" end
-    if manifest.format ~= "PVMC1" then return nil, "format" end
+    if manifest.format ~= "PVMC2" then return nil, "format" end
     if manifest.identity ~= ctx.identity() then
       return nil, "identity", manifest.identity
     end
@@ -50,7 +50,7 @@ function CacheManifest.new(ctx)
     local keys = sortedKeys(records)
     if #keys > total then return false end
     local id = buildIdentity or ctx.identity()
-    local manifest = { format = "PVMC1", identity = id, total = total,
+    local manifest = { format = "PVMC2", identity = id, total = total,
                        records = {} }
     for _, key in ipairs(keys) do
       local record = records[key]

@@ -17,7 +17,6 @@ local BrickProfile = V.require("BrickProfile")
 local AntiAlias = V.require("AntiAlias")
 local Upscale = V.require("Upscale")
 local Weather = V.require("Weather")
-local HordeHud = V.require("HordeHud")
 local Diagnostics = V.require("DiagnosticsBridge")
 
 local WorldFeature = {}
@@ -191,7 +190,6 @@ function WorldFeature.render(ctx, worldDiag, stallSkip)
   if Voxel3D.beginOverlay() then
     ctx.drawFx(function(wx, wy) return Voxel3D.project(wx, 0, wy) end,
                ctx.scale * AntiAlias.factor() * rs)
-    HordeHud.drawFlat(crw, crh, ctx.scale * AntiAlias.factor() * rs)
     Weather.draw(ctx.scale * AntiAlias.factor() * rs, Voxel3D.project)
     Voxel3D.endOverlay()
   end

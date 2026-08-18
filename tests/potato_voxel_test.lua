@@ -7,7 +7,14 @@ local run = T.sdk.loadMod("mods/potato_voxel", { data = Data })
 T.eq(#run.errors, 0, "loads clean")
 local exports = run.loader.exports.potato_voxel
 T.check(exports ~= nil, "mod exports a table")
-T.eq(exports.version, "1.7.11", "exports the manifest release version")
+T.eq(exports.version, "1.7.12", "exports the manifest release version")
+for _, name in ipairs({
+  "Horde", "HordeGun", "HordeHud", "HordeMobs", "HordeSfx",
+  "HordeExitPrompt", "HordeGameOver",
+}) do
+  local loaded = pcall(exports.lib.require, name)
+  T.check(not loaded, "horde module removed: " .. name)
+end
 local RuntimeHooks = exports.lib.require("RuntimeHooks")
 local InputFeature = exports.lib.require("InputFeature")
 T.check(type(InputFeature.new) == "function",
@@ -97,12 +104,69 @@ do
   })
   T.check(completed and queue.pending() == 0,
           "mesh queue owns completion after a finished step")
-  queue.enqueue({ id = "YIELD", slot = "full" })
+  queue.enqueue({ id = "YIELD", slot = "ring" })
   queue.pump({ clock = function() return 0 end,
                slice = function() return 1 end,
                step = function() return "yield" end,
                complete = function() error("yield must not complete") end })
   T.eq(queue.pending(), 1, "mesh queue keeps a yielded job pending")
+
+  local ranked = MeshQueue.new()
+  local distant = { id = "DISTANT", slot = "body", priority = 100 }
+  local direct = { id = "DIRECT", slot = "body", priority = 200 }
+  local destination = { id = "DESTINATION", slot = "ring", priority = 300 }
+  ranked.enqueue(distant)
+  ranked.enqueue(direct)
+  ranked.enqueue(destination)
+  T.eq(ranked.pick(), destination,
+       "destination ring mesh outranks queued neighbour bodies")
+  ranked.remove(destination)
+  T.eq(ranked.pick(), direct,
+       "direct neighbour body outranks distant neighbour body")
+  ranked.promote("DISTANT", "body", 400)
+  T.eq(ranked.pick(), distant,
+       "an already-queued destination can be promoted above stale work")
+
+  local crossing = MeshQueue.new()
+  local oldCurrent = { id = "OLD_CURRENT", slot = "ring",
+                       priority = 300, urgent = true }
+  local newCurrent = { id = "NEW_CURRENT", slot = "ring", priority = 0 }
+  crossing.enqueue(oldCurrent)
+  crossing.enqueue(newCurrent)
+  crossing.resetPriorities(function(job) return not job.prebuild end)
+  crossing.promote("NEW_CURRENT", "ring", 300)
+  T.eq(oldCurrent.priority, 0,
+       "route crossing clears the old current-map priority")
+  T.check(not oldCurrent.urgent,
+          "route crossing clears the old current-map urgency flag")
+  T.eq(crossing.pick(), newCurrent,
+       "the new destination outranks work retained from the previous route")
+end
+local MeshPrefetchPolicy = exports.lib.require("MeshPrefetchPolicy")
+do
+  local current = {
+    id = "PALLET_TOWN",
+    def = { connections = {
+      north = { map = "ROUTE_1" },
+      south = { map = "ROUTE_21" },
+    } },
+  }
+  local neighbors = {
+    { map = { id = "ROUTE_1" } },
+    { map = { id = "VIRIDIAN_CITY" } },
+    { map = { id = "ROUTE_21" } },
+  }
+  local priorities = MeshPrefetchPolicy.neighborPriorities(current, neighbors)
+  T.eq(priorities[1], MeshPrefetchPolicy.DIRECT,
+       "declared connection receives direct-neighbour priority")
+  T.eq(priorities[2], MeshPrefetchPolicy.DISTANT,
+       "connection-of-connection receives distant-neighbour priority")
+  T.eq(priorities[3], MeshPrefetchPolicy.DIRECT,
+       "every declared connection receives direct-neighbour priority")
+  T.check(MeshPrefetchPolicy.CURRENT_BODY > MeshPrefetchPolicy.DIRECT
+          and MeshPrefetchPolicy.DIRECT > MeshPrefetchPolicy.CURRENT_RING
+          and MeshPrefetchPolicy.CURRENT_RING > MeshPrefetchPolicy.DISTANT,
+          "current body, direct body, ring, and distant priorities are ordered")
 end
 local GeometryBuilder = exports.lib.require("GeometryBuilder")
 T.check(type(GeometryBuilder.emit) == "function",
@@ -157,12 +221,12 @@ do
   local released = 0
   local old = { release = function() released = released + 1 end }
   local replacement = { release = function() released = released + 1 end }
-  local entry = { full = old, figures = { { mesh = replacement } } }
-  runtime.swap(entry, "full", false)
+  local entry = { ring = old, figures = { { mesh = replacement } } }
+  runtime.swap(entry, "ring", false)
   T.eq(released, 1, "mesh runtime releases a replaced GPU slot")
   runtime.releaseEntry(entry)
   T.eq(released, 2, "mesh runtime releases figure meshes with the entry")
-  T.check(entry.full == nil and entry.figures == nil,
+  T.check(entry.ring == nil and entry.figures == nil,
           "mesh runtime clears released cache ownership")
   local evicted = nil
   local cache = { FAR = { body = { release = function() end } } }
@@ -184,6 +248,16 @@ do
                   onEvict = function(id) evicted = id end })
   T.check(cache.FAR == nil and #jobs == 0 and evicted == "FAR",
           "mesh runtime evicts GPU entries and queued jobs outside live sets")
+
+  local previousMesh = { release = function() error("previous mesh released") end }
+  cache = { PREVIOUS = { body = previousMesh } }
+  jobs = { { id = "PREVIOUS", slot = "ring", prebuild = false } }
+  runtime.evict({ cache = cache, queue = fakeQueue, live = {},
+                  previous = { PREVIOUS = true }, generations = generations })
+  T.eq(cache.PREVIOUS.body, previousMesh,
+       "completed previous-neighbour mesh remains warm for a door round trip")
+  T.eq(#jobs, 0,
+       "unfinished previous-only mesh job is cancelled after the live set changes")
 end
 do
   local target = { run = function(_, value) return value end }
@@ -664,7 +738,7 @@ if brick then
    T.eq(OverworldBattle.setting.values[2], true, "3D-BTL turns on")
    local Prebuild = exports.lib.require("CachePrebuild")
   local jobs = Prebuild.enumerate({ B = { id="B", width=3, height=2, connections={} }, A = { id="A", width=4, height=5, connections={} } })
-  T.eq(#jobs, 4, "prebuild enumerates body and full variants")
+  T.eq(#jobs, 4, "prebuild enumerates body and ring variants")
   -- The hold chords: five seconds of SELECT toggles the debug overlay,
   -- and five seconds of START while the debugger is on exports its log --
   -- the touch/pad versions of F9 and F8. Each chord is a timer fed the
@@ -1288,6 +1362,8 @@ end
 -- packed in pure Lua (this engine's ByteData has no accessors), and the
 -- vertex streams are plain 1-based tables, the table sink's shape.
 local MeshCache = exports and exports.lib and exports.lib.require("MeshCache")
+local GeometryStream = exports and exports.lib
+                       and exports.lib.require("GeometryStream")
 if MeshCache and MeshCache.encodeMesh then
   local fakeStore = (function()
     local tables, bytes = {}, {}
@@ -1442,8 +1518,8 @@ if MeshCache and MeshCache.encodeMesh then
     rtBuf[i * 6 + 5] = ((i % 48) + 0.5) / 48      -- v
     rtBuf[i * 6 + 6] = 0.5 + (i % 10) / 20        -- shade: baked AO band
   end
-  MeshCache.saveTerrain(fakeMap, "full", rtBuf, n)
-  local rtTerrain, rtWater = MeshCache.loadTerrain(fakeMap, "full")
+  MeshCache.saveTerrain(fakeMap, "ring", rtBuf, n)
+  local rtTerrain, rtWater = MeshCache.loadTerrain(fakeMap, "ring")
   T.check(rtTerrain ~= nil and rtTerrain.n == n,
           "loadTerrain reads back the written mesh (header+payload offset)")
   if rtTerrain then
@@ -1455,14 +1531,14 @@ if MeshCache and MeshCache.encodeMesh then
          or rtTerrain.verts[i * 6 + 3] ~= rtBuf[i * 6 + 3] then
         match = false break
       end
-      -- uv quantizes to u16, shade to u8 -- sub-visible error only
+      -- Native float32 values round-trip within float precision.
       if math.abs(rtTerrain.verts[i * 6 + 4] - rtBuf[i * 6 + 4]) > 0.01
          or math.abs(rtTerrain.verts[i * 6 + 5] - rtBuf[i * 6 + 5]) > 0.01
          or math.abs(rtTerrain.verts[i * 6 + 6] - rtBuf[i * 6 + 6]) > 0.01 then
         match = false break
       end
     end
-    T.check(match, "loadTerrain round-trips quantized positions/uv/shade")
+    T.check(match, "loadTerrain round-trips native positions/uv/shade")
   end
   -- The AUX round-trip at scale. flattenQuads counts FLOATS while the
   -- payloads are vertex-counted; feeding k in as n made encodeMesh read
@@ -1484,8 +1560,8 @@ if MeshCache and MeshCache.encodeMesh then
   local flat = { grass = { n = bigK / 6, buf = bigBuf, m = bigM,
                            idx = bigIdx },
                  flowers = nil, figures = {} }
-  MeshCache.saveAux(fakeMap, "full", flat)
-  local auxBytes = fakeStore.peekBytes()["maps/VIRIDIAN_CITY/full/deco"] or ""
+  MeshCache.saveAux(fakeMap, "ring", flat)
+  local auxBytes = fakeStore.peekBytes()["maps/VIRIDIAN_CITY/shared/deco"] or ""
   -- header (8 + fpLen) + indexed grass (u32 n + n*6 floats + u32 m +
   -- m u32s), then the empty flowers payload (u32 0 + u32 0) and the
   -- figures count byte (0) -- a 6x-inflated grass write is ~5.7MB vs
@@ -1495,10 +1571,29 @@ if MeshCache and MeshCache.encodeMesh then
   local expected = 8 + fpLen + 4 + (bigK / 6) * 24 + 4 + bigM * 4 + 8 + 1
   T.eq(#auxBytes, expected,
        "saveAux writes vertex-counted bytes (floats are not vertices)")
-  local aux = MeshCache.loadAux(fakeMap, "full")
+  local packedAux, packedAuxStages = MeshCache.loadAuxPacked(fakeMap, "ring")
+  local packedGrassInfo = packedAux and packedAux.grass
+                          and GeometryStream.inspectPayload(
+                            packedAux.grass.packed)
+  T.check(packedGrassInfo and packedGrassInfo.n == bigK / 6
+          and packedGrassInfo.m == bigM
+          and packedAux.flowers and packedAux.flowers.n == 0
+          and #packedAux.figures == 0,
+          "loadAuxPacked keeps auxiliary geometry in GPU-ready records")
+  T.check(packedAuxStages and type(packedAuxStages.readMs) == "number"
+          and type(packedAuxStages.decodeMs) == "number",
+          "loadAuxPacked reports its bounded parse stages")
+  local aux, auxStages = MeshCache.loadAux(fakeMap, "ring")
   T.check(aux ~= nil and aux.grass ~= nil and aux.grass.n == bigK / 6
           and aux.grass.m == bigM,
           "loadAux reads back the grass stream at the same counts")
+  T.check(auxStages and type(auxStages.readMs) == "number"
+          and auxStages.readMs >= 0
+          and type(auxStages.decompressMs) == "number"
+          and auxStages.decompressMs >= 0
+          and type(auxStages.decodeMs) == "number"
+          and auxStages.decodeMs >= 0,
+          "loadAux reports storage and decode stages for transition telemetry")
   if aux and aux.grass then
     local match = true
     for i = 1, bigK do
@@ -1513,10 +1608,11 @@ if MeshCache and MeshCache.encodeMesh then
     end
     T.check(match, "loadAux grass index map is byte-identical")
   end
-  -- Cold-entry fast path: a destination with a VALID prebuilt payload
-  -- must load it synchronously inside request() -- no queued job, so the
-  -- BUILDING VOXELS cover never starts -- while a map with nothing in the
-  -- box still queues the async job (the cover path).
+  -- Cached destinations must still hydrate through the cooperative queue.
+  -- Loading a large cached map directly inside request() blocks map entry
+  -- for hundreds of milliseconds on Android before Voxel.loading can show
+  -- its cover. The queue may use a cached payload, but request() itself
+  -- must return immediately with no terrain or auxiliary GPU meshes.
   do
     local ChunkMesher = exports.lib.require("ChunkMesher")
     local fastMap = { id = "FASTPATH_CITY",
@@ -1532,8 +1628,8 @@ if MeshCache and MeshCache.encodeMesh then
       fBuf[i * 6 + 5] = 0.25
       fBuf[i * 6 + 6] = 0.75
     end
-    MeshCache.saveTerrain(fastMap, "full", fBuf, fn)
-    MeshCache.saveWater(fastMap, "full", nil, 0, nil, 0)
+    MeshCache.saveTerrain(fastMap, "ring", fBuf, fn)
+    MeshCache.saveWater(fastMap, "ring", nil, 0, nil, 0)
     local fQuads = {
       { { 0, 0, 0 }, { 1, 0, 0 }, { 1, 1, 0 }, { 0, 1, 0 },
         uv = { { 0, 1 }, { 1, 1 }, { 1, 0 }, { 0, 0 } }, shade = 0.5 },
@@ -1541,7 +1637,7 @@ if MeshCache and MeshCache.encodeMesh then
     local fBuf2 = {}
     local fIdx = {}
     local fK, fM = MeshCache.flattenQuads(fQuads, fBuf2, fIdx)
-    MeshCache.saveAux(fastMap, "full",
+    MeshCache.saveAux(fastMap, "ring",
                        { grass = { n = fK / 6, buf = fBuf2, m = fM,
                                    idx = fIdx },
                          flowers = nil, figures = {} })
@@ -1566,15 +1662,22 @@ if MeshCache and MeshCache.encodeMesh then
         end,
       },
     }
-    local mesh = ChunkMesher.request(fastMap, false, nil, true)
-    T.check(mesh ~= nil and mesh ~= false,
-            "cold entry with a cached payload loads it synchronously")
+    local mesh = ChunkMesher.request(fastMap, "ring", nil, true)
+    T.check(mesh == nil,
+            "cached map entry returns before terrain GPU upload")
+    T.eq(ChunkMesher.pending(), 1,
+         "cached map entry queues cooperative hydration")
+    T.check(ChunkMesher.pair(fastMap, "ring") == nil,
+            "cached terrain stays unavailable until a queue slice runs")
+    T.check(ChunkMesher.grass(fastMap) == nil,
+            "cached aux stays unavailable until a queue slice runs")
+    ChunkMesher.pump(false)
     T.eq(ChunkMesher.pending(), 0,
-         "a synchronous cache load queues no build job")
-    T.check(ChunkMesher.pair(fastMap, false) ~= nil,
-            "the loaded pair answers from memory")
+         "queued cached hydration completes through the pump")
+    T.check(ChunkMesher.pair(fastMap, "ring") ~= nil,
+            "queued cached terrain reaches runtime memory")
     T.check(ChunkMesher.grass(fastMap) ~= nil,
-            "the aux grass rode the same fast path")
+            "queued cached hydration includes aux grass")
     -- Mesh:setVertexMap replaces the complete map; it has no ranged-update
     -- overload. The cache loader must therefore call it exactly once with
     -- the complete index list, even when a large map needs sliced vertices.
@@ -1587,13 +1690,17 @@ if MeshCache and MeshCache.encodeMesh then
         }
       end
       local manyK, manyM = MeshCache.flattenQuads(manyQuads, manyBuf, manyIdx)
-      MeshCache.saveAux(fastMap, "full",
+      MeshCache.saveAux(fastMap, "ring",
                         { grass = { n = manyK / 6, buf = manyBuf,
                                     m = manyM, idx = manyIdx },
                           flowers = nil, figures = {} })
       ChunkMesher.release(fastMap.id)
-      local reloaded = ChunkMesher.request(fastMap, false, nil, true)
-      T.check(reloaded ~= nil, "large cached mesh reloads")
+      local reloaded = ChunkMesher.request(fastMap, "ring", nil, true)
+      T.check(reloaded == nil,
+              "large cached mesh reload never blocks request")
+      T.eq(ChunkMesher.pending(), 1,
+           "large cached mesh reload uses cooperative queue")
+      ChunkMesher.pump(false)
       local grass = ChunkMesher.grass(fastMap)
       local calls = grass and grass.vertexMapCalls or {}
       T.eq(#calls, 1, "large cached mesh uploads one complete vertex map")
@@ -1606,11 +1713,11 @@ if MeshCache and MeshCache.encodeMesh then
     local coldMap = { id = "FASTPATH_MISS",
                       tileset = { image = "tilesets/sample.png", trueColor = false },
                       renderer = { gbcAtlas = true } }
-    T.check(ChunkMesher.request(coldMap, false, nil, true) == nil,
+    T.check(ChunkMesher.request(coldMap, "ring", nil, true) == nil,
             "a storage miss still defers to the async job")
     T.eq(ChunkMesher.pending(), 1,
          "the miss queues exactly one job")
-    T.check(ChunkMesher.request(coldMap, false, nil, true) == nil,
+    T.check(ChunkMesher.request(coldMap, "ring", nil, true) == nil,
             "the miss is not re-attempted synchronously")
     T.eq(ChunkMesher.pending(), 1,
          "the queued job is not duplicated by later frames")
