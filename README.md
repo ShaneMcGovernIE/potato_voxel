@@ -1,165 +1,243 @@
-# PotatoVoxel
+# PotatoVoxel 1.8.0 (upcoming)
 
-A performance-first 3D voxel diorama for the Pokémon Gen 1 Recompilation.
+PotatoVoxel turns the Pokémon Gen 1 overworld into a 3D voxel diorama while
+keeping the game playable on handhelds, phones, and lower-powered computers.
 
-PotatoVoxel is a fork of [Dramatic Shape Voxel Mod](https://github.com/DramaticShape/DramaticShapeVoxelMod) v1.6.2. It keeps the original mod's defining features—extruded terrain, a depth-buffered camera, billboard characters, shadows, and optional 3D battles—but tunes the experience for low-power handhelds and other constrained devices.
+This release focuses on the things players notice most: faster and safer cache
+building, smoother route changes, lower memory use, and reliable sprite-stacked
+trees and grey bollards.
 
-## What players get
+## What you get
 
-Compared with the original mod, PotatoVoxel is designed to provide:
+- A 3D voxel overworld with terrain depth, billboard characters, and shadows.
+- Quality presets from **HIGH** to **POTATO**, so you can trade visual detail
+  for smoother performance.
+- A persistent terrain cache so maps do not need to be rebuilt every time they
+  are visited.
+- Safer cache recovery when a build is interrupted or a device runs low on
+  memory.
+- Authored sprite-stacked trees and grey bollards instead of unwanted voxel
+  replacements.
 
-- **Smoother gameplay:** mesh generation is spread across frames instead of blocking gameplay with large work spikes.
-- **Lower GPU load:** MEDIUM, LOW, and POTATO render the 3D scene at 75%, 50%, and 33% of window resolution, then scale it back to the display.
-- **Lower geometry cost:** distant border forests use crossed billboard cards instead of expensive carved voxel hulls.
-- **Predictable defaults:** water, anti-aliasing, staged 3D battles, and other costly effects are disabled by default.
-- **Faster revisits:** terrain meshes are stored in the mod's scoped storage and prebuilt from the OPTIONS menu.
-
-These changes target frame-time spikes, fill rate, and memory pressure. They are optimizations rather than a promise of a specific FPS on every device.
-
-## Quality modes
-
-The **VOXEL** option is a mode ladder. Picking a mode applies that mode's
-tuned defaults to every quality knob in the VOXEL SETTINGS menu; changing
-any knob individually flips the mode to **CUSTOM**, which keeps your own
-combination until you pick a named mode again:
-
-- **OFF** — use the normal 2D overworld.
-- **HIGH** — 100% render scale, full water effects, 2X AA.
-- **MEDIUM** — 75% render scale, sky reflections, cheaper shadows.
-- **LOW** — 50% render scale, water off.
-- **POTATO** — 33% render scale, the lowest GPU workload.
-- **CUSTOM** — the VOXEL row reads this the moment any knob leaves its
-  mode's preset.
-
-**RENDER SCALE** (100% / 75% / 50% / 33%) is its own row in the VOXEL
-SETTINGS menu: the modes set it, and moving it on its own also flips the
-mode to CUSTOM.
-
-The potato profile is the build. Every device runs the same tuned diorama —
-there is no environment switch to a full desktop path, so behaviour is
-identical everywhere. **3D-BTL** defaults OFF, follows the VOXEL quality
-scale when enabled, and keeps the map mesh cache.
-
-Shadows are enabled on every device that can run the shadow pass; when a
-device genuinely cannot, the game says why in the session log instead of
-failing silently.
-
-## Removed in 1.6.1 (the sandbox release)
-
-The engine's mod sandbox removed raw file access, native interop and OS
-queries. The features that depended on those are gone — see
-[docs/adr/0004-feature-removals.md](docs/adr/0004-feature-removals.md) for
-the reasoning:
-
-- **FOREST FX** (the Viridian Forest haze and light beams)
-- the **frosted battle-HUD glass** (battle HUDs draw on plain panels)
-- **STADIUM models** (importing a player-supplied Pokémon Stadium ROM is
-  impossible without raw file reads) — the 3D-BTL ladder is now
-  2D-3D A / 2D-3D B / OFF
-- **VR** (the OpenXR loader and its rigs)
-
-The diagnostics overlay is retained as a sandbox-safe, optional compatibility
-feature. It uses scoped mod storage and the engine's declared log service; it
-does not use raw files, native interop, OS queries, or the removed VR/forest
-integrations.
+PotatoVoxel is performance-focused. Your results depend on the device, game
+version, resolution, and other enabled mods, so no fixed FPS is promised.
 
 ## Install
 
-Import the .zip in-game (MODS > Import mod .zip), or copy the folder to
-the game's `mods/` directory and restart — mods load at boot. The mod
-conflicts with `DRAMATIC_SHAPE`, `ds_fp_ceiling`, the pre-rename
-`dramatic_shape_brick`, `BATTLE_ART_VOXEL_FORK` and `DRAMALESS_SHAPE`;
-only one may run at a time.
+1. Download the PotatoVoxel `.zip` for your Gen1Recomp version.
+2. In Gen1Recomp, open **MODS → Import mod .zip**.
+3. Restart the game if requested.
+4. Enable **VOXEL** in the game options.
 
-## Diagnostics (sent automatically -- opt out)
+Only run one voxel world mod at a time. Disable DramaticShape, Dramaless Shape,
+Battle Art Voxel, and other voxel forks before testing PotatoVoxel. Running two
+voxel mods together can cause missing models, overwritten settings, crashes, or
+poor performance.
 
-The debugger records diagnostics in the background from boot. F9 shows or
-hides its panel, F10 switches its detail level, F6 shows or hides the
-class-map view (every tile tinted by its resolved shape class -- the
-profile-authoring aid), and F8 exports its log plus a capability probe.
-The export preserves early boot evidence, recent runtime lines, and a
-data-only `debug/status` record containing pipeline eligibility,
-shader/canvas reasons, cache/storage state, world render-path counters,
-and the identity of the device it came from: the platform (Windows, OS X,
-Linux, Android, iOS, consoles), the GPU (backend, vendor, device, version)
-and the DPI scale, the session's VOXEL SETTINGS (rung and every live knob
-as `key=label`), plus the full shadow-system state (shader precision,
-depth binding, sprite layer) and the retained failure text when the
-shadow or voxel pass is unavailable. It does not add a visible panel
-until you press F9.
+## First launch: build the cache
 
-The log is sent to the mod developer over the internet through the
-engine's log service: automatically every 15 minutes of game time, and
-on demand with F8, the START hold chord or SEND LOGS in VOXEL SETTINGS.
-It contains no name, account, save data, IP address or other identifier;
-each session's log is identified only by a random session number.
+The cache stores prepared terrain, water, and decoration meshes. Building it
+before playing gives the smoothest route transitions.
 
-Sending is ON by default and can be turned off in VOXEL SETTINGS (LOGS
-TO DEV) or on the mod manager's page; OFF stops all sends until it is
-turned back on. Logs are kept by the developer for up to 90 days, then
-deleted, and are used only to fix crashes and tune performance on
-devices the developer does not own.
+1. Load a save or start a new game.
+2. Open **OPTIONS → VOXEL SETTINGS**.
+3. Choose your **VOXEL** quality mode.
+4. Select **PREBUILD CACHE** and confirm.
+5. Leave the game open until the build finishes and the status becomes
+   **READY**.
 
-## Develop & test
+If the game says **MAP CACHE NOT READY. BUILD NOW?** after **CONTINUE** or
+**NEW GAME**, choose **YES** to start the same process. Choosing **NO** lets you
+play normally, but the first visits to uncached maps may stutter while they are
+built.
 
-From the engine checkout root:
+On Android and other handhelds, keep the device connected to power during a
+large build. The 1.8.0 builder is bounded so it uses less peak memory, but a
+first complete build can still take time. You can cancel and resume later; do
+not force-close the game while it is writing a cache entry if you can avoid it.
+
+## Cache management
+
+### Rebuild the cache
+
+You do **not** normally need to rebuild on every launch. Rebuild when the game
+asks, after a major PotatoVoxel update, after changing settings that affect the
+cache, or when a cache-related visual or loading problem persists.
+
+1. Open **OPTIONS → VOXEL SETTINGS** while in a save.
+2. Select **PREBUILD CACHE**.
+3. Confirm **REBUILD CACHE?**.
+4. Wait for **READY**.
+
+The cache identity includes the geometry and relevant settings, so stale data is
+rejected instead of silently being used. A matching cache is reused
+automatically after restarting the game.
+
+### Delete the cache
+
+Use the in-game option rather than hunting for files on your device:
+
+1. Open **OPTIONS → VOXEL SETTINGS**.
+2. Select **WIPE CACHE**.
+3. Confirm **WIPE CACHE?**.
+4. Build it again with **PREBUILD CACHE** when ready.
+
+If a build is still running, cancel it first. Wiping removes the prepared mesh
+data and the completion marker; it does not delete your save or the game.
+PotatoVoxel stores the cache in the mod's private scoped storage, so the path
+can differ between desktop, Android, and console builds.
+
+**CACHE STATUS** shows whether the cache is **READY**, its geometry version, and
+the compression mode used by the device.
+
+## Quality modes
+
+Choose a named mode to apply a complete set of tuned defaults:
+
+| Mode | Best for | Render scale |
+| --- | --- | ---: |
+| **OFF** | Normal 2D overworld | — |
+| **HIGH** | Strong desktop or handheld hardware | 100% |
+| **MEDIUM** | Balanced quality and performance | 75% |
+| **LOW** | Lower-powered devices | 50% |
+| **POTATO** | The lowest GPU workload | 33% |
+| **CUSTOM** | Your own combination of settings | Your choice |
+
+Changing an individual quality setting changes the mode to **CUSTOM**. The
+biggest performance control is **RENDER SCALE**. Lower it if the game still
+struggles after the cache has been built.
+
+## What is not included
+
+- **VR** and first-/third-person modes.
+- The unused **Horde** minigame.
+- Pokémon Stadium ROM importing or bundled Stadium ROM assets.
+- Forest effects and other high-cost features removed for performance and
+  sandbox compatibility.
+
+`3D-BTL` is an optional PotatoVoxel battle presentation setting. It is not a
+promise of Stadium-style battles or imported N64 models.
+
+PotatoVoxel does not ship a Pokémon ROM or ROM-derived asset bytes. It works
+with the player's own Gen1Recomp installation and imported game data.
+
+## Frequently asked questions
+
+### Do I need to build the cache every time I open the game?
+
+No. Once the cache says **READY**, it is reused across launches. Rebuild only
+when prompted, after a relevant update or settings change, or when troubleshooting.
+
+### Do I need a separate cache for every route?
+
+No. **PREBUILD CACHE** works through the map set and stores the prepared data
+for later visits. The cache may still fill individual maps on demand if you
+cancel the build or start playing before it finishes.
+
+### Why is the first build slower than normal gameplay?
+
+It prepares many maps and their terrain, water, and decoration meshes. 1.8.0
+streams the work in bounded pieces and avoids holding whole-map temporary data,
+but the initial build is still more work than loading an already prepared map.
+
+### The cache is stuck or reports errors. What should I do?
+
+First check that no other voxel mod is enabled. Then use **WIPE CACHE**, restart
+the game, and run **PREBUILD CACHE** again. If it still fails, report it with
+the information in the issue section below.
+
+### Trees or grey bollards look like chunky voxels. Is that expected?
+
+No. Make sure you are running the current release, disable other voxel mods,
+wipe the cache, and rebuild it. If the problem remains, include a screenshot
+and the newest error-log block in a bug report.
+
+### Why do I still see a short hitch when moving to a new map?
+
+The cache reduces the expensive work but cannot remove device or driver limits
+entirely. Confirm the cache is **READY**, try **MEDIUM**, **LOW**, or **POTATO**,
+and report repeatable transition stutters with your device details and log.
+
+### Can I use PotatoVoxel with another voxel mod for Stadium sprites?
+
+No. Voxel forks replace the same overworld systems and are not designed to run
+together. Choose one voxel mod for a test session; mixing them can make it
+look as though one mod's settings or models are missing.
+
+## Reporting a problem
+
+Please use the [GitHub bug report form](https://github.com/ShaneMcGovernIE/potato_voxel/issues/new/choose)
+for crashes, failed cache builds, visual problems, and performance issues.
+The form is much easier to troubleshoot than a one-line “it does not work”
+message.
+
+Include:
+
+- PotatoVoxel version and Gen1Recomp engine version.
+- Platform and device model, including RAM when known.
+- VOXEL mode and any settings you changed.
+- Whether the cache was **READY**, building, wiped, or failing.
+- Exact steps to reproduce the problem.
+- The **newest** block from `lua-error.log` (or `switch.log` on Switch), not an
+  old crash block.
+- A screenshot or short video for visual issues when possible.
+
+For cache and transition problems, mention the map or route and whether the
+problem happens during **PREBUILD CACHE**, while loading a map, or while moving
+between maps. You can also use **SEND LOGS** in **VOXEL SETTINGS** or the F8
+diagnostic shortcut when the log option is enabled.
+
+Diagnostics are intended to contain technical session information only. They
+do not include your name, account, save data, or ROM files.
+
+## What changed in 1.8.0
+
+- Reworked precaching around bounded streaming to reduce peak memory and long
+  tail stalls.
+- Packed geometry and compression work so the main thread does less blocking
+  work during builds and map transitions.
+- Added safer cancellation, worker error handling, resumable progress, cache
+  identity checks, and atomic cache commits.
+- Reduced duplicate body/ring geometry work and unnecessary storage operations.
+- Fixed worker tileset ownership so stacked-sprite vegetation and bollards keep
+  the correct atlas and authored shape after cache loads and rapid map changes.
+- Improved cache-hit loading and destination-map prioritisation to reduce pop-in.
+- Removed VR, Horde, Stadium import, and other retired high-cost features.
+- Kept the mod sandbox-safe and free of bundled ROM assets.
+
+## Developer notes
+
+The mod source is tested from a Gen1Recomp engine checkout. From the engine
+root:
 
 ```sh
 POKEPORT_DATA_DIR="$PWD/tests/fixture_data" \
+  luajit mods/potato_voxel/tests/potato_voxel_cache_test.lua
+
+POKEPORT_DATA_DIR="$PWD/tests/fixture_data" \
   luajit mods/potato_voxel/tests/potato_voxel_test.lua
-```
 
-The suite asserts the single potato build (the collapse is exercised
-in-process by `BrickProfile.apply()`), and the cache suites run against a
-fake `mod.storage` box so they stay headless. Gates:
-
-```sh
 python3 tools/modkit.py lint mods/potato_voxel
+python3 tools/modkit.py validate mods/potato_voxel --base auto
 python3 tools/modkit.py pack mods/potato_voxel
 ```
 
-## Data & cache
+The optional desktop-only threaded smoke test runs from the mod checkout with
+a real LÖVE binary:
 
-- **The cache is per save file.** It lives in the mod sandbox's scoped
-  storage (game version x playthrough x mod). Build it once IN-GAME --
-  accept the BUILD NOW prompt after CONTINUE, or run OPTIONS > VOXEL
-  SETTINGS > PREBUILD CACHE -- let it finish, then **save the game**.
-  The save write is what binds the cache to that save file, so a later
-  launch reuses it instead of asking again. Each other save file gets
-  its own cache and asks once.
-- Settings persist under `options.modOptions.potato_voxel` (row ids
-  `potato_voxel:*`).
-- The terrain mesh cache lives in the mod sandbox's **scoped storage**
-  (no longer a folder on disk — WIPE CACHE empties the storage keys).
-  Each payload carries a small summary record (fingerprint, codec,
-  lengths) so the boot-time READY check reads summaries, not whole
-  payloads. `MeshCache.GEOMETRY_VERSION` must be bumped whenever
-  geometry output changes. Old raw cache folders under `mod-derived/`
-  from previous releases are not used — they can be deleted by hand.
-- **OPTIONS → PREBUILD CACHE** cooperatively builds every map's body and full
-  terrain variant, including water and auxiliary meshes. The game checks the
-  complete cache at boot and shows **READY** when every current job is present.
-  When the cache is incomplete, **CONTINUE** or **NEW GAME** offers to build it
-  after the save loads (the check runs against the save's actual options, so a
-  matching cache never prompts); choosing NO starts normally. An interrupted
-  build resumes from the jobs it already finished. The progress screen can be
-  cancelled, and runtime GPU meshes are released after each map while the
-  stored cache remains.
-- **CACHE STATUS** shows the active geometry-cache version and the
-  compression codec. **WIPE CACHE** removes the precalculated payloads and
-  clears the completion marker; the next voxel visit rebuilds maps on demand.
-- **3D-BTL** reuses the same cached map terrain as the overworld. The battle
-  cards and effects stay dynamic because they follow the live battle state;
-  only the static map geometry belongs in the cache.
+```sh
+love tools/thread_smoke
+```
+
+It is developer tooling and is excluded from the installable mod package.
 
 ## Credits
 
-- **DramaticShape** — the upstream Dramatic Shape Voxel Mod this is a fork
-  of (v1.6.2, github.com/DramaticShape/DramaticShapeVoxelMod). Its own
-  code carries no license; PotatoVoxel is a derived work.
-- **pret/pokered** — the tile and sprite data the geometry is derived from.
-- **AverageConsumer** — battle UI/sprite interoperability improvements and
-  the cold mesh-build loading cover.
+- **DramaticShape** — the upstream Dramatic Shape Voxel Mod this project is
+  forked from.
+- **pret/pokered** — the original game data that Gen1Recomp users provide to
+  their own installation.
+- **AverageConsumer** — battle UI/sprite interoperability and loading-cover
+  improvements.
 
-Version history (including the 1.6.2-brick.\* lineage under the old name)
-is in [CHANGELOG.md](CHANGELOG.md).
+For the complete engineering history, see [CHANGELOG.md](CHANGELOG.md).
