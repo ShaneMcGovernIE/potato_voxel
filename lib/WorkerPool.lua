@@ -87,9 +87,8 @@ end
 function WorkerPool.enabled()
   local platform = platformInfo()
   if platform.mobile or platform.nx or platform.web then return false end
-  local okBrick = pcall(V.require, "Brick")
   local ok, brick = pcall(function()
-    local B = V.require("Brick")
+    local B = V.require("BrickProfile")
     return B and B.isBrick and B.isBrick()
   end)
   if ok and brick then return false end
