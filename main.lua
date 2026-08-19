@@ -200,7 +200,8 @@ local renderMs = 0
 -- scene render, and the periods where voxel is inactive (drawWorld never
 -- runs at all).
 local worldDiag = { loadingEntered = 0, loadingReported = false,
-                    inactiveNoted = false, firstRender = false }
+                    inactiveNoted = false, firstRender = false,
+                    drawStaleTicks = 0 }
 
 -- Entry-frame work deferred off the frame that queued it (BUG-2c): a
 -- non-urgent options write must not ride the restoreSave frame -- the
@@ -434,6 +435,24 @@ mod.content.render_pipelines:register("voxel", {
     -- Deck log's 4s frames) arm the render-skip in drawWorld below.
     WorldFeature.updateStall(dt, stallSkip)
     local covered = Game and Game.stack and Game.stack:top() ~= ow
+    -- BUG-3 watchdog: after an extended app backgrounding the engine can
+    -- stop calling drawWorld despite the pipeline being active.  When the
+    -- overworld is uncovered and voxel is active, count update ticks since
+    -- the last draw call.  120 ticks (~2 s at 60 fps) with no draw while
+    -- uncovered triggers a pipeline invalidation to re-engage the engine.
+    if covered then
+      worldDiag.drawStaleTicks = 0
+    else
+      worldDiag.drawStaleTicks = worldDiag.drawStaleTicks + 1
+      if worldDiag.drawStaleTicks >= 120 then
+        DebugOverlay.error(
+          "drawWorld stale for %d ticks while active; forcing invalidation",
+          worldDiag.drawStaleTicks)
+        Voxel3D.invalidate()
+        ChunkMesher.invalidate()
+        worldDiag.drawStaleTicks = 0
+      end
+    end
     -- The shared queue pumps with CachePrebuild's own slice budget while
     -- a prebuild runs (BUG-2a): the queue is shared, so the live pump
     -- would otherwise slurp prebuild jobs at the full covered slice.
@@ -448,6 +467,7 @@ mod.content.render_pipelines:register("voxel", {
   end,
 
   drawWorld = function(ctx)
+    worldDiag.drawStaleTicks = 0
     local ok, result = DebugOverlay.try("voxel-drawWorld", function()
       local canvas, elapsed = WorldFeature.render(ctx, worldDiag, stallSkip)
       if elapsed ~= nil then renderMs = elapsed end
@@ -798,7 +818,7 @@ mod.hooks:wrap("world.tod", function(next, tod, ctx)
   return DayNight.tod()
 end)
 
-mod.exports.version = "1.7.12"
+mod.exports.version = "1.8.2"
 -- exposed so a companion mod can pin its own tiles' shapes or read the
 -- camera without reaching into this mod's file layout
 mod.exports.lib = V

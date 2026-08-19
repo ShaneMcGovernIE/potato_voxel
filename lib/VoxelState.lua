@@ -91,7 +91,7 @@ end
 -- which is exactly what the key promises -- and the key is also the way back
 -- OUT of them on a keyboard, where the mouse is captured and the OPTIONS
 -- menu is a trip.
-Voxel.HOTKEY_ORDER = { 0, 2, 3, 4, 5, 6, 7 }  -- OFF,15,35,50,75,1ST,3RD
+Voxel.HOTKEY_ORDER = { 2, 3, 4, 5, 6, 7 }  -- 15,35,50,75,1ST,3RD (OFF via settings only)
 
 -- The rung a press moves to from `level`.
 --
@@ -204,8 +204,11 @@ end
 function Voxel.update(dt, level)
   if level ~= nil and level ~= Voxel.level then Voxel.setLevel(level) end
   -- hold at flat until there is geometry to tilt over; easing OUT (goal
-  -- below the current angle) never waits
-  if Voxel.angle == 0 and Voxel.goal > 0 and not Voxel.ready then
+  -- below the current angle) never waits.  When a loading cover is active
+  -- the cover hides the empty stage, so the tween advances behind it and
+  -- the camera is already at the goal angle when the cover lifts (BUG-3).
+  if Voxel.angle == 0 and Voxel.goal > 0 and not Voxel.ready
+     and not Voxel.loading then
     return
   end
   if Voxel.t < 1 then

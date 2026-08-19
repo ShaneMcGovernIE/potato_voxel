@@ -25,6 +25,11 @@ WorldFeature.STALL_TRIGGER = 2
 WorldFeature.STALL_MAX_FRAMES = 4
 
 function WorldFeature.updateStall(dt, stallSkip)
+  -- While actively skipping frames, preserve the armed state so the
+  -- full skip window completes before voxel re-engages.  The fast 2D
+  -- fallback frames during a skip are not evidence of GPU recovery --
+  -- resetting here caused a single-frame oscillation loop (BUG-3).
+  if stallSkip.frames > 0 then return end
   stallSkip.count = dt > WorldFeature.STALL_FRAME
     and (stallSkip.count + 1) or 0
   if stallSkip.count == 0 then stallSkip.frames = 0 end
