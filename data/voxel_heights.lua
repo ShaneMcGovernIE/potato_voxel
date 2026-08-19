@@ -479,51 +479,28 @@ return {
       -- 24w-2 01w-2 for ten cells straight, hard against 31w16 rock and
       -- the 05l06 shelf.  Its unpinned reading was 48px (eight rows of
       -- alternating $06/$24 read as one drawing); 16 is the answer.
-      wall = { 2, 3, 18, 19,       -- $02/$03 over $12/$13, speckled mass
-               12, 13, 28, 29,     -- $0C/$0D over $1C/$1D, boulder mass
-               14, 15, 30, 31,     -- $0E/$0F over $1E/$1F, barred shelf
-               6, 39, 36, 1 },     -- $06/$27 over $24/$01, ceiling mass
-      -- ---- 6: the lit shelf, its cobble perimeter, and the stairs off it ----
+      -- ---- 32: boundary cave walls and ceiling mass ----
+      cliff = { 2, 3, 18, 19,       -- $02/$03 over $12/$13, speckled mass
+                12, 13, 28, 29,     -- $0C/$0D over $1C/$1D, boulder mass
+                14, 15, 30, 31,     -- $0E/$0F over $1E/$1F, barred shelf
+                6, 39, 36, 1 },     -- $06/$27 over $24/$01, ceiling mass
+      -- ---- 16: the lit shelf, its cobble perimeter, and the stairs off it ----
       --
-      -- $05 is the lit floor -- the shipped pin, and the step
-      -- data.field.tilePairs encodes ($20/$21/$2A/$41 <-> $05).  $29 is
-      -- the SAME surface: the artist's shadow row where the shelf runs
-      -- up against the rock above it.
-      --
+      -- $05 is the lit floor, $29 its north shading.
       -- $10/$11 is the cobble course facing the south side of every lit
       -- shelf, $31 its west face, $17 its east face, $04/$07/$28 the caps
-      -- and $25/$26 the inner corners. Placing them at 6px ledge height
-      -- creates an elevated 6px terrace with cobble risers facing the dark
-      -- floor (0px), rather than standing as 16px walls that box the shelf
-      -- in as a sunken pit.
+      -- and $25/$26 the inner corners. Placing the shelf and its perimeter
+      -- at 16px creates a real elevated terrace standing a full 16px course
+      -- above the dark floor (0px), while the boundary cave walls rise to 32px.
       --
-      -- $15/$16 is the STAIR down off that shelf, and the elevation it
-      -- spans is 6px, not 16.  Its art is four treads seen from above,
-      -- each a light tread over a black riser line, stacked NORTH-SOUTH:
-      -- every one of the 54 stair cells in the tileset has the lit floor
-      -- $05 to its NORTH and the low ground to its SOUTH (dark floor x35,
-      -- water x14, lit floor x5 where two flights meet), so the flight
-      -- climbs NORTHWARD, one cell deep, 0 -> 6.
-      --
-      -- It is NOT pinned `stair_e`/`stair_w`, and that is deliberate.
-      -- Those classes build a flight that marches along X -- 16px tall,
-      -- rising toward the named side -- so either of them here would
-      -- throw a 16px staircase sideways across a 6px north-south step,
-      -- blocking the passage it is supposed to open and climbing at
-      -- right angles to the drawn risers.  A wrong-way flight is worse
-      -- than a flat one.  `ledge` is the honest reading available: the
-      -- stair cell joins the shelf it belongs to, wears its four treads
-      -- on the TOP face (which is how they are drawn -- from above), and
-      -- puts its 6px riser face at the FOOT of the flight where the
-      -- player actually steps down onto the dark floor.  See the report:
-      -- a real sloped cave stair wants `stair_n`/`stair_s` in
-      -- Structures.stairCell, which is an engine change, not a pin.
+      -- $15/$16 is the STAIR down off that shelf, climbing 0 -> 16.
       ledge = { 5, 41,             -- $05 lit floor, $29 its north shading
                 21, 22,            -- $15/$16, the stair plate off it
                 16, 17,            -- $10/$11, the shelf's south cobbles
                 49, 23,            -- $31 west face, $17 east face
                 4, 7, 40,          -- $04 NW cap, $07 NE cap, $28 SW cap
                 37, 38 },          -- $25/$26, the inner corners
+      heights = { ledge = 16 },
       -- ---- 0: the floor plane ----
       --
       -- The dark lower floor, pinned rather than left derived so the
