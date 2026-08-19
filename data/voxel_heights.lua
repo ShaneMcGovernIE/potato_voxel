@@ -183,15 +183,7 @@ return {
       -- the hop-down edges named by data.field.ledges' ledgeTile: their
       -- art is a ground lip seen from above, which the detector would
       -- otherwise raise as a wall
-      -- $34 is the cliff slope's FOOT, and it also punctuates the ledge
-      -- rows: the hop-down runs are set into the cliff face and this
-      -- tile is the pillar between segments.  It was `wall` with the
-      -- rest of the slope chain, which stood those pillars 16px beside
-      -- a 6px lip -- the ledge line came out interrupted by blocks
-      -- nearly three times its height.  At ledge height the run reads
-      -- as one continuous lip, and the mound loses nothing: its foot
-      -- row simply reads as the talus it is drawn as.
-      ledge = { 13, 29, 39, 52, 54, 55 },
+      ledge = { 13, 29, 39, 54, 55 },
       -- Trees are round scenery. Keep the dedicated cylinder builder: it
       -- reconstructs the authored canopy silhouette as a sprite-backed
       -- round model instead of using the per-pixel prop slab.
@@ -208,15 +200,18 @@ return {
       -- render as the same thin posts, marching north
       post = { 14, 85 },
       -- the cliff-mound's dark east slope and its NE corner ($24 the
-      -- slope column, $02 the corner).  Their drawn runs span the whole
-      -- mound drawing, so the detector raised them to 32px towers --
-      -- the rock pillar beside Diglett's Cave -- and the doorway
-      -- column, which adopts its REGION's height, inherited the same 32
-      -- and put the cave entrance a block above the mound around it.
-      -- Pinned to one 16px course they match the plateau body, and the
-      -- doorway drops with them.  ($34, the slope's foot, is `ledge`
-      -- instead -- see there.)
-      wall = { 2, 36 },
+      -- slope column, $02 the corner) and $34 the cliff foot.
+      -- On cliff mounds, $34 folds with $24 into the 16px front facade,
+      -- avoiding splitting the mound into a 6px shelf and 16px tower.
+      wall = { 2, 36, 52 },
+      when_above = {
+        -- $34 (tile 52) in a hop-down ledge row is the pillar between
+        -- 6px ledge segments. When placed below ledge tiles or flat ground,
+        -- it stays at 6px ledge height.
+        [52] = {
+          { above = { 13, 29, 39, 54, 55, 44, 45, 60 }, class = "ledge" },
+        },
+      },
 
       -- the cuttable bush ($2D/$2E/$3D/$3E, the four tiles Cut deletes
       -- -- across the whole tileset they appear only in the five
