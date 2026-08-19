@@ -388,8 +388,14 @@ function GeometryBuilder.emit(map, bodyOnly, masks, sink, waterSink)
                  { x0 + 8, neY, z0 }, { x0, nwY, z0 } },
                { { u0, v1 }, { u1, v1 }, { u1, v0 }, { u0, v0 } }, 0.95)
         elseif run then
-          local m = math.min(2, run.extent)
-          local topTile = map:tileAt(tx, run.north + ((ty - run.north) % m))
+          local faceRows = math.floor(h / 8)
+          local topTile
+          if ty <= run.front - faceRows then
+            topTile = tile
+          else
+            local capRow = math.max(run.north, run.front - faceRows)
+            topTile = map:tileAt(tx, capRow)
+          end
           topQuad(x0, z0, h, topTile, VOLUME_TOP_SHADE)
         else
           local topTile = tile

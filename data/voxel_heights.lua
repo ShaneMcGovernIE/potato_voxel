@@ -481,21 +481,21 @@ return {
       -- alternating $06/$24 read as one drawing); 16 is the answer.
       wall = { 2, 3, 18, 19,       -- $02/$03 over $12/$13, speckled mass
                12, 13, 28, 29,     -- $0C/$0D over $1C/$1D, boulder mass
-               16, 17,             -- $10/$11, the shelf's south cobbles
-               49, 23,             -- $31 west face, $17 east face
-               4, 7, 40,           -- $04 NW cap, $07 NE cap, $28 SW cap
-               37, 38,             -- $25/$26, the inner corners
                14, 15, 30, 31,     -- $0E/$0F over $1E/$1F, barred shelf
                6, 39, 36, 1 },     -- $06/$27 over $24/$01, ceiling mass
-      -- ---- 6: the lit shelf, and the stairs off it ----
+      -- ---- 6: the lit shelf, its cobble perimeter, and the stairs off it ----
       --
       -- $05 is the lit floor -- the shipped pin, and the step
       -- data.field.tilePairs encodes ($20/$21/$2A/$41 <-> $05).  $29 is
       -- the SAME surface: the artist's shadow row where the shelf runs
-      -- up against the rock above it.  It sits in walkable cells, so
-      -- unpinned it resolved to flat ground and cut a 6px trench along
-      -- the north edge of every lit room (`29g00` with `05l06` one tile
-      -- south, all the way across MT_MOON_B2F).
+      -- up against the rock above it.
+      --
+      -- $10/$11 is the cobble course facing the south side of every lit
+      -- shelf, $31 its west face, $17 its east face, $04/$07/$28 the caps
+      -- and $25/$26 the inner corners. Placing them at 6px ledge height
+      -- creates an elevated 6px terrace with cobble risers facing the dark
+      -- floor (0px), rather than standing as 16px walls that box the shelf
+      -- in as a sunken pit.
       --
       -- $15/$16 is the STAIR down off that shelf, and the elevation it
       -- spans is 6px, not 16.  Its art is four treads seen from above,
@@ -519,7 +519,11 @@ return {
       -- a real sloped cave stair wants `stair_n`/`stair_s` in
       -- Structures.stairCell, which is an engine change, not a pin.
       ledge = { 5, 41,             -- $05 lit floor, $29 its north shading
-                21, 22 },          -- $15/$16, the stair plate off it
+                21, 22,            -- $15/$16, the stair plate off it
+                16, 17,            -- $10/$11, the shelf's south cobbles
+                49, 23,            -- $31 west face, $17 east face
+                4, 7, 40,          -- $04 NW cap, $07 NE cap, $28 SW cap
+                37, 38 },          -- $25/$26, the inner corners
       -- ---- 0: the floor plane ----
       --
       -- The dark lower floor, pinned rather than left derived so the
