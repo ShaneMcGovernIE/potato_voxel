@@ -251,6 +251,10 @@ local function shadowColorFormat()
 end
 
 local IDENTITY = Mat4.identity()
+local shadowProj = Mat4.identity()
+local shadowScale = Mat4.identity()
+local shadowClipVP = Mat4.identity()
+local shadowUvVP = Mat4.identity()
 
 -- world -> [0,1] cube, applied on top of the clip matrix: the main pass
 -- samples the map with the xy and compares against the z
@@ -766,15 +770,16 @@ local function fit(cx, cy, vw, vh)
   -- skips the pass, and the frame renders flat-lit instead of poisoned.
   -- NaN compares false, so the plain > tests above reject it too.
   if ShadowMap._degenerate(w, h, near, far) then return false end
-  local proj = Mat4.ortho(l, r, b, t, near, far)
+  local proj = Mat4.orthoInPlace(shadowProj, l, r, b, t, near, far)
   -- flip clip-space Y for the same reason the camera does: we bypass
   -- LOVE's transform_projection, and canvas coordinates run Y DOWN, so
   -- without this the map is stored upside down relative to the uv the
   -- main pass reads it with
-  proj = Mat4.mul(Mat4.scale(1, -1, 1), proj)
+  Mat4.scaleInPlace(shadowScale, 1, -1, 1)
+  Mat4.mulInPlace(proj, shadowScale, proj)
 
-  ShadowMap.clipVP = Mat4.mul(proj, view)
-  ShadowMap.uvVP = Mat4.mul(TO_UNIT, ShadowMap.clipVP)
+  ShadowMap.clipVP = Mat4.mulInPlace(shadowClipVP, proj, view)
+  ShadowMap.uvVP = Mat4.mulInPlace(shadowUvVP, TO_UNIT, ShadowMap.clipVP)
   -- what the frustum ended up covering, for probes: the lateral extent in
   -- world pixels divided by RES is how fine a shadow edge can land
   ShadowMap.extent = { r - l, t - b, far - near }

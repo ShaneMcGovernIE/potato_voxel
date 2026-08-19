@@ -434,6 +434,17 @@ local function releaseSlot(slotHeld)
 end
 
 local IDENTITY = Mat4.identity()
+local mainCamProj = Mat4.identity()
+local mainCamScale = Mat4.identity()
+local mainCamView = Mat4.identity()
+local mainCamVP = Mat4.identity()
+local shadowBlobMat = Mat4.identity()
+local shadowCardA = Mat4.identity()
+local shadowCardB = Mat4.identity()
+local shadowSquash = { 1, Voxel3D.SHADOW_KX, 0, 0,
+                       0, 0,                 0, 0,
+                       0, Voxel3D.SHADOW_KZ, 1, 0,
+                       0, 0,                 0, 1 }
 
 -- Whether the driver admits to supporting derivatives. Only a hint --
 -- the compile below is the real test -- but it saves building a shader
@@ -728,16 +739,18 @@ function Voxel3D.viewProjection(cx, cy, vw, vh)
   -- parallel to the view direction, so there is no degenerate a = 0 case.
   local up = { 0, math.sin(a), -math.cos(a) }
 
-  local proj = Mat4.perspective(fov, vw / vh,
-                                math.max(1, dist * 0.05), dist * 4 + 4096)
+  local proj = Mat4.perspectiveInPlace(mainCamProj, fov, vw / vh,
+                                       math.max(1, dist * 0.05), dist * 4 + 4096)
   -- Flip clip-space Y. Mat4.perspective emits textbook GL clip space with
   -- +Y up, but we bypass LOVE's own transform_projection, and LOVE's canvas
   -- coordinates run Y DOWN -- so without this the entire scene composites
   -- vertically mirrored: north at the bottom and buildings extruding
   -- downward. Winding flips with it, which is free here because the pass
   -- draws with culling off.
-  proj = Mat4.mul(Mat4.scale(1, -1, 1), proj)
-  return Mat4.mul(proj, Mat4.lookAt(eye, focus, up))
+  Mat4.scaleInPlace(mainCamScale, 1, -1, 1)
+  Mat4.mulInPlace(proj, mainCamScale, proj)
+  Mat4.lookAtInPlace(mainCamView, eye, focus, up)
+  return Mat4.mulInPlace(mainCamVP, proj, mainCamView)
 end
 
 -- ------- the horizon
@@ -1490,13 +1503,13 @@ end
 -- that need it, but the fallback actor path uses shadowBlobMatrix below.
 function Voxel3D.shadowMatrix(px, py, gh, lift, mirror)
   local card = Voxel3D.casterMatrix(px, py, gh + (lift or 0), mirror)
-  -- flatten about the ground plane: y' = 0, x/z shear by height above it
-  local squash = { 1, Voxel3D.SHADOW_KX, 0, 0,
-                   0, 0,                 0, 0,
-                   0, Voxel3D.SHADOW_KZ, 1, 0,
-                   0, 0,                 0, 1 }
-  local m = Mat4.mul(squash, Mat4.mul(Mat4.translate(0, -gh, 0), card))
-  return Mat4.mul(Mat4.translate(0, gh + Voxel3D.SHADOW_EPS, 0), m)
+  shadowSquash[2] = Voxel3D.SHADOW_KX
+  shadowSquash[10] = Voxel3D.SHADOW_KZ
+  Mat4.translateInPlace(shadowCardA, 0, -gh, 0)
+  Mat4.mulInPlace(shadowCardA, shadowCardA, card)
+  Mat4.mulInPlace(shadowCardA, shadowSquash, shadowCardA)
+  Mat4.translateInPlace(shadowCardB, 0, gh + Voxel3D.SHADOW_EPS, 0)
+  return Mat4.mulInPlace(shadowCardB, shadowCardB, shadowCardA)
 end
 
 -- Stable, low-end contact/blob shadow: fixed footprint, no sprite texture or
@@ -1505,7 +1518,7 @@ end
 -- sun vector; that is the classic readable contact shadow at this quality rung.
 function Voxel3D.shadowBlobMatrix(px, py, gh)
   local x, z = Voxel3D.shadowPosition(px, py)
-  return Mat4.translate(x + 8, gh + Voxel3D.SHADOW_EPS, z + 8)
+  return Mat4.translateInPlace(shadowBlobMat, x + 8, gh + Voxel3D.SHADOW_EPS, z + 8)
 end
 
 -- The decal pass draws between terrain and characters: depth-tested so a

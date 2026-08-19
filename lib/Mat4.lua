@@ -180,6 +180,16 @@ function Mat4.perspective(fovY, aspect, near, far)
            0, 0, -1, 0 }
 end
 
+function Mat4.perspectiveInPlace(out, fovY, aspect, near, far)
+  local f = 1 / math.tan(fovY / 2)
+  local d = near - far
+  out[1], out[2], out[3], out[4]   = f / aspect, 0, 0, 0
+  out[5], out[6], out[7], out[8]   = 0, f, 0, 0
+  out[9], out[10], out[11], out[12] = 0, 0, (far + near) / d, (2 * far * near) / d
+  out[13], out[14], out[15], out[16] = 0, 0, -1, 0
+  return out
+end
+
 -- Right-handed orthographic projection onto GL clip space (z in [-1, 1]).
 -- The view-space box is x in [l, r], y in [b, t], z in [-f, -n] -- near and
 -- far are DISTANCES down the view's -z, exactly as in perspective() above.
@@ -191,6 +201,17 @@ function Mat4.ortho(l, r, b, t, n, f)
            0, 2 / (t - b), 0, -(t + b) / (t - b),
            0, 0, -2 / (f - n), -(f + n) / (f - n),
            0, 0, 0, 1 }
+end
+
+function Mat4.orthoInPlace(out, l, r, b, t, n, f)
+  local rml = r - l
+  local tmb = t - b
+  local fmn = f - n
+  out[1], out[2], out[3], out[4]   = 2 / rml, 0, 0, -(r + l) / rml
+  out[5], out[6], out[7], out[8]   = 0, 2 / tmb, 0, -(t + b) / tmb
+  out[9], out[10], out[11], out[12] = 0, 0, -2 / fmn, -(f + n) / fmn
+  out[13], out[14], out[15], out[16] = 0, 0, 0, 1
+  return out
 end
 
 -- Right-handed look-at. eye/target/up are {x, y, z}.
@@ -215,6 +236,34 @@ function Mat4.lookAt(eye, target, up)
            u[1], u[2], u[3], -dot(u, eye),
           -f[1], -f[2], -f[3], dot(f, eye),
            0, 0, 0, 1 }
+end
+
+function Mat4.lookAtInPlace(out, eye, target, up)
+  local fx = target[1] - eye[1]
+  local fy = target[2] - eye[2]
+  local fz = target[3] - eye[3]
+  local fl = math.sqrt(fx * fx + fy * fy + fz * fz)
+  if fl > 0 then fx, fy, fz = fx / fl, fy / fl, fz / fl else fx, fy, fz = 0, 0, 0 end
+
+  local sx = fy * up[3] - fz * up[2]
+  local sy = fz * up[1] - fx * up[3]
+  local sz = fx * up[2] - fy * up[1]
+  local sl = math.sqrt(sx * sx + sy * sy + sz * sz)
+  if sl > 0 then sx, sy, sz = sx / sl, sy / sl, sz / sl else sx, sy, sz = 0, 0, 0 end
+
+  local ux = sy * fz - sz * fy
+  local uy = sz * fx - sx * fz
+  local uz = sx * fy - sy * fx
+
+  local dotS = sx * eye[1] + sy * eye[2] + sz * eye[3]
+  local dotU = ux * eye[1] + uy * eye[2] + uz * eye[3]
+  local dotF = fx * eye[1] + fy * eye[2] + fz * eye[3]
+
+  out[1], out[2], out[3], out[4]   = sx, sy, sz, -dotS
+  out[5], out[6], out[7], out[8]   = ux, uy, uz, -dotU
+  out[9], out[10], out[11], out[12] = -fx, -fy, -fz, dotF
+  out[13], out[14], out[15], out[16] = 0, 0, 0, 1
+  return out
 end
 
 return Mat4

@@ -298,6 +298,27 @@ local billboardMat = Mat4.identity()
 local figureMat = Mat4.identity()
 local figureCasterMat = Mat4.identity()
 
+local nbMatrices = {}
+for i = 1, 16 do
+  nbMatrices[i] = Mat4.identity()
+end
+
+local function nbTransform(i, ox, oy)
+  local m = nbMatrices[i]
+  if not m then
+    m = Mat4.identity()
+    nbMatrices[i] = m
+  end
+  return Mat4.translateInPlace(m, ox, 0, oy)
+end
+
+local waterDraws = {}
+local function clearWaterDraws()
+  for i = 1, #waterDraws do
+    waterDraws[i] = nil
+  end
+end
+
 local function billboardMatrix(px, py, y, mirror)
   local b = FirstPerson.cardBlend()
   Mat4.translateInPlace(billboardMat, px + 8, y, py + 8)
@@ -1098,7 +1119,7 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   Voxel3D.draw(ring, atlasFor(state.map), nil)
   for i, nb in ipairs(state.neighbors or {}) do
     Voxel3D.draw(nbMesh[i], atlasFor(nb.map),
-                 Mat4.translate(nb.ox, 0, nb.oy))
+                 nbTransform(i, nb.ox, nb.oy))
   end
 
   -- Without a shadow map (headless, or a driver that could not make the
@@ -1137,23 +1158,32 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- lake would otherwise wear one as a black smear. Water covers them,
   -- which is the same answer the shadow map's own pass gives (see
   -- ShadowMap.sprites) -- people do not shadow water either way.
-  local waterDraws = {}
+  clearWaterDraws()
+  local wCount = 0
   if water then
-    waterDraws[#waterDraws + 1] = { water, atlasFor(state.map), nil }
+    wCount = wCount + 1
+    local d = waterDraws[wCount] or {}
+    d[1], d[2], d[3] = water, atlasFor(state.map), nil
+    waterDraws[wCount] = d
   end
   if ringWater then
-    waterDraws[#waterDraws + 1] = { ringWater, atlasFor(state.map), nil }
+    wCount = wCount + 1
+    local d = waterDraws[wCount] or {}
+    d[1], d[2], d[3] = ringWater, atlasFor(state.map), nil
+    waterDraws[wCount] = d
   end
   for i, nb in ipairs(state.neighbors or {}) do
     if nbWater and nbWater[i] then
-      waterDraws[#waterDraws + 1] = { nbWater[i], atlasFor(nb.map),
-                                      Mat4.translate(nb.ox, 0, nb.oy) }
+      wCount = wCount + 1
+      local d = waterDraws[wCount] or {}
+      d[1], d[2], d[3] = nbWater[i], atlasFor(nb.map), nbTransform(i, nb.ox, nb.oy)
+      waterDraws[wCount] = d
     end
   end
   -- the cast goes into the reflection copy only -- see drawWater for why it
   -- cannot be composited yet and why it is drawn through the same function
   -- the real pass below uses
-  if #waterDraws > 0 then
+  if wCount > 0 then
     VoxelScene.drawWater(waterDraws, function()
       drawCast(state, posed, atlasFor)
     end, Water.profileFor(state.map.tileset and state.map.tileset.id))
@@ -1262,9 +1292,9 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   local lean = math.max(leanAngle(), 0.05)
   local pull = VoxelScene.pull(lean)
   Voxel3D.draw(ChunkMesher.grass(state.map), atlasFor(state.map), nil, pull)
-  for _, nb in ipairs(state.neighbors or {}) do
+  for i, nb in ipairs(state.neighbors or {}) do
     Voxel3D.draw(ChunkMesher.grass(nb.map), atlasFor(nb.map),
-                 Mat4.translate(nb.ox, 0, nb.oy), pull)
+                 nbTransform(i, nb.ox, nb.oy), pull)
   end
   -- flower billboards: pulled like the characters and the grass, MINUS
   -- the depth of 8 world pixels along the view (8 sin a -- the camera
@@ -1281,10 +1311,11 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- through the same snugged transform the sun stored them with
   Voxel3D.draw(ChunkMesher.flowers(state.map), atlasFor(state.map), nil,
                fpull, ShadowMap.snug(nil))
-  for _, nb in ipairs(state.neighbors or {}) do
+  for i, nb in ipairs(state.neighbors or {}) do
+    local nbMat = nbTransform(i, nb.ox, nb.oy)
     Voxel3D.draw(ChunkMesher.flowers(nb.map), atlasFor(nb.map),
-                 Mat4.translate(nb.ox, 0, nb.oy), fpull,
-                 ShadowMap.snug(Mat4.translate(nb.ox, 0, nb.oy)))
+                 nbMat, fpull,
+                 ShadowMap.snug(nbMat))
   end
 
   end   -- drawScene
