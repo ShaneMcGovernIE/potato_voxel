@@ -287,6 +287,11 @@ mod.content.render_pipelines:register("voxel", {
   -- already there instead of a flat flash.
   update = function(dt, level)
     return DebugOverlay.try("voxel-update", function()
+    -- Clamp real frame delta time on app resume (phone lock, backgrounding):
+    -- prevents multi-minute sleep intervals from corrupting frame metrics
+    -- or fast-forwarding animations.
+    dt = math.min(dt or 0, 0.25)
+    WorldFeature.flushBlockRefresh()
     -- Entry-frame work deferred by the events below lands here, one
     -- batch per frame (BUG-2c): non-urgent option/save writes must not
     -- ride the restoreSave frame that queued them.

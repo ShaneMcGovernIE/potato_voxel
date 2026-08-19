@@ -23,6 +23,23 @@ local WorldFeature = {}
 WorldFeature.STALL_FRAME = 0.25
 WorldFeature.STALL_TRIGGER = 2
 WorldFeature.STALL_MAX_FRAMES = 4
+WorldFeature.LOADING_TIMEOUT = 25
+
+local pendingRefresh = {}
+
+function WorldFeature.queueBlockRefresh(mapId)
+  if not mapId then return end
+  pendingRefresh[mapId] = true
+end
+
+function WorldFeature.flushBlockRefresh()
+  if not next(pendingRefresh) then return end
+  local batch = pendingRefresh
+  pendingRefresh = {}
+  for mapId in pairs(batch) do
+    ChunkMesher.refresh(mapId)
+  end
+end
 
 function WorldFeature.updateStall(dt, stallSkip)
   -- While actively skipping frames, preserve the armed state so the
@@ -54,7 +71,7 @@ function WorldFeature.installMapHooks(ctx)
     local mapId = payload and (payload.mapId
                   or (payload.map and payload.map.id))
     DebugOverlay.trace("event block_replaced %s", tostring(mapId))
-    if mapId then ChunkMesher.refresh(mapId) end
+    if mapId then WorldFeature.queueBlockRefresh(mapId) end
   end)
 
   local Map = require("src.world.Map")
@@ -64,7 +81,7 @@ function WorldFeature.installMapHooks(ctx)
         local before = self:blockAt(bx, by)
         setBlock(self, bx, by, block)
         if self.id and self:blockAt(bx, by) ~= before then
-          ChunkMesher.refresh(self.id)
+          WorldFeature.queueBlockRefresh(self.id)
         end
       end
     end)
@@ -101,6 +118,7 @@ local function sceneSize(ctx)
 end
 
 function WorldFeature.render(ctx, worldDiag, stallSkip)
+  WorldFeature.flushBlockRefresh()
   Diagnostics.pipelinePath("entered")
   if not ctx.state then
     Diagnostics.pipelinePath("no_state")
@@ -138,7 +156,7 @@ function WorldFeature.render(ctx, worldDiag, stallSkip)
       worldDiag.loadingPending = pendingNow
       Diagnostics.note("drawWorld: loading canvas (%d pending)", pendingNow)
     elseif not worldDiag.loadingReported and now > 0
-           and now - worldDiag.loadingEntered > 10 then
+           and now - worldDiag.loadingEntered > WorldFeature.LOADING_TIMEOUT then
       if pendingNow >= worldDiag.loadingPending then
         worldDiag.loadingReported = true
         Diagnostics.error("drawWorld: stuck loading %.0fs (%d pending)",
