@@ -201,15 +201,22 @@ return {
       post = { 14, 85 },
       -- the cliff-mound's dark east slope and its NE corner ($24 the
       -- slope column, $02 the corner) and $34 the cliff foot.
-      -- On cliff mounds, $34 folds with $24 into the 16px front facade,
-      -- avoiding splitting the mound into a 6px shelf and 16px tower.
+      -- $34 is authored `wall` by default (16px), which keeps it out of
+      -- volume runs (authored tiles are not structural). On the east
+      -- face's base row, the when_above rule downgrades it to `ledge`
+      -- (6px) when the tile directly above is a slope tile ($24/$02),
+      -- a ledge tile, or flat ground, creating an intermediate 6px step
+      -- so the mountain slopes down: 16px → 6px → 0px.
       wall = { 2, 36, 52 },
       when_above = {
-        -- $34 (tile 52) in a hop-down ledge row is the pillar between
-        -- 6px ledge segments. When placed below ledge tiles or flat ground,
-        -- it stays at 6px ledge height.
+        -- $34 (tile 52): becomes ledge (6px) when below slope, ledge,
+        -- or ground tiles — creating the intermediate step at the foot
+        -- of the cliff. Stays wall (16px) when below plateau body tiles
+        -- (the flat repeating brown surface inside the mound).
         [52] = {
-          { above = { 13, 29, 39, 54, 55, 44, 45, 60 }, class = "ledge" },
+          { above = { 2, 36,                       -- $02/$24: slope & corner
+                      13, 29, 39, 54, 55,          -- ledge hop-down tiles
+                      44, 45, 60 }, class = "ledge" },
         },
       },
 
