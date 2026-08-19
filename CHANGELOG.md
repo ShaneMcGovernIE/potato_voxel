@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.8.2] - 2026-08-19
+
+### Fixed: voxel mode flickering between 2D and 3D (BUG-3)
+
+- Fixed stallSkip oscillation loop in `WorldFeature.lua`: consecutive GPU hitches (>250ms) no longer cause rapid 2D/3D render flapping because the skip state is now preserved until the 4-frame skip window fully elapses.
+- Removed OFF (level 0) from `Voxel.HOTKEY_ORDER` in `VoxelState.lua`: pressing Shift/8 no longer cycles into 2D mode, preventing desktop players who use Shift to sprint from inadvertently toggling voxel mode off.
+- Allowed camera tween to progress behind loading cover in `VoxelState.lua`: eliminates the 1-2 frame flat camera flash on map warp transitions.
+- Added post-backgrounding drawWorld watchdog in `main.lua`: detects when the engine stops issuing draw calls while overworld voxel rendering is active on Android and forces a pipeline invalidation to re-engage rendering.
+
 ## [1.7.12] - 2026-08-17
 
 ### Fixed: precache memory growth and sprite regression

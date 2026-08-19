@@ -7,7 +7,7 @@ local run = T.sdk.loadMod("mods/potato_voxel", { data = Data })
 T.eq(#run.errors, 0, "loads clean")
 local exports = run.loader.exports.potato_voxel
 T.check(exports ~= nil, "mod exports a table")
-T.eq(exports.version, "1.7.12", "exports the manifest release version")
+T.eq(exports.version, "1.8.2", "exports the manifest release version")
 for _, name in ipairs({
   "Horde", "HordeGun", "HordeHud", "HordeMobs", "HordeSfx",
   "HordeExitPrompt", "HordeGameOver",
