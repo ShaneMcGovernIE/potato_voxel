@@ -133,8 +133,8 @@ DebugOverlay.setProbe(function()
     },
   }
 end)
--- The hold chords: five seconds of SELECT toggles debug visibility,
--- and five seconds of START while the background debugger is running exports its log --
+-- The hold chords: five seconds of SELECT toggles the debugger,
+-- and five seconds of START exports its log --
 -- the touch/pad versions of F9 and F8 (see lib/HoldChord.lua). Polled
 -- on the always-running update tick below, because the engine's Input is
 -- the one place every road into a button -- touch overlay, pad, keyboard
@@ -372,12 +372,9 @@ mod.content.render_pipelines:register("voxel", {
       end
       CachePrebuild.update(covered)
     end)
-    -- The DEBUGGER row (and the mod manager's page) write the stored
-    -- option; F9 and the SELECT chord flip visibility directly, so the
-    -- stored value is only re-applied here when it CHANGES -- never
-    -- fighting a manual toggle, and never hiding a panel the player just
-    -- called up. On Android this option is the only toggle (see the
-    -- SELECT chord gate below).
+    -- The DEBUGGER row, the mod manager's page, F9 and SELECT all land on
+    -- the same capture/panel state. Read the stored value live and apply it
+    -- only when it changes so a hotkey transition is not rewritten each tick.
     local debuggerOn = false
     local optMod = V.mod
     if optMod and optMod.options then
@@ -386,7 +383,7 @@ mod.content.render_pipelines:register("voxel", {
     end
     if debuggerOn ~= lastDebuggerSetting then
       lastDebuggerSetting = debuggerOn
-      DebugOverlay.setVisible(debuggerOn)
+      DebugOverlay.setEnabled(debuggerOn, require("src.core.Game"))
     end
     -- The hold chords ride the same always-running tick: five seconds
     -- held fires a chord wherever the cursor is, exactly like the F9 and
@@ -394,8 +391,8 @@ mod.content.render_pipelines:register("voxel", {
     -- (a text field) never arms a chord. The engine's Input answers for
     -- every road into a button at once -- the touch overlay's buttons, a
     -- pad's back/start, and the keyboard aliases. SELECT toggles the
-    -- debugger visibility; START exports its background log -- exporting is
-    -- the retrieval half of the pair.
+    -- debugger state; START exports a one-shot log -- exporting is the
+    -- retrieval half of the pair and remains available while capture is off.
     local Input = require("src.core.Input")
     local holdGame = require("src.core.Game")
     local holdTop = holdGame.stack and holdGame.stack:top()
@@ -408,10 +405,9 @@ mod.content.render_pipelines:register("voxel", {
     local selectChordable = chordable
       and not (Platform.detect and Platform.detect().mobile)
     if HoldChord.update("select", dt, selectChordable and Input:isDown("select")) then
-      DebugOverlay.toggle()
+      DebugOverlay.toggle(holdGame)
     end
-    if HoldChord.update("start", dt, chordable and DebugOverlay.running()
-                                               and Input:isDown("start")) then
+    if HoldChord.update("start", dt, chordable and Input:isDown("start")) then
       DebugOverlay.export(holdGame)
     end
     if not Voxel.active() then

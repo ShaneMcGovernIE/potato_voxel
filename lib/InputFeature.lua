@@ -84,7 +84,7 @@ function InputFeature.new(ctx)
             if CamControl.zoomBy(key == "q" and 1 or -1) then return end
           end
           if key == "f9" and not (top and top.onKeyPressed) then
-            DebugOverlay.toggle()
+            DebugOverlay.toggle(self)
             return
           end
           if key == "f10" and not (top and top.onKeyPressed) then

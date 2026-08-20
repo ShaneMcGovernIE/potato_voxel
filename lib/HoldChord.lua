@@ -3,11 +3,11 @@
 --
 -- Two chords ship:
 --
---   select  five seconds held toggles the debug overlay -- F9's chord
+--   select  five seconds held toggles the debugger -- F9's chord
 --           for touch and pads, whose SELECT buttons never arrive as a
 --           keypress.
 --
---   start   five seconds held while the debugger is ON exports its log
+--   start   five seconds held exports a one-shot log
 --           -- F8's chord, the retrieval half of the same switch pair.
 --
 -- Each chord is a pure timer over one boolean answer per frame: feed it

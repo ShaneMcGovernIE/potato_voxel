@@ -771,10 +771,12 @@ if brick then
           "the crossing frame resets the timer")
   local DebugOverlay = exports.lib.require("DebugOverlay")
   T.check(type(DebugOverlay.enabled) == "function",
-          "the overlay exposes its visibility for the START chord")
+          "the overlay exposes its active debugger state")
   T.check(type(DebugOverlay.running) == "function",
-          "the debugger exposes its background-running state")
-  T.check(DebugOverlay.running(), "the debugger runs in the background at boot")
+          "the debugger exposes its active capture state")
+  T.check(type(DebugOverlay.setEnabled) == "function",
+          "the debugger exposes an authoritative enabled transition")
+  T.check(not DebugOverlay.running(), "the debugger is off by default")
   T.check(not DebugOverlay.enabled(), "the debugger starts hidden")
   T.check(type(DebugOverlay.status) == "function",
           "the debugger exposes a data-only status snapshot")
@@ -786,6 +788,23 @@ if brick then
           "the debugger exposes world-render path accounting")
   T.check(type(DebugOverlay.runProbe) == "function",
           "the debugger exposes a capability self-test")
+  do
+    local before = DebugOverlay.status()
+    DebugOverlay.pipelineUpdate(99)
+    DebugOverlay.note("disabled diagnostics marker")
+    local after = DebugOverlay.status()
+    T.eq(after.pipeline.updateCalls, before.pipeline.updateCalls,
+         "disabled debugger ignores pipeline diagnostics")
+    T.eq(after.storage.writes, before.storage.writes,
+         "disabled debugger does not persist background diagnostics")
+    if type(DebugOverlay.setEnabled) == "function" then
+      DebugOverlay.setEnabled(true, fakeGame)
+    elseif not DebugOverlay.running() then
+      DebugOverlay.toggle(fakeGame)
+    end
+    T.check(DebugOverlay.running() and DebugOverlay.enabled(),
+            "enabling the debugger starts capture and shows the panel")
+  end
   do
     DebugOverlay.pipelineUpdate(5)
     DebugOverlay.pipelineAvailable(false, "scene_shader_compile",
@@ -878,18 +897,19 @@ if brick then
         print = function(line) printed[#printed + 1] = line end,
       },
     }
-    DebugOverlay.note("hidden boot marker")
-    DebugOverlay.toggle()
+    DebugOverlay.note("active debugger marker")
     DebugOverlay.draw()
     local found = false
     for _, line in ipairs(printed) do
-      if tostring(line):find("hidden boot marker", 1, true) then
+      if tostring(line):find("active debugger marker", 1, true) then
         found = true
         break
       end
     end
-    T.check(found, "background diagnostics remain available when F9 shows the panel")
-    DebugOverlay.toggle()
+    T.check(found, "enabled diagnostics are visible in the debug panel")
+    DebugOverlay.toggle(fakeGame)
+    T.check(not DebugOverlay.running() and not DebugOverlay.enabled(),
+            "the debugger toggle disables capture and hides the panel")
     _G.love = oldLove
   end
   -- The log-send gate: F8 / SEND LOGS / the START chord all land on
@@ -922,6 +942,8 @@ if brick then
             "postLog plus a log_url makes a send possible")
     T.check(DebugOverlay.sendingAllowed(),
             "log sending defaults to ON (opt-out)")
+    DebugOverlay.frame(180)
+    T.eq(sends, 0, "disabled debugger never sends on a frame schedule")
     DebugOverlay.export(sendGame)
     T.eq(sends, 1, "an export sends immediately with no prompt")
     DebugOverlay.export(sendGame)
@@ -1121,36 +1143,17 @@ if brick then
     T.check(DebugOverlay.sendingAllowed(), "the toggle reads the stored ON")
     DebugOverlay.export(sendGame)
     T.eq(sends, 5, "turning LOGS TO DEV back ON restores sending")
-    -- The automatic send: every 90 seconds of accumulated game time the
-    -- frame tick ships the log with no keypress -- but only when the ring
-    -- grew since the last send (idle backoff, OPT-1: an unchanged delta
-    -- is not worth a POST; a fully idle session still heartbeats at the
-    -- five-minute cap). The schedule is a next-deadline, so a skipped
-    -- interval fires at the first tick past it -- and OFF silences it
-    -- like every other send. The fake fetch settles each handle so the
-    -- next interval can send.
+    -- Frame time never sends automatically. Only an explicit export can
+    -- reach the transport, and LOGS TO DEV remains its second gate.
     do
       mod.fetch = {
         poll = function() return { status = "ok" } end,
         release = function() end,
         cancel = function() end,
       }
-      optionsState.modOptions.potato_voxel.send_logs = false
-      DebugOverlay.frame(90)
-      T.eq(sends, 5, "the auto-send respects LOGS TO DEV OFF")
       optionsState.modOptions.potato_voxel.send_logs = true
-      DebugOverlay.frame(0.01)
-      T.eq(sends, 5, "an idle ring skips the 90s deadline (backoff)")
-      DebugOverlay.note("tick marker one")
-      DebugOverlay.frame(89.99)
-      T.eq(sends, 5, "the skip pushed the next deadline out a full interval")
-      DebugOverlay.frame(89.99)
-      T.eq(sends, 6, "the frame tick auto-sends once 90 seconds of game time pass")
-      DebugOverlay.frame(89.99)
-      T.eq(sends, 6, "an idle ring skips the next deadline too (backoff)")
-      DebugOverlay.note("tick marker two")
-      DebugOverlay.frame(89.99)
-      T.eq(sends, 7, "the auto-send repeats every 90 seconds of game time")
+      DebugOverlay.frame(180)
+      T.eq(sends, 5, "frames never auto-send logs")
       mod.fetch = oldFetch
     end
     -- Delta sends: after a successful send the next payload carries only
@@ -1172,6 +1175,11 @@ if brick then
       mod2.manifest = { log_url = "https://logs.example.invalid/logs" }
       optionsState.modOptions.potato_voxel.send_logs = true
       local Json2 = require("src.link.Json")
+      if type(DebugOverlay.setEnabled) == "function" then
+        DebugOverlay.setEnabled(true, sendGame)
+      elseif not DebugOverlay.running() then
+        DebugOverlay.toggle(sendGame)
+      end
       -- Emit a couple of distinct lines through the overlay so the ring
       -- has content, then send twice and inspect the deltas.
       DebugOverlay.note("delta marker one")
@@ -1210,12 +1218,8 @@ if brick then
     mod.postLog, mod.manifest = oldPostLog, oldManifest
   end
 
-  -- The auto-send cadence backs off on an idle ring: an interval only
-  -- ships when new lines arrived since the last send (or the boot
-  -- evidence is still unsent), and a fully idle session still sends a
-  -- liveness heartbeat at most once per five minutes of game time.  The
-  -- schedule is driven by synthetic 90s ticks through the same fake
-  -- transport as the gate block above -- no real timers.
+  -- Frame time never sends automatically. Manual export remains available
+  -- after the debugger is explicitly enabled, including for an idle ring.
   do
     local mod3 = exports.lib.mod
     local oldPostLog3, oldManifest3 = mod3.postLog, mod3.manifest
@@ -1236,42 +1240,20 @@ if brick then
     }
     optionsState.modOptions.potato_voxel.send_logs = true
     local sendGame = { save = { options = optionsState } }
-    -- Settle the send handle a prior send left in flight so the deadline
-    -- branch is the only gate in play, then give the ring one new line
-    -- so the first deadline crossing ships -- that send anchors the idle
-    -- window (the last-auto-send cap) at a known point.
+    if type(DebugOverlay.setEnabled) == "function" then
+      DebugOverlay.setEnabled(true, sendGame)
+    elseif not DebugOverlay.running() then
+      DebugOverlay.toggle(sendGame)
+    end
     DebugOverlay.frame(0.01)
-    DebugOverlay.note("cadence baseline marker")
+    DebugOverlay.note("manual-only cadence marker")
     DebugOverlay.frame(90)
     DebugOverlay.frame(0.01)
-    local baseline = sends
-    T.check(baseline >= 1, "the auto-send ships when the ring grew")
-    -- (a) Nothing new since that send: the next 90s deadline must NOT
-    -- ship the identical delta, and the same holds for the next two
-    -- deadlines while the ring stays idle.
     DebugOverlay.frame(90)
     DebugOverlay.frame(0.01)
-    T.eq(sends, baseline, "an idle deadline ships nothing")
-    DebugOverlay.frame(90)
-    DebugOverlay.frame(0.01)
-    T.eq(sends, baseline, "the idle backoff extends the deadline again")
-    DebugOverlay.frame(90)
-    DebugOverlay.frame(0.01)
-    T.eq(sends, baseline, "the idle backoff holds until the heartbeat cap")
-    -- (b) The five-minute cap: with the ring still idle, the deadline
-    -- the cap lands on must send the liveness heartbeat -- at most once
-    -- per 300s of game time, never a flood.
-    DebugOverlay.frame(90)
-    DebugOverlay.frame(0.01)
-    T.eq(sends, baseline + 1, "an idle session heartbeats at the five-minute cap")
-    local okH, JsonH = pcall(require, "src.link.Json")
-    local heartbeat = okH and JsonH.decode(bodies[#bodies])
-    T.check(heartbeat ~= nil and heartbeat.boot == nil,
-            "the heartbeat repeats no boot evidence")
-    -- Manual sends stay untouched by the backoff: an export ships even
-    -- with a completely idle ring.
+    T.eq(sends, 0, "90 seconds of frames never auto-send logs")
     DebugOverlay.export(sendGame)
-    T.eq(sends, baseline + 2, "a manual export is never throttled by the backoff")
+    T.eq(sends, 1, "a manual export remains the only send path")
     mod3.postLog, mod3.manifest = oldPostLog3, oldManifest3
     mod3.fetch = oldFetch3
     optionsState.modOptions.potato_voxel.send_logs = oldSendSetting3

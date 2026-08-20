@@ -1,6 +1,6 @@
--- DebugOverlay: a realtime activity/error/perf panel for this sandbox
--- build. It records from boot; F9 only toggles panel visibility. F10
--- switches verbosity (ALL vs important-only).
+-- DebugOverlay: an opt-in realtime activity/error/perf panel for this sandbox
+-- build. It records only while DEBUGGER is ON; F9 toggles the debugger state.
+-- F10 switches verbosity (ALL vs important-only).
 --
 -- Everything event-shaped funnels through trace() (noise) or note()
 -- (important): mesh job completions and failures (with durations), cache
@@ -16,7 +16,7 @@
 --   2. Severity levels: trace() lines collapse in important-only mode,
 --      so a healthy session is quiet and a broken one is legible.
 --   3. Session counters + a summary (jobs, hits, slow loads, errors,
---      worst frame) written on toggle-off and into the stored log.
+--      worst frame) written into the stored log while active.
 --   4. A data-only health snapshot names the pipeline decision, capability
 --      reason, last world path, renderer, storage and session counters.
 --   5. The first boot lines are preserved separately from the recent ring,
@@ -24,10 +24,9 @@
 --
 -- The panel draws through render.hud over every screen; lines go to the
 -- console and, when scoped storage is reachable, to the bytes key
--- "debug/log". Repeated identical messages collapse to "xN"; storage
--- writes throttle to once a second. The module remains a compatibility façade
--- for the public debug export; state, environment, and transport live in
--- focused modules so the HUD can be changed independently.
+-- "debug/log" while active. Repeated identical messages collapse to "xN";
+-- storage writes throttle to once a second. Remote transport is manual-only:
+-- SEND LOGS/F8/START are the explicit export paths.
 
 -- the mod namespace (see main.lua): V.require loads a sibling module
 local V = ...
@@ -39,8 +38,9 @@ local DiagnosticsStore = V.require("DiagnosticsStore")
 local DiagnosticsEnvironment = V.require("DiagnosticsEnvironment")
 local DiagnosticsTransport = V.require("DiagnosticsTransport")
 
-local running = true     -- capture starts at boot, even while hidden
-local visible = false    -- F9 only changes panel visibility
+local running = false    -- capture is opt-in; DEBUGGER starts OFF
+local visible = false    -- active debugger state owns panel visibility
+local exportCapture = false -- explicit SEND LOGS may capture one snapshot
 local verbose = true     -- F10: true = all lines, false = important only
 local game = nil
 local probe = nil
@@ -57,6 +57,10 @@ local statsTime = 0
 local statsMax = 0
 local statsRender = 0
 local statsLast = 0
+
+local function captureActive()
+  return running or exportCapture
+end
 
 -- The VOXEL SETTINGS summary, provided by main.lua (it owns the rows and
 -- the live options API): one space-separated `key=label` line so a
@@ -212,6 +216,7 @@ function Overlay.slowStorageBackoff(elapsedMs)
 end
 
 local function persist(force)
+  if not captureActive() then return end
   local c = clock()
   if not force then
     -- The 5s sample cadence would persist ~once per window; on flash
@@ -291,6 +296,7 @@ local function persistFor(kind)
 end
 
 local function emit(msg, kind)
+  if not captureActive() then return end
   -- Count every error occurrence, including deduped repeats: the summary's
   -- "N errors" must match how many errors actually happened.
   if kind == "error" then
@@ -368,6 +374,7 @@ function Overlay.setProbe(fn)
 end
 
 function Overlay.runProbe()
+  if not captureActive() then return dataCopy(health.probe) end
   if not probe then
     health.probe = { ok = true, skipped = true }
     return dataCopy(health.probe)
@@ -388,12 +395,14 @@ end
 -- the observable boundary: update ran, availability answered, and drawWorld
 -- entered or returned a particular path.
 function Overlay.pipelineUpdate(level)
+  if not captureActive() then return end
   local p = health.pipeline
   p.level = tonumber(level) or 0
   p.updateCalls = p.updateCalls + 1
 end
 
 function Overlay.pipelineAvailable(ok, reason, detail)
+  if not captureActive() then return end
   local p = health.pipeline
   local available = ok == true
   local normalized = reason or (available and "ready" or "unknown")
@@ -415,6 +424,7 @@ function Overlay.pipelineAvailable(ok, reason, detail)
 end
 
 function Overlay.pipelinePath(path, detail)
+  if not captureActive() then return end
   local p = health.pipeline
   path = tostring(path or "unknown")
   p.lastPath = path
@@ -429,6 +439,7 @@ function Overlay.pipelinePath(path, detail)
 end
 
 function Overlay.event(name, detail)
+  if not captureActive() then return end
   health.lastEvent = { name = tostring(name), detail = dataCopy(detail or {}),
                        frame = health.frame }
 end
@@ -438,6 +449,7 @@ end
 -- step the cooperative budget does not cover, and the support log must
 -- name the job so the region can be found.
 function Overlay.buildDone(id, slot, slices, maxGapMs, overshoots)
+  if not captureActive() then return end
   local b = health.build
   b.jobs = b.jobs + 1
   b.slices = b.slices + (slices or 0)
@@ -448,40 +460,56 @@ function Overlay.buildDone(id, slot, slices, maxGapMs, overshoots)
   end
 end
 
--- Session counters feed the summary and run from boot with the background
--- recorder. Panel visibility must not change the support report.
+-- Session counters feed the summary while the debugger is active. Panel
+-- visibility and capture always move together.
 function Overlay.count(name)
+  if not captureActive() then return end
   diagnostics.count(name)
 end
 
--- `enabled` is retained as the public visibility query used by the input
--- bridge; it no longer controls collection.
+-- `enabled` and `running` are retained as public state queries. They now
+-- describe the same opt-in debugger state rather than separate visibility and
+-- background-capture flags.
 function Overlay.enabled()
-  return visible
+  return running
 end
 
 function Overlay.running()
   return running
 end
 
--- Toggle panel visibility on F9 (and the SELECT hold chord). Boundary lines
--- always land in the background log and the console; hiding does not clear
--- the ring buffer, so reopening shows what happened while it was hidden.
-function Overlay.toggle()
-  Overlay.setVisible(not visible)
+-- Toggle the debugger on F9 (and the SELECT hold chord). The hotkey mirrors
+-- the DEBUGGER option and persists the choice when a game is available.
+function Overlay.toggle(g)
+  local show = not running
+  Overlay.setEnabled(show, g)
+  if Overlay.setting and g then Overlay.setting:setValue(show, g) end
 end
 
--- The DEBUGGER option row and the mod manager's page land on the same
--- flag as F9: an explicit show/hide that records the same boundary line.
-function Overlay.setVisible(show)
+-- The DEBUGGER option and the hotkey both land on this one state transition.
+-- Enabling captures the environment at the moment the player opts in; it does
+-- not collect any boot-time evidence while the debugger was OFF.
+function Overlay.setEnabled(show, g)
   show = show and true or false
-  if visible == show then return end
-  visible = show
-  if not visible then Overlay.summary() end
-  local line = "debugger " .. (visible and "VISIBLE" or "HIDDEN")
-  diagnostics.append(stamp(line))
-  pcall(print, "[pv-debug] " .. stamp(line))
-  persist(true)
+  if g ~= nil then game = g end
+  if running == show and visible == show then return end
+  running, visible = show, show
+  -- A new capture window must not inherit dedupe, cadence, or storage
+  -- backoff state from a previous window.
+  lastMsg, lastCount = nil, 0
+  lastPersist, lastErrorPersist, slowUntil = 0, 0, 0
+  statsFrames, statsTime, statsMax, statsRender = 0, 0, 0, 0
+  statsLast = clock()
+  if running then
+    Overlay.captureEnvironment()
+    Overlay.note("debugger enabled -- F9 toggles, F10 verbosity")
+  end
+end
+
+-- Backward-compatible name for callers that used the old visibility setter.
+-- Visibility and capture now always move together.
+function Overlay.setVisible(show)
+  return Overlay.setEnabled(show)
 end
 
 -- Current panel state, for a caller that wants to stay in step with F9.
@@ -491,6 +519,7 @@ end
 
 -- F10: verbose <-> important-only.
 function Overlay.toggleVerbose()
+  if not running then return end
   verbose = not verbose
   Overlay.note("verbosity %s", verbose and "ALL" or "IMPORTANT")
 end
@@ -504,7 +533,7 @@ local Transport = DiagnosticsTransport.new({
   clock = clock,
 })
 
-function Overlay.sendLogs()
+local function sendLogs()
   return Transport.send()
 end
 
@@ -515,14 +544,9 @@ end
 -- endpoint never accumulates in the worker pool.
 -- ------- log-send opt-out
 --
--- F8, the SEND LOGS row and the START chord all ship the stored evidence
--- to the manifest's log_url -- the ONE action that leaves the device.
--- Sending is ON by default: the send_logs option (LOGS TO DEV, ON by
--- default) gates every send, and the frame tick sends automatically on
--- its own schedule (see autoSendEvery below). Turning the row OFF stops
--- all sends immediately and permanently -- there is no prompt to ask
--- and nothing to decline. Engines or manifests without a log_url never
--- send: there is no endpoint.
+-- F8, the SEND LOGS row and the START chord are the only actions that ship
+-- evidence to the manifest's log_url. Sending is ON by default: the send_logs
+-- option (LOGS TO DEV) remains a second gate. There is no frame-tick upload.
 
 -- Whether this engine can send at all: engine feature #1363 (mod.postLog)
 -- plus a manifest log_url. The gate only exists where a send would
@@ -548,45 +572,56 @@ end
 -- just dumps, exactly as before.
 function Overlay.export(g)
   g = g or game
-  Overlay.runProbe()
-  persist(true)
-  if Overlay.canSend() then
-    if Overlay.sendingAllowed() then
-      Overlay.sendLogs()
-    else
-      Overlay.note("log send disabled (LOGS TO DEV OFF)")
+  if g ~= nil then Overlay.bindGame(g) end
+  local priorExportCapture = exportCapture
+  exportCapture = true
+  local ok, err = xpcall(function()
+    if not health.platform or not health.renderer then
+      Overlay.captureEnvironment()
     end
-  end
-  pcall(print, "[pv-log] ---- boot evidence (" .. #diagnostics.bootLog .. " lines) ----")
-  for _, line in ipairs(diagnostics.bootLog) do
-    pcall(print, "[pv-log] " .. line)
-  end
-  pcall(print, "[pv-log] ---- recent evidence (" .. #diagnostics.log .. " lines) ----")
-  for _, line in ipairs(diagnostics.log) do
-    pcall(print, "[pv-log] " .. line)
-  end
-  local current = snapshot()
-  local curGpu = current.renderer and current.renderer.renderer
-  pcall(print, "[pv-status] platform=" .. tostring(current.platform)
-             .. " gpu=" .. tostring(curGpu and curGpu.name or "?")
-             .. " session=" .. tostring(current.session)
-             .. " frame=" .. tostring(current.frame)
-             .. " pipeline=" .. tostring(current.pipeline.availability)
-             .. " reason=" .. tostring(current.pipeline.reason)
-             .. " updates=" .. tostring(current.pipeline.updateCalls)
-             .. " draws=" .. tostring(current.pipeline.drawWorldCalls)
-             .. " rendered=" .. tostring(current.pipeline.rendered)
-             .. " fallbacks=" .. tostring(current.pipeline.fallbacks))
-  pcall(print, "[pv-log] ---- end ----")
-  local line = stamp("log exported: " .. (#diagnostics.bootLog + #diagnostics.log)
-                     .. " lines + status -> storage debug/log")
-  diagnostics.append(line)
-  pcall(print, "[pv-debug] " .. line)
-  persist(true)
+    Overlay.runProbe()
+    persist(true)
+    if Overlay.canSend() then
+      if Overlay.sendingAllowed() then
+        sendLogs()
+      else
+        Overlay.note("log send disabled (LOGS TO DEV OFF)")
+      end
+    end
+    pcall(print, "[pv-log] ---- boot evidence (" .. #diagnostics.bootLog .. " lines) ----")
+    for _, line in ipairs(diagnostics.bootLog) do
+      pcall(print, "[pv-log] " .. line)
+    end
+    pcall(print, "[pv-log] ---- recent evidence (" .. #diagnostics.log .. " lines) ----")
+    for _, line in ipairs(diagnostics.log) do
+      pcall(print, "[pv-log] " .. line)
+    end
+    local current = snapshot()
+    local curGpu = current.renderer and current.renderer.renderer
+    pcall(print, "[pv-status] platform=" .. tostring(current.platform)
+               .. " gpu=" .. tostring(curGpu and curGpu.name or "?")
+               .. " session=" .. tostring(current.session)
+               .. " frame=" .. tostring(current.frame)
+               .. " pipeline=" .. tostring(current.pipeline.availability)
+               .. " reason=" .. tostring(current.pipeline.reason)
+               .. " updates=" .. tostring(current.pipeline.updateCalls)
+               .. " draws=" .. tostring(current.pipeline.drawWorldCalls)
+               .. " rendered=" .. tostring(current.pipeline.rendered)
+               .. " fallbacks=" .. tostring(current.pipeline.fallbacks))
+    pcall(print, "[pv-log] ---- end ----")
+    local line = stamp("log exported: " .. (#diagnostics.bootLog + #diagnostics.log)
+                       .. " lines + status -> storage debug/log")
+    diagnostics.append(line)
+    pcall(print, "[pv-debug] " .. line)
+    persist(true)
+  end, function(e) return e end)
+  exportCapture = priorExportCapture
+  if not ok then pcall(print, "[pv-debug] log export failed: " .. tostring(err)) end
 end
 
 -- The session verdict, written into the stored log.
 function Overlay.summary()
+  if not captureActive() then return end
   local ok, msg = pcall(string.format,
     "session: %d jobs (%d failed), %d cache hits (%d misses), %d slow loads, "
     .. "%d errors, %d storage fails, worst frame %.1fms",
@@ -602,53 +637,9 @@ end
 
 -- Feed the voxel tick every frame.
 --
--- The automatic send rides this tick: every autoSendEvery seconds of
--- accumulated GAME time (frame dt, not wall clock -- a paused game never
--- sends), the log ships on its own with no keypress. It is the same
--- opt-out default as every manual send: the send_logs gate, a send
--- already in flight, or an engine without an endpoint all skip it, and
--- the schedule is expressed as a next-deadline so a skipped interval
--- fires at the next opportunity rather than backing up.
---
--- Idle backoff: an auto-send only ships when the ring grew since the
--- last send (seq > lastSentSeq) or the boot evidence is still unsent.
--- A quiet session would otherwise POST an identical near-empty delta
--- every 90s forever (a field session logged 32 sends / 2.2MB of them).
--- The deadline still moves so the cadence cannot wedge, but only out to
--- IDLE_HEARTBEAT_EVERY seconds of game time past the last auto-send:
--- a fully idle session still ships a liveness heartbeat at most once
--- per five minutes.  Manual sends (F8, SEND LOGS, the START chord) are
--- deliberate and never throttled.
-Overlay.autoSendEvery = 90
-local autoSendElapsed = 0
-local nextAutoAt = Overlay.autoSendEvery
-local IDLE_HEARTBEAT_EVERY = 300
-local lastAutoSendElapsed = 0   -- game time of the last auto-send (heartbeat cap anchor)
-
 function Overlay.frame(dt, renderMs)
   Transport.poll()
-  if Overlay.canSend() and Overlay.sendingAllowed()
-      and not Transport.pending() and autoSendElapsed >= nextAutoAt then
-    if diagnostics.bootSent and diagnostics.seq == diagnostics.lastSentSeq
-        and nextAutoAt < lastAutoSendElapsed + IDLE_HEARTBEAT_EVERY then
-      -- Nothing new since the last send and the heartbeat window is
-      -- still open: skip the identical-delta ship and push the deadline
-      -- out, capped at IDLE_HEARTBEAT_EVERY seconds of game time past
-      -- the last auto-send so an idle session still heartbeats.
-      nextAutoAt = math.min(nextAutoAt + Overlay.autoSendEvery,
-                            lastAutoSendElapsed + IDLE_HEARTBEAT_EVERY)
-    else
-      -- New ring lines, the first send of a session (the boot evidence
-      -- only ships there), or the idle heartbeat window elapsed: ship.
-      nextAutoAt = nextAutoAt + Overlay.autoSendEvery
-      lastAutoSendElapsed = autoSendElapsed
-      persist(true)
-      Overlay.trace("auto-send: shipping log (%.0f s of game time)",
-                    autoSendElapsed)
-      Overlay.sendLogs()
-    end
-  end
-  autoSendElapsed = autoSendElapsed + (dt or 0)
+  if not running then return end
   health.frame = health.frame + 1
   local frameMs = (dt or 0) * 1000
   diagnostics.updateWorstFrame(frameMs)
@@ -738,7 +729,7 @@ function Overlay.frame(dt, renderMs)
 end
 
 function Overlay.try(label, fn, ...)
-  health.lastPhase = tostring(label)
+  if captureActive() then health.lastPhase = tostring(label) end
   local results = { xpcall(fn, function(e) return e end, ...) }
   if not results[1] then
     Overlay.error("ERROR %s: %s", label, tostring(results[2]))
@@ -851,21 +842,16 @@ function Overlay.install()
   Overlay.installed = true
   local mod = V.mod
   if not (mod and mod.hooks) then return end
-  Overlay.captureEnvironment()
   mod.hooks:wrap("render.hud", function(next, g, viewport)
     next(g, viewport)
     Overlay.bindGame(g)
     Overlay.draw()
   end)
-  Overlay.note("debugger running in background -- F9 shows/hides, F10 verbosity")
 end
 
--- The DEBUGGER option: the same visibility flag as F9, reachable from the
--- VOXEL SETTINGS screen and the mod manager's page (Android has no F9 key,
--- and its SELECT hold chord is gated off mobile).  Values { false, true }
--- make the manager's schema a toggle.  main.lua's always-running tick
--- applies it, re-asserting only when the stored value changes so it never
--- fights a manual F9 toggle.
+-- The DEBUGGER option controls both capture and panel visibility. It is
+-- reachable from VOXEL SETTINGS and the mod manager's page; F9/SELECT mirror
+-- the same state. Values { false, true } make the manager's schema a toggle.
 local ModSetting = V.require("ModSetting")
 Overlay.setting = ModSetting.new("debugger", "DEBUGGER", { false, true },
                                  { "OFF", "ON" })

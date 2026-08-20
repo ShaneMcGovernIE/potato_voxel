@@ -106,15 +106,15 @@ function SettingsFeature.new(ctx)
         "fill rate and RAM." },
       full = true },
     { ctx.DebugOverlay.setting,
-      { "Show the debug",
-        "panel. OFF hides",
-        "it; the background",
-        "log still records." } },
+      { "Capture and show",
+        "the debug panel.",
+        "OFF disables the",
+        "background log." } },
     { ctx.DebugOverlay.sendSetting,
       { "Send logs to the",
         "developer over the",
-        "internet. OFF stops",
-        "all sends." } },
+        "internet. OFF blocks",
+        "manual sends." } },
   }
 
   local feature = { entries = settings }
