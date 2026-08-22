@@ -183,20 +183,10 @@ return {
       -- the hop-down edges named by data.field.ledges' ledgeTile: their
       -- art is a ground lip seen from above, which the detector would
       -- otherwise raise as a wall
-      -- $34 is the cliff slope's FOOT, and it also punctuates the ledge
-      -- rows: the hop-down runs are set into the cliff face and this
-      -- tile is the pillar between segments.  It was `wall` with the
-      -- rest of the slope chain, which stood those pillars 16px beside
-      -- a 6px lip -- the ledge line came out interrupted by blocks
-      -- nearly three times its height.  At ledge height the run reads
-      -- as one continuous lip, and the mound loses nothing: its foot
-      -- row simply reads as the talus it is drawn as.
-      ledge = { 13, 29, 39, 52, 54, 55 },
-      -- trees are drawn ROUND -- the lone canopy (42/43/58/59) and the
-      -- border tree wall (64/65/80/81, blockset $0F). Boxes and per-pixel
-      -- cutouts both read wrong for them; the cylinder archetype carves
-      -- one voxel ball per 16x16 cell from the canopy's darkest-pixel
-      -- outline, round in depth, so tree rows become rows of real canopies
+      ledge = { 13, 29, 39, 54, 55 },
+      -- Trees are round scenery. Keep the dedicated cylinder builder: it
+      -- reconstructs the authored canopy silhouette as a sprite-backed
+      -- round model instead of using the per-pixel prop slab.
       cylinder = { 42, 43, 58, 59, 64, 65, 80, 81 },
       -- the town sign (blockset 8's SE cell): a standing per-pixel slab
       -- 2 voxels thin, transparency respected -- never a solid box
@@ -210,15 +200,25 @@ return {
       -- render as the same thin posts, marching north
       post = { 14, 85 },
       -- the cliff-mound's dark east slope and its NE corner ($24 the
-      -- slope column, $02 the corner).  Their drawn runs span the whole
-      -- mound drawing, so the detector raised them to 32px towers --
-      -- the rock pillar beside Diglett's Cave -- and the doorway
-      -- column, which adopts its REGION's height, inherited the same 32
-      -- and put the cave entrance a block above the mound around it.
-      -- Pinned to one 16px course they match the plateau body, and the
-      -- doorway drops with them.  ($34, the slope's foot, is `ledge`
-      -- instead -- see there.)
-      wall = { 2, 36 },
+      -- slope column, $02 the corner) and $34 the cliff foot.
+      -- $34 is authored `wall` by default (16px), which keeps it out of
+      -- volume runs (authored tiles are not structural). On the east
+      -- face's base row, the when_above rule downgrades it to `ledge`
+      -- (6px) when the tile directly above is a slope tile ($24/$02),
+      -- a ledge tile, or flat ground, creating an intermediate 6px step
+      -- so the mountain slopes down: 16px → 6px → 0px.
+      wall = { 2, 36, 52 },
+      when_above = {
+        -- $34 (tile 52): becomes ledge (6px) when below slope, ledge,
+        -- or ground tiles — creating the intermediate step at the foot
+        -- of the cliff. Stays wall (16px) when below plateau body tiles
+        -- (the flat repeating brown surface inside the mound).
+        [52] = {
+          { above = { 2, 36,                       -- $02/$24: slope & corner
+                      13, 29, 39, 54, 55,          -- ledge hop-down tiles
+                      44, 45, 60 }, class = "ledge" },
+        },
+      },
 
       -- the cuttable bush ($2D/$2E/$3D/$3E, the four tiles Cut deletes
       -- -- across the whole tileset they appear only in the five
@@ -345,59 +345,9 @@ return {
       -- the pin is not copied there.
       cylinder = { 44, 45, 46, 47,
                    7, 8, 23, 24 },
-      -- Vermilion Gym's trash cans ($0B/$0C over $1B/$1C), the switch
-      -- puzzle's fifteen cans plus the sixteenth beside the leader's
-      -- platform.  An open galvanised bin in the 3/4 view, and its plan is
-      -- measured: the silhouette runs straight down both flanks for art
-      -- rows 4-10 and is 11px wide there, so the can is 11 across -- and
-      -- being round in plan, 11 DEEP.  Above row 4 is the MOUTH seen from
-      -- above (the drawn ring is 9x5, a circle flattened to 55%, which is
-      -- what fixes it as a top view rather than a face-on dome); below row
-      -- 10 is the base circle's front arc, ground contact, with the
-      -- drawing's own $555 halo one pixel outside it as the grounding
-      -- shadow.
-      --
-      -- Left in the thin standee pool the can was a flat disc on edge --
-      -- fifteen coins standing in a row.  Pinned a plain `cylinder` it
-      -- revolves every drawn row, bottom arc included, and comes out a
-      -- barrel balanced on a three-voxel stem.  `can` is the hull cut at
-      -- both ends and hollowed: the mouth projects across the round top,
-      -- the base rows are ground rather than body, and the top can_well
-      -- voxel rows keep a wall at each end of every chord and lose their
-      -- middle, so the bin is open and you look down into it.
-      --
-      -- can_cap and can_base are the two ellipses in art rows and come off
-      -- the pixels.  The other three do NOT, and are the numbers taste
-      -- moves:
-      --
-      --   can_height 9    Un-projected strictly the drawing states a squat
-      --                   drum barely two rows of straight side tall,
-      --                   because the GB artist spent most of a 16px cell
-      --                   on the opening -- but a bin is taller than it is
-      --                   wide and the flat game reads as one, the drawing
-      --                   being 14px tall beside a 16px player.  The lowest
-      --                   surviving body row (art row 10: black rim, shaded
-      --                   flank, lit face) is repeated up to this, the
-      --                   plainest continuation of the material drawn.
-      --                   `heights` must follow it so anything riding a can
-      --                   lands on the rim.
-      --   can_well 5      How far down the mouth is hollowed.  The drawing
-      --                   paints an opening and cannot say how deep.
-      --   can_taper 4     Voxels of DIAMETER the base loses -- 11 at the
-      --                   rim to 7 on the floor, stepped twice over the
-      --                   height.  The drawing's base arc pulls in to 9px
-      --                   on its own, so the direction is drawn; the amount
-      --                   is not.  2 is one barely-visible step, 4 reads as
-      --                   a cone.
-      --
-      -- Scanned: the four ids occur as this grid 16 times on the GYM atlas
-      -- and only in VERMILION_GYM -- cells (1/3/5/7/9, 7), the same five
-      -- on rows 9 and 11, and (6,1).  DOJO shares gym.png and places none,
-      -- so the pin is not copied there.  The same four ids form the same
-      -- grid on eight OTHER atlases (the Bike Shop's crates, the overworld
-      -- roofs, the Centers' counters, ...) for 142 more hits; those are id
-      -- collisions between tilesets, and a pin is per tileset id, so they
-      -- are none of this entry's business.
+      -- Grey gym bollards are the authored open-can model. Keep its mouth,
+      -- base, well, height and taper parameters; `prop` makes them chunky
+      -- per-pixel slabs and loses the reference silhouette.
       can = { 11, 12, 27, 28 },
       can_cap = 9,
       can_base = 4,
@@ -410,7 +360,7 @@ return {
       -- ball like the shrubs beside it -- it takes the thin standee pool
       -- every interior plant takes, which is also a pool apart from the
       -- cylinders it touches.
-      prop = { 2, 56, 18, 19,
+      prop = { 2, 18, 19, 56,
                64, 65, 80, 81 },
       -- The Hall of Fame's recording machine, the one piece of real
       -- furniture in the tileset.  It is drawn 32px wide and THREE tile
@@ -531,47 +481,28 @@ return {
       -- 24w-2 01w-2 for ten cells straight, hard against 31w16 rock and
       -- the 05l06 shelf.  Its unpinned reading was 48px (eight rows of
       -- alternating $06/$24 read as one drawing); 16 is the answer.
-      wall = { 2, 3, 18, 19,       -- $02/$03 over $12/$13, speckled mass
-               12, 13, 28, 29,     -- $0C/$0D over $1C/$1D, boulder mass
-               16, 17,             -- $10/$11, the shelf's south cobbles
-               49, 23,             -- $31 west face, $17 east face
-               4, 7, 40,           -- $04 NW cap, $07 NE cap, $28 SW cap
-               37, 38,             -- $25/$26, the inner corners
-               14, 15, 30, 31,     -- $0E/$0F over $1E/$1F, barred shelf
-               6, 39, 36, 1 },     -- $06/$27 over $24/$01, ceiling mass
-      -- ---- 6: the lit shelf, and the stairs off it ----
+      -- ---- 32: boundary cave walls and ceiling mass ----
+      cliff = { 2, 3, 18, 19,       -- $02/$03 over $12/$13, speckled mass
+                12, 13, 28, 29,     -- $0C/$0D over $1C/$1D, boulder mass
+                14, 15, 30, 31,     -- $0E/$0F over $1E/$1F, barred shelf
+                6, 39, 36, 1 },     -- $06/$27 over $24/$01, ceiling mass
+      -- ---- 16: the lit shelf, its cobble perimeter, and the stairs off it ----
       --
-      -- $05 is the lit floor -- the shipped pin, and the step
-      -- data.field.tilePairs encodes ($20/$21/$2A/$41 <-> $05).  $29 is
-      -- the SAME surface: the artist's shadow row where the shelf runs
-      -- up against the rock above it.  It sits in walkable cells, so
-      -- unpinned it resolved to flat ground and cut a 6px trench along
-      -- the north edge of every lit room (`29g00` with `05l06` one tile
-      -- south, all the way across MT_MOON_B2F).
+      -- $05 is the lit floor, $29 its north shading.
+      -- $10/$11 is the cobble course facing the south side of every lit
+      -- shelf, $31 its west face, $17 its east face, $04/$07/$28 the caps
+      -- and $25/$26 the inner corners. Placing the shelf and its perimeter
+      -- at 16px creates a real elevated terrace standing a full 16px course
+      -- above the dark floor (0px), while the boundary cave walls rise to 32px.
       --
-      -- $15/$16 is the STAIR down off that shelf, and the elevation it
-      -- spans is 6px, not 16.  Its art is four treads seen from above,
-      -- each a light tread over a black riser line, stacked NORTH-SOUTH:
-      -- every one of the 54 stair cells in the tileset has the lit floor
-      -- $05 to its NORTH and the low ground to its SOUTH (dark floor x35,
-      -- water x14, lit floor x5 where two flights meet), so the flight
-      -- climbs NORTHWARD, one cell deep, 0 -> 6.
-      --
-      -- It is NOT pinned `stair_e`/`stair_w`, and that is deliberate.
-      -- Those classes build a flight that marches along X -- 16px tall,
-      -- rising toward the named side -- so either of them here would
-      -- throw a 16px staircase sideways across a 6px north-south step,
-      -- blocking the passage it is supposed to open and climbing at
-      -- right angles to the drawn risers.  A wrong-way flight is worse
-      -- than a flat one.  `ledge` is the honest reading available: the
-      -- stair cell joins the shelf it belongs to, wears its four treads
-      -- on the TOP face (which is how they are drawn -- from above), and
-      -- puts its 6px riser face at the FOOT of the flight where the
-      -- player actually steps down onto the dark floor.  See the report:
-      -- a real sloped cave stair wants `stair_n`/`stair_s` in
-      -- Structures.stairCell, which is an engine change, not a pin.
+      -- $15/$16 is the STAIR down off that shelf, climbing 0 -> 16.
       ledge = { 5, 41,             -- $05 lit floor, $29 its north shading
-                21, 22 },          -- $15/$16, the stair plate off it
+                21, 22,            -- $15/$16, the stair plate off it
+                16, 17,            -- $10/$11, the shelf's south cobbles
+                49, 23,            -- $31 west face, $17 east face
+                4, 7, 40,          -- $04 NW cap, $07 NE cap, $28 SW cap
+                37, 38 },          -- $25/$26, the inner corners
+      heights = { ledge = 16 },
       -- ---- 0: the floor plane ----
       --
       -- The dark lower floor, pinned rather than left derived so the

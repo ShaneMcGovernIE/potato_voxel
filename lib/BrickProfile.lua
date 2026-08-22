@@ -107,14 +107,13 @@ local function replaceInPlace(target, values)
   return target
 end
 
--- Pin a setting ladder to one tuned rung. Clearing the cached index makes
--- the next ModSetting:read re-evaluate against the new ladder, so a value
--- already read during load still lands on the pinned rung.
+-- Pin a setting ladder to one tuned rung. Reads are live (ModSetting:read
+-- goes through the options API on every call), so a value already read
+-- during load still lands on the pinned rung with nothing to clear.
 local function pin(V, name, values, labels)
   local module = V.require(name)
   module.setting.values = values
   module.setting.labels = labels
-  module.setting.index = nil
 end
 
 function BrickProfile.apply(V)

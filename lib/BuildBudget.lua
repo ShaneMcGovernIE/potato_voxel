@@ -58,4 +58,12 @@ function B.check()
   end
 end
 
+-- Whether the current call is inside the pumped build coroutine: the
+-- same read can cost 300ms there (sliced, not a hitch) or synchronously
+-- on the entry frame (a real freeze), and a support log needs to tell
+-- them apart.
+function B.inBuild()
+  return buildCo ~= nil and coroutine.running() == buildCo
+end
+
 return B

@@ -261,20 +261,26 @@ function CamControl.install()
   local function clamp(v)
     return math.max(-MOUSE_STEP, math.min(MOUSE_STEP, v or 0))
   end
+  -- The sandbox forbids assigning the engine's love callbacks, so the
+  -- battle-camera mouse read rides the input.pointer hook. Priority 10
+  -- keeps this wrap OUTSIDE FirstPerson's (the old love.mousemoved order:
+  -- this one saw the event first and forwarded it on). Nothing is ever
+  -- claimed here -- the steer is a read of the motion, and the cursor
+  -- still has UI to point at.
   do
-    local inner = love and love.mousemoved
-    if love then
-      love.mousemoved = function(x, y, dx, dy, istouch)
-        if battleLive() and not istouch then
+    local mod = V.mod
+    if mod and mod.hooks then
+      mod.hooks:wrap("input.pointer", function(next, game, evt)
+        if evt and evt.phase == "moved" and evt.source ~= "touch"
+           and battleLive() then
+          local dx, dy = evt.dx, evt.dy
           -- dy is NEGATED for the same reason the stick's is: moving the
           -- mouse away from you sends the camera up and over
           if dx and dx ~= 0 then BattleCam.mouseOrbit(clamp(dx)) end
           if dy and dy ~= 0 then BattleCam.mousePitch(-clamp(dy)) end
-          -- forwarded anyway: the cursor still has UI to point at, and the
-          -- steer is a read of the motion rather than a claim on it
         end
-        if inner then return inner(x, y, dx, dy, istouch) end
-      end
+        return next(game, evt)
+      end, 10)
     end
   end
 

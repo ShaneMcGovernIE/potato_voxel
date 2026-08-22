@@ -215,7 +215,8 @@ local mntCache = {}       -- tileset id -> parsed mounted masks, or false
 local bgCache = {}        -- tileset id -> prop background shades, or false
 
 -- The shape profile ships with the mod (data/voxel_heights.lua) and is read
--- through the mod's own file loader rather than package.path: a mod's
+-- through the mod's own file loader rather than the module path: a
+-- mod's
 -- directory is not on it, and may live inside a mounted .love archive that
 -- plain require cannot reach either.  Absent or broken degrades to the
 -- derived defaults, which is a rougher-looking world rather than no world.

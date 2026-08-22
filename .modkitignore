@@ -9,7 +9,15 @@ tests/potato_voxel_cache_test.lua
 tests/voxel_loading_test.lua
 tests/shadow_cadence_probe.lua
 tests/shadow_golden.lua
+tests/sandbox_api_test.lua
+tests/cache_stream_contract_test.lua
 tests/goldens/shadow_golden.txt
 
 # Repo-only: issue templates must never ship in the mod zip.
 .github
+tests/shadow_runtime_test.lua
+tools/thread_smoke/main.lua
+
+# Local analysis, backup, and historical package artifacts.
+backup.ab
+potato_voxel-1.6.3.zip

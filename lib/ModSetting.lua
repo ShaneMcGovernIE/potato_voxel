@@ -9,21 +9,24 @@
 -- mod setting, and this is the boilerplate two of them would otherwise
 -- each carry a copy of:
 --
---   options:define   a home in options.modOptions.DRAMATIC_SHAPE, plus a row
+--   options:define   a home in options.modOptions.potato_voxel, plus a row
 --                    on this mod's page in the mod manager.
 --   the dedicated VOXEL SETTINGS screen renders the same setting descriptors
 --                    alongside the VOXEL pipeline row.
 --
 -- Both rows read and write the one stored value, so they cannot disagree.
--- Writing mirrors what the manager's own page does (ManagerState:setOption):
--- the live save's options table, the loader's copy that mod.options:get
--- reads, and then the file.
+-- Reading goes through the options API LIVE on every read -- the current
+-- API has no options-changed event to announce a manager-page write, so a
+-- fresh read is the only way this row stays in step with it. Writing
+-- mirrors what the manager's own page does: the live save's options
+-- table, the loader's copy that mod.options:get reads, and then the file.
 
 -- the mod namespace (see main.lua): V.require loads a sibling module
 local V = ...
 
 local ModSetting = {}
 ModSetting.__index = ModSetting
+local Diagnostics = V.require("DiagnosticsBridge")
 
 local function modId()
   local mod = V.mod
@@ -36,7 +39,6 @@ end
 function ModSetting.new(key, label, values, labels)
   return setmetatable({
     key = key, label = label, values = values, labels = labels,
-    index = nil,          -- nil = not yet read back from the persisted options
   }, ModSetting)
 end
 
@@ -83,19 +85,20 @@ function ModSetting:rungs()
   return n
 end
 
--- What the player left it at last session. Read lazily rather than at load
--- time: the loader fills modOptions before a mod runs, but reading through
+-- What the player left it at last session. Read LIVE through the options
+-- API every call rather than cached: the mod manager's page writes and
+-- persists these settings on its own, and the current API has no
+-- options-changed event to announce it, so a fresh read is the only way
+-- this row stays in step with a change made over there. Reading through
 -- the API keeps this honest about where the value lives.
 function ModSetting:read()
-  if self.index then return self.index end
   local mod = V.mod
   local value
   if mod and mod.options then
     local ok, got = pcall(mod.options.get, mod.options, self.key)
     if ok then value = got end
   end
-  self.index = indexOf(self, value)
-  return self.index
+  return indexOf(self, value)
 end
 
 function ModSetting:get()
@@ -115,7 +118,6 @@ end
 function ModSetting:setIndex(i, game)
   local n = #self.values
   i = ((i - 1) % n + n) % n + 1
-  self.index = i
   local value, id = self.values[i], modId()
   local opts = game and game.save and game.save.options
   if opts then
@@ -130,6 +132,8 @@ function ModSetting:setIndex(i, game)
     loader.modOptions[id][self.key] = value
   end
   if game and game.writeOptions then pcall(game.writeOptions, game) end
+  Diagnostics.trace("setting %s.%s = %s", id, tostring(self.key),
+                    tostring(self.labels[i] or tostring(value)))
   return value
 end
 
@@ -162,10 +166,12 @@ function ModSetting:cycle(game, dir)
 end
 
 -- Adopt a value set from somewhere else (the mod manager's settings page,
--- which writes and persists on its own). Nothing to store: just move the
--- cached index so the next read agrees with it.
+-- which writes and persists on its own). Nothing to store any more: reads
+-- go through the options API live (see read), so the next read already
+-- agrees with whatever the manager wrote. Kept so the callers that sync
+-- their own just-applied values stay valid.
 function ModSetting:sync(value)
-  self.index = indexOf(self, value)
+  return indexOf(self, value)
 end
 
 -- The descriptor is rendered by the dedicated VOXEL SETTINGS screen.
@@ -187,17 +193,24 @@ function ModSetting:row()
   }
 end
 
--- The row the mod manager's own settings page builds for this mod.
+-- The row the mod manager's own settings page builds for this mod. The
+-- live engine (0.1.88) renders options rows from { key, label, default,
+-- help } plus a `type` ("toggle" | "choice") and, for choices, the
+-- labelled ladder in `choices` -- which is also exactly what its
+-- mod_option_schemas.json export carries for every other mod. The newer
+-- engine the API docs describe wants the plain shape without them; this
+-- build targets the engine it can be tested on, and the ADR
+-- (docs/adr/0001-options-rows.md) records the trade. Gated rungs are
+-- left off the manager's page so the two rows agree about what can be
+-- chosen.
 function ModSetting:schema(help)
-  local choices = {}
-  -- gated rungs are left off the manager's page too, so the two rows agree
-  -- about what can be chosen
-  for i, v in ipairs(self.values) do
-    if self:allows(i) then choices[#choices + 1] = { self.labels[i], v } end
-  end
   if #self.values == 2 and self.values[1] == false then
     return { key = self.key, type = "toggle", label = self.label,
              default = self.values[1], help = help }
+  end
+  local choices = {}
+  for i, v in ipairs(self.values) do
+    if self:allows(i) then choices[#choices + 1] = { self.labels[i], v } end
   end
   return { key = self.key, type = "choice", label = self.label,
            choices = choices, default = self.values[1], help = help }

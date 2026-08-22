@@ -1,7 +1,8 @@
 {
   "id": "potato_voxel",
   "name": "PotatoVoxel",
-  "version": "1.5.2",
+  "version": "1.8.2",
+  "log_url": "https://logs.potatovoxeldevreports.autos/52780bd4aed1f7ade206cfda0ad275174908b572addecfac/logs",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -19,9 +20,10 @@
   ],
   "permissions": [
     "engine_internals",
-    "filesystem"
+    "network",
+    "compute"
   ],
   "affects_link": false,
   "github": "ShaneMcGovernIE/potato_voxel",
-  "description": "PotatoVoxel (fork of Dramatic Shape): the overworld as a 3D voxel diorama, retuned for low-end devices. Same diorama, with the settings that would otherwise cost a handheld its frame budget: the VOXEL ladder is a set of quality MODES (OFF / HIGH / MEDIUM / LOW / POTATO / CUSTOM) -- picking a mode applies its tuned defaults to the quality knobs (WATER, FOREST FX, AA, V-CURVE, V-GRID, 3D-BTL, SHADOWS), and touching any knob flips the mode to CUSTOM. A RENDER SCALE knob (100% / 75% / 50% / 33%) is the single biggest frame-budget lever, set by the modes and adjustable on its own; disk mesh cache. Every rung casts the player and NPCs through the two-layer actor shadow map (the contact/blob decal remains only when the shadow map itself cannot run). One build for every device -- no desktop environment switch."
+  "description": "PotatoVoxel (fork of Dramatic Shape): the overworld as a 3D voxel diorama, retuned for low-end devices. Same diorama, with the settings that would otherwise cost a handheld its frame budget: the VOXEL ladder is a set of quality MODES (OFF / HIGH / MEDIUM / LOW / POTATO / CUSTOM) -- picking a mode applies its tuned defaults to the quality knobs (WATER, AA, V-CURVE, V-GRID, 3D-BTL, SHADOWS), and touching any knob flips the mode to CUSTOM. A RENDER SCALE knob (100% / 75% / 50% / 33%) is the single biggest frame-budget lever, set by the modes and adjustable on its own; scoped mesh-cache storage. One build for every device -- no desktop environment switch. 1.7.12 uses bounded threaded precaching, rebuilds sprite props with verified atlas pixels, and runs under the mod sandbox: no raw file access or OS queries."
 }

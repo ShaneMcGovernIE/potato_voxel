@@ -81,7 +81,9 @@ DayNight.setting = ModSetting.new(DayNight.KEY, DayNight.LABEL,
 -- value is held HERE at SYNC -- the diorama preset's sky follows the clock
 -- on the wall, whatever was chosen before. Called from every path that can
 -- arrive at or act under FULL (main.lua: the preset itself, the rows hook,
--- the manager's options_changed), mirroring OverworldBattle.forceOG.
+-- and the pipeline's always-running update, which re-asserts the pin every
+-- tick now that the manager's options_changed event is gone), mirroring
+-- OverworldBattle.forceOG.
 function DayNight.forceSync(game)
   if DayNight.setting:get() ~= "sync" then
     DayNight.setting:setIndex(1, game)

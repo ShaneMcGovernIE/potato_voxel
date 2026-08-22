@@ -33,6 +33,8 @@ local V = ...
 local Assets = require("src.render.Assets")
 local TileRenderer = require("src.render.TileRenderer")
 local PaletteFX = require("src.render.PaletteFX")
+local AtlasLiveSet = V.require("AtlasLiveSet")
+local Diagnostics = V.require("DiagnosticsBridge")
 
 local TerrainAtlas = {}
 
@@ -41,6 +43,9 @@ local cacheData = {}    -- the pixels behind the atlases we baked ourselves
 local animated = {}     -- key -> one map's private, mutable animated atlas
                         -- false = given up on; nil = not built (or retrying)
 local attempts = {}     -- key -> consecutive failures, for the retry budget
+local previousLive = {}
+local stats = { builds = 0, hits = 0, fallbacks = 0,
+                evictions = 0, prewarms = 0 }
 
 -- A failure that might not repeat -- a driver refusing one readback, an
 -- asset briefly unreadable, a patch that threw once mid-reload -- must not
@@ -401,38 +406,16 @@ end
 -- the one the flat path is drawing from.
 --
 --   1. TileRenderer.animFrame(), where the build exports it.
---   2. else the counter itself, off tick()'s upvalues. It is a plain local
---      in that module, so this is exact and live -- the same number, not an
---      approximation of it. Reading engine internals is what this mod's
---      "engine_internals" permission is declared for, and this one is
---      read-only and entirely optional.
---   3. else wall time in 60Hz steps. Free-running, but the water moves,
+--   2. else wall time in 60Hz steps. Free-running, but the water moves,
 --      which beats a frozen pond. Derived from absolute time rather than
 --      accumulated deltas because animate() is called once per map in the
 --      neighbourhood, so a per-call accumulator would run several times
 --      too fast.
-local clockUpvalue = nil        -- nil = not looked for yet, false = absent
-
-local function findClockUpvalue()
-  if not (debug and debug.getupvalue) then return false end
-  if type(TileRenderer.tick) ~= "function" then return false end
-  for i = 1, 32 do
-    local ok, name, value = pcall(debug.getupvalue, TileRenderer.tick, i)
-    if not (ok and name) then break end
-    if name == "animFrame" and type(value) == "number" then return i end
-  end
-  return false
-end
 
 local function animFrame()
   if TileRenderer.animFrame then
     local ok, f = pcall(TileRenderer.animFrame)
     if ok and type(f) == "number" then return f end
-  end
-  if clockUpvalue == nil then clockUpvalue = findClockUpvalue() end
-  if clockUpvalue then
-    local ok, _, value = pcall(debug.getupvalue, TileRenderer.tick, clockUpvalue)
-    if ok and type(value) == "number" then return value end
   end
   if love.timer and love.timer.getTime then
     return math.floor(love.timer.getTime() * 60)
@@ -524,7 +507,14 @@ function TerrainAtlas.animate(map, colors, base, baked)
   local key = map.tileset.image .. "#a#" .. paletteKey(colors or {})
     .. (perMap or "")
   local entry = animated[key]
+  local cached = entry ~= nil
+  -- No animation for this tileset is a healthy static-atlas result, not a
+  -- texture fallback. Counting it every draw made Android diagnostics report
+  -- thousands of false failures and hid real atlas creation problems.
+  if entry == false then return nil end
   if entry == nil then
+    stats.builds = stats.builds + 1
+    Diagnostics.count("atlasBuilds")
     entry = newEntry(map, base, baked)
     if entry then
       entry.mapId = perMap
@@ -532,10 +522,24 @@ function TerrainAtlas.animate(map, colors, base, baked)
     else
       -- false from newEntry is a verdict (nothing animates on this tileset,
       -- no pixel access at all); nil is a miss that may not repeat
-      animated[key] = (entry == false) and false or attemptFailed(key)
+      if entry == false then
+        entry = false
+      else
+        entry = attemptFailed(key)
+      end
+      animated[key] = entry
+      if entry == false then return nil end
     end
   end
-  if not entry then return nil end
+  if not entry then
+    stats.fallbacks = stats.fallbacks + 1
+    Diagnostics.count("atlasFallbacks")
+    return nil
+  end
+  if cached then
+    stats.hits = stats.hits + 1
+    Diagnostics.count("atlasHits")
+  end
 
   local frame = animFrame()
   -- one number for the whole entry: every spec's own step, folded together,
@@ -574,6 +578,21 @@ function TerrainAtlas.forMap(map, colors)
   local base, baked = staticAtlas(map, colors)
   if not base then return nil end
   return TerrainAtlas.animate(map, colors, base, baked) or base
+end
+
+function TerrainAtlas.prewarm(map, colors)
+  if not map then return nil end
+  stats.prewarms = stats.prewarms + 1
+  Diagnostics.count("atlasPrewarms")
+  local image = TerrainAtlas.forMap(map, colors)
+  Diagnostics.trace("terrain atlas prewarm %s", tostring(map.id))
+  return image
+end
+
+function TerrainAtlas.metrics()
+  return { builds = stats.builds, hits = stats.hits,
+           fallbacks = stats.fallbacks, evictions = stats.evictions,
+           prewarms = stats.prewarms }
 end
 
 -- The image a character model should texture from under an SGB palette.
@@ -621,12 +640,16 @@ end
 -- per map ever entered, and each pins the engine's own baked ImageData
 -- alive behind it.
 function TerrainAtlas.setLive(live)
+  local retained
+  retained, previousLive = AtlasLiveSet.advance(live, previousLive)
   for key, entry in pairs(animated) do
-    if entry and entry.mapId and not live[entry.mapId] then
+    if entry and entry.mapId and not retained[entry.mapId] then
       if entry.image and entry.image.release then
         pcall(entry.image.release, entry.image)
       end
       animated[key] = nil
+      stats.evictions = stats.evictions + 1
+      Diagnostics.count("atlasEvictions")
     end
   end
 end
@@ -641,6 +664,7 @@ function TerrainAtlas.invalidate()
     end
   end
   animated = {}
+  previousLive = {}
 end
 
 Assets.register(TerrainAtlas.invalidate)

@@ -21,7 +21,6 @@ local V = ...
 
 local ModSetting = V.require("ModSetting")
 local Water = V.require("Water")
-local ForestAtmos = V.require("ForestAtmos")
 local AntiAlias = V.require("AntiAlias")
 local WorldCurve = V.require("WorldCurve")
 local VoxelGrid = V.require("VoxelGrid")
@@ -56,16 +55,16 @@ QualityMode.CUSTOM_LEVEL = 5
 -- valueMatches -- so the mode never flips to CUSTOM over a knob the device
 -- physically cannot raise.
 QualityMode.PRESETS = {
-  [1] = { render = 100, water = "full", forest = "full", aa = 2,
+  [1] = { render = 100, water = "full", aa = 2,
           curve = 1, grid = true, btl = true,
           shadows = true, shadowQuality = 0 },
-  [2] = { render = 75, water = "sky", forest = "low", aa = 0,
+  [2] = { render = 75, water = "sky", aa = 0,
           curve = 0, grid = false, btl = true,
           shadows = true, shadowQuality = 0 },
-  [3] = { render = 50, water = "off", forest = "off", aa = 0,
+  [3] = { render = 50, water = "off", aa = 0,
           curve = 0, grid = false, btl = false,
           shadows = true, shadowQuality = 512 },
-  [4] = { render = 33, water = "off", forest = "off", aa = 0,
+  [4] = { render = 33, water = "off", aa = 0,
           curve = 0, grid = false, btl = false,
           shadows = true, shadowQuality = 512 },
 }
@@ -83,7 +82,6 @@ function QualityMode.applyMode(level, game)
   if not p then return end
   QualityMode.renderSetting:setValue(p.render, game)
   Water.setting:setValue(p.water, game)
-  ForestAtmos.setting:setValue(p.forest, game)
   AntiAlias.setting:setValue(p.aa, game)
   WorldCurve.setting:setValue(p.curve, game)
   VoxelGrid.setting:setValue(p.grid, game)
@@ -92,10 +90,10 @@ function QualityMode.applyMode(level, game)
   ShadowSettings.qualitySetting:setValue(p.shadowQuality, game)
 end
 
--- Whether `got` is the preset value `want`. A want the ladder cannot offer
--- (e.g. FOREST FX FULL on Android) is satisfied by the ladder's fallback --
--- that first rung IS the preset's best offer on this platform -- while a
--- want the ladder CAN offer is a real mismatch whenever `got` differs.
+-- Whether `got` is the preset value `want`. A want the ladder cannot
+-- offer is satisfied by the ladder's fallback -- that first rung IS the
+-- preset's best offer on this device -- while a want the ladder CAN offer
+-- is a real mismatch whenever `got` differs.
 local function valueMatches(setting, want)
   local got = setting:get()
   if got == want then return true end
@@ -112,7 +110,6 @@ function QualityMode.matches(level)
   if not p then return true end
   return valueMatches(QualityMode.renderSetting, p.render)
      and valueMatches(Water.setting, p.water)
-     and valueMatches(ForestAtmos.setting, p.forest)
      and valueMatches(AntiAlias.setting, p.aa)
      and valueMatches(WorldCurve.setting, p.curve)
      and valueMatches(VoxelGrid.setting, p.grid)

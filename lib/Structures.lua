@@ -49,6 +49,11 @@ local Map = require("src.world.Map")
 local Buildings = V.require("Buildings")
 local TileShape = V.require("TileShape")
 local Budget = V.require("BuildBudget")
+local GridKey = V.require("GridKey")
+local VegetationBuilder = V.require("VegetationBuilder")
+local StructureMatcher = V.require("StructureMatcher")
+local StairBuilder = V.require("StairBuilder")
+local BookcaseBuilder = V.require("BookcaseBuilder")
 
 local Structures = {}
 
@@ -152,10 +157,6 @@ end
 
 local DIRS4 = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
 
-local function keyOf(tx, ty)
-  return (ty + 64) * 4096 + (tx + 64)
-end
-
 function Structures.forMap(map)
   local S = cache[map.id]
   if S then return S end
@@ -223,7 +224,7 @@ function Structures.forMap(map)
       Budget.tick()
       local tile = tileLookup(tx, ty)
       if tile then
-        local k = keyOf(tx, ty)
+        local k = GridKey.of(tx, ty)
         local s = TileShape.at(map, shapes, tile, tx, ty)
         if s and void and void[tile] and not s.authored then
           s = shapes.classes.void
@@ -272,12 +273,12 @@ function Structures.forMap(map)
   for cy = math.floor(y0 / 2), math.floor(y1 / 2) do
     for cx = math.floor(x0 / 2), math.floor(x1 / 2) do
       if map.doorTiles[map:cellTile(cx, cy)] then
-        local northK = keyOf(cx * 2, cy * 2 - 1)
+        local northK = GridKey.of(cx * 2, cy * 2 - 1)
         local ns = shapeAt[northK]
         if ns and ns.art == "upright" then
           for dy = 0, 1 do
             for dx = 0, 1 do
-              local dk = keyOf(cx * 2 + dx, cy * 2 + dy)
+              local dk = GridKey.of(cx * 2 + dx, cy * 2 + dy)
               local ds = shapeAt[dk]
               if not (ds and ds.authored) then
                 shapeAt[dk] = shapes.classes.wall
@@ -347,7 +348,7 @@ function Structures.forMap(map)
   local regions = {}
   for ty = y0, y1 do
     for tx = x0, x1 do
-      local k = keyOf(tx, ty)
+      local k = GridKey.of(tx, ty)
       if structural(k) and not seen[k] then
         local region = { tiles = {}, minX = tx, maxX = tx,
                          minY = ty, maxY = ty }
@@ -365,7 +366,7 @@ function Structures.forMap(map)
           for _, d in ipairs(DIRS4) do
             local nx, ny = cx + d[1], cy + d[2]
             if nx >= x0 and nx <= x1 and ny >= y0 and ny <= y1 then
-              local nk = keyOf(nx, ny)
+              local nk = GridKey.of(nx, ny)
               if structural(nk) and not seen[nk] then
                 seen[nk] = true
                 queue[#queue + 1] = { nx, ny }
@@ -396,7 +397,7 @@ function Structures.forMap(map)
     local seenB = {}
     for ty = y0, y1 do
       for tx = x0, x1 do
-        local k = keyOf(tx, ty)
+        local k = GridKey.of(tx, ty)
         local s = shapeAt[k]
         if s and s.art == "billboard" and not seenB[k] then
           local reg = { tiles = {}, minX = tx, maxX = tx,
@@ -412,7 +413,7 @@ function Structures.forMap(map)
             reg.minY = math.min(reg.minY, c[2])
             reg.maxY = math.max(reg.maxY, c[2])
             for _, d in ipairs(DIRS4) do
-              local nk = keyOf(c[1] + d[1], c[2] + d[2])
+              local nk = GridKey.of(c[1] + d[1], c[2] + d[2])
               local ns = shapeAt[nk]
               -- same CLASS, not just billboard art: `billboard` and
               -- `prop` are two pools precisely so touching drawings (a TV
@@ -441,9 +442,9 @@ function Structures.forMap(map)
     local postCells = {}
     for ty = y0, y1 do
       for tx = x0, x1 do
-        local s = shapeAt[keyOf(tx, ty)]
+        local s = shapeAt[GridKey.of(tx, ty)]
         if s and s.art == "post" then
-          local ck = keyOf(math.floor(tx / 2), math.floor(ty / 2))
+          local ck = GridKey.of(math.floor(tx / 2), math.floor(ty / 2))
           postCells[ck] = postCells[ck] or {}
           local list = postCells[ck]
           list[#list + 1] = { tx, ty }
@@ -468,7 +469,7 @@ function Structures.forMap(map)
     local seenR = {}
     for ty = y0, y1 do
       for tx = x0, x1 do
-        local k = keyOf(tx, ty)
+        local k = GridKey.of(tx, ty)
         local s = shapeAt[k]
         if s and s.art == "relief" and not seenR[k] then
           local reg = { tiles = {}, minX = tx, maxX = tx,
@@ -484,7 +485,7 @@ function Structures.forMap(map)
             reg.minY = math.min(reg.minY, c[2])
             reg.maxY = math.max(reg.maxY, c[2])
             for _, d in ipairs(DIRS4) do
-              local nk = keyOf(c[1] + d[1], c[2] + d[2])
+              local nk = GridKey.of(c[1] + d[1], c[2] + d[2])
               local ns = shapeAt[nk]
               if ns and ns.art == "relief" and ns.class == s.class
                  and not seenR[nk] then
@@ -494,7 +495,7 @@ function Structures.forMap(map)
             end
           end
           for _, c in ipairs(reg.tiles) do
-            local ck = keyOf(c[1], c[2])
+            local ck = GridKey.of(c[1], c[2])
             S.skip[ck] = true
             S.ground[ck] = false
           end
@@ -506,10 +507,10 @@ function Structures.forMap(map)
     -- ---- tall grass: two standing tuft rows per tile. BODY only: the 2D
     -- renderer never draws a neighbour's ring, and standing scenery past a
     -- map's edge would poke into the map next door ----
-    Structures.buildGrass(S, map, 0, tw - 1, 0, th - 1, data)
+  VegetationBuilder.buildGrass(S, map, 0, tw - 1, 0, th - 1, data)
 
     -- ---- flowers: the animated meadow tile stands as a 1px cutout ----
-    Structures.buildFlowers(S, map, tw, th, x0, x1, y0, y1, data)
+  VegetationBuilder.buildFlowers(S, map, tw, th, x0, x1, y0, y1, data)
   end
 
   -- ---- authored ground under pinned props ----
@@ -645,7 +646,7 @@ local function roundTemplate(S, map, data, cx, cy, groundTiles, N, capRows,
 
   -- cell-space art access (NX x NY, row 0 = top), anchored at cell (cx, cy)
   local function tileOf(px, py)
-    return S.tileAt[keyOf(cx * 2 + math.floor(px / 8),
+    return S.tileAt[GridKey.of(cx * 2 + math.floor(px / 8),
                           cy * 2 + math.floor(py / 8))]
   end
   local function texel(px, py)
@@ -1467,7 +1468,7 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
     for cx = math.floor(x0 / 2), math.floor(x1 / 2) do
       Budget.tick()
       local ckey = cy * 8192 + cx
-      local k = keyOf(cx * 2, cy * 2)
+      local k = GridKey.of(cx * 2, cy * 2)
       local s = (not grouped[ckey]) and S.shapeAt[k] or nil
       local near = cx * 2 >= -Structures.ROUND_RING and cx * 2 < tw + Structures.ROUND_RING
                and cy * 2 >= -Structures.ROUND_RING and cy * 2 < th + Structures.ROUND_RING
@@ -1478,7 +1479,7 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
         -- alone rather than carved into a half-empty giant.
         local whole = true
         for _, d in ipairs({ { 1, 0 }, { 0, 1 }, { 1, 1 } }) do
-          local ps = S.shapeAt[keyOf((cx + d[1]) * 2, (cy + d[2]) * 2)]
+          local ps = S.shapeAt[GridKey.of((cx + d[1]) * 2, (cy + d[2]) * 2)]
           if not (ps and (ps.art == "cylinder" or ps.art == "canopy")) then
             whole = false
           end
@@ -1489,7 +1490,7 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
             local ids = {}
             for dy = 0, 3 do
               for dx = 0, 3 do
-                ids[#ids + 1] = S.tileAt[keyOf(cx * 2 + dx, cy * 2 + dy)]
+                ids[#ids + 1] = S.tileAt[GridKey.of(cx * 2 + dx, cy * 2 + dy)]
               end
             end
             local sig = tsid .. "|g32|"
@@ -1509,7 +1510,7 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
           end
           for dy = 0, 3 do
             for dx = 0, 3 do
-              local tk = keyOf(cx * 2 + dx, cy * 2 + dy)
+              local tk = GridKey.of(cx * 2 + dx, cy * 2 + dy)
               S.skip[tk] = true
               S.ground[tk] = ground
             end
@@ -1532,14 +1533,14 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
         -- the two cells leaves the drawing partial (a map edit, a mod's
         -- stray tile), so the anchor is left alone rather than carved into
         -- half a plant.
-        local below = S.shapeAt[keyOf(cx * 2, (cy + 1) * 2)]
+        local below = S.shapeAt[GridKey.of(cx * 2, (cy + 1) * 2)]
         if below and below.art == "planter" then
           local ground = false
           if data then
             local ids = {}
             for dy = 0, 3 do
               for dx = 0, 1 do
-                ids[#ids + 1] = S.tileAt[keyOf(cx * 2 + dx, cy * 2 + dy)]
+                ids[#ids + 1] = S.tileAt[GridKey.of(cx * 2 + dx, cy * 2 + dy)]
               end
             end
             local sig = tsid .. "|p32|"
@@ -1560,7 +1561,7 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
           end
           for dy = 0, 3 do
             for dx = 0, 1 do
-              local tk = keyOf(cx * 2 + dx, cy * 2 + dy)
+              local tk = GridKey.of(cx * 2 + dx, cy * 2 + dy)
               S.skip[tk] = true
               S.ground[tk] = ground
             end
@@ -1587,9 +1588,9 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
             .. (taper and ("|t" .. taper) or "")
             .. (Structures.HULL_BILLBOARDS and "|bb|" or "") .. "|"
             .. gsig .. "|" .. table.concat({
-            S.tileAt[k], S.tileAt[keyOf(cx * 2 + 1, cy * 2)],
-            S.tileAt[keyOf(cx * 2, cy * 2 + 1)],
-            S.tileAt[keyOf(cx * 2 + 1, cy * 2 + 1)] }, ":")
+            S.tileAt[k], S.tileAt[GridKey.of(cx * 2 + 1, cy * 2)],
+            S.tileAt[GridKey.of(cx * 2, cy * 2 + 1)],
+            S.tileAt[GridKey.of(cx * 2 + 1, cy * 2 + 1)] }, ":")
           local tpl = roundCache[sig]
           if not tpl then
             local tq, tbg = roundTemplate(S, map, data, cx, cy,
@@ -1608,7 +1609,7 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
         -- falls to the commonest-ground pass below.
         for dy = 0, 1 do
           for dx = 0, 1 do
-            local tk = keyOf(cx * 2 + dx, cy * 2 + dy)
+            local tk = GridKey.of(cx * 2 + dx, cy * 2 + dy)
             S.skip[tk] = true
             S.ground[tk] = ground
           end
@@ -1636,13 +1637,13 @@ function Structures.buildRelief(S, map, region, data, perRow, h)
   local bw = (region.maxX - region.minX + 1) * 8
   local bh = (region.maxY - region.minY + 1) * 8
   local member = {}
-  for _, c in ipairs(region.tiles) do member[keyOf(c[1], c[2])] = true end
+  for _, c in ipairs(region.tiles) do member[GridKey.of(c[1], c[2])] = true end
 
   local cls, srcU, srcV = {}, {}, {}
   for py = 0, bh - 1 do
     for px = 0, bw - 1 do
       local i = py * bw + px
-      local k = keyOf(region.minX + math.floor(px / 8),
+      local k = GridKey.of(region.minX + math.floor(px / 8),
                       region.minY + math.floor(py / 8))
       if member[k] then
         local tile = S.tileAt[k]
@@ -1745,352 +1746,9 @@ end
 -- When the row just above a rank is undetected structure (a shared trim
 -- tile the profile cannot pin), the rank adopts it as its CAP: one more
 -- band of height and the art its top face wears.
-local BOOK_SHADE = { south = 1.0, north = 0.68, flank = 0.8, top = 0.85,
-                     -- a pane's reveal: the one-voxel side of the frame
-                     -- standing proud of it.  The sill catches the light
-                     -- the top face does; the lintel is in shadow.
-                     sill = 0.85, lintel = 0.5 }
-
--- A pane is a shelf opening, a glass door or an inset panel: a non-black
--- region the drawing SEALS OFF behind its own black frame.  Anything
--- wider or taller than this is a band of the front itself -- a trim
--- course, a plinth -- and stays flush.  The same number and the same
--- rule lib/Buildings.lua measures a facade's panes with, so a shelf the
--- band pipeline models and a shelf this class collapses carry the same
--- relief.
-local BOOK_RECESS_MAX = 24
-
--- The panes of a BANK of ranks -- every rank of the same height standing
--- side by side -- as a mask over the bank's south face, plus the atlas
--- pixel each face texel comes from.  Measured over the whole bank rather
--- than per column, because a door panel drawn across two tiles is one
--- region and not two halves, and because the size test that keeps a
--- broad course flush has to see the course's real width.
---
--- `fx` runs across the bank and `fy` DOWN from its top, so the grid
--- reads like the drawing: the rank folds its tiles up band by band, the
--- southmost row lowest, and fy = 0 is the topmost drawn row.
-local function bookcasePanes(map, data, perRow, run, i, j)
-  if not data then return nil end
-  local bands = run[i].bands
-  local size = run[i].front - run[i].top + 1
-  local W, H = (j - i + 1) * 8, bands * 8
-  local light, srcU, srcV = {}, {}, {}
-  for fy = 0, H - 1 do
-    local band = bands - 1 - math.floor(fy / 8)
-    local row = fy % 8
-    for fx = 0, W - 1 do
-      local col = run[i + math.floor(fx / 8)]
-      local tile = band < size and map:tileAt(col.tx, col.front - band)
-                   or col.cap
-      if tile then
-        local k = fy * W + fx
-        local ax = (tile % perRow) * 8 + fx % 8
-        local ay = math.floor(tile / perRow) * 8 + row
-        srcU[k], srcV[k] = ax, ay
-        local r, g, b, a = data:getPixel(ax, ay)
-        light[k] = a ~= 0
-          and Structures.shadeClass(math.min(r, g, b)) ~= "black"
-      end
-    end
-  end
-
-  -- The drawing's non-black regions, split across its black frames.  A
-  -- region that reaches the face's own border is not sealed by anything
-  -- -- it is a course of the front running edge to edge, the way a
-  -- masonry band or a wall of siding does -- and it stays flush.  That
-  -- test is what keeps this rule to shelves: `bookcase` also collapses
-  -- the League's gate walls and the terraces, and their courses run off
-  -- the drawing, so nothing there sinks.
-  local pane, seen = {}, {}
-  for k0 = 0, W * H - 1 do
-    if light[k0] and not seen[k0] then
-      local cells, stack = {}, { k0 }
-      seen[k0] = true
-      local ax0, ax1 = k0 % W, k0 % W
-      local ay0, ay1 = math.floor(k0 / W), math.floor(k0 / W)
-      local edge = false
-      while #stack > 0 do
-        local k = table.remove(stack)
-        cells[#cells + 1] = k
-        local cx, cy = k % W, math.floor(k / W)
-        if cx < ax0 then ax0 = cx end
-        if cx > ax1 then ax1 = cx end
-        if cy < ay0 then ay0 = cy end
-        if cy > ay1 then ay1 = cy end
-        if cx == 0 or cx == W - 1 or cy == 0 or cy == H - 1 then
-          edge = true
-        end
-        for _, d in ipairs(DIRS4) do
-          local nx, ny = cx + d[1], cy + d[2]
-          if nx >= 0 and nx < W and ny >= 0 and ny < H then
-            local nk = ny * W + nx
-            if light[nk] and not seen[nk] then
-              seen[nk] = true
-              stack[#stack + 1] = nk
-            end
-          end
-        end
-      end
-      if not edge and ax1 - ax0 < BOOK_RECESS_MAX
-         and ay1 - ay0 < BOOK_RECESS_MAX then
-        for _, k in ipairs(cells) do pane[k] = true end
-      end
-    end
-  end
-  return pane, srcU, srcV, W, H
-end
-
-local function bookcaseRank(S, map, perRow, run, i, j, k, pane, srcU, srcV,
-                            bankW, bankH)
-  local r = run[k]
-  local tx, northTy, frontTy, capTile = r.tx, r.top, r.front, r.cap
-  local quads = S.objectQuads
-  local atlasW = map.tileset.imageWidth or 128
-  local atlasH = map.tileset.imageHeight or 48
-  local function uvRect(tile)
-    local ax = (tile % perRow) * 8
-    local ay = math.floor(tile / perRow) * 8
-    return (ax + 0.5) / atlasW, (ax + 7.5) / atlasW,
-           (ay + 0.5) / atlasH, (ay + 7.5) / atlasH
-  end
-
-  local size = frontTy - northTy + 1
-  local bands = r.bands
-  local h = bands * 8
-  local depth = math.min(2, size) * 8
-  local x0, x1 = tx * 8, tx * 8 + 8
-  local z1 = frontTy * 8 + 8
-  local z0 = z1 - depth
-  local fx0 = (k - i) * 8            -- this rank's columns within the bank
-
-  -- does the neighbouring column continue this shelf? (flanks only cap
-  -- the ends of a run of bookcases standing side by side)
-  local function joined(nx)
-    local ns = S.shapeAt[keyOf(nx, frontTy)]
-    return ns ~= nil and ns.art == "bookcase"
-  end
-
-  local function sunk(fx, fy)
-    if not pane or fx < 0 or fx >= bankW or fy < 0 or fy >= bankH then
-      return false
-    end
-    return pane[fy * bankW + fx] == true
-  end
-
-  for band = 0, bands - 1 do
-    local tile = band < size and map:tileAt(tx, frontTy - band) or capTile
-    local u0, u1, v0, v1 = uvRect(tile)
-    local y0, y1 = band * 8, band * 8 + 8
-    local fyTop = (bands - 1 - band) * 8
-
-    -- The south face: the drawing folded upright.  A band with no pane
-    -- in it is the single quad it has always been; a band that seals
-    -- one splits into per-row runs of texels, and the pane's run sinks
-    -- a voxel behind the frame that stays proud around it.
-    local relief = false
-    if pane then
-      for row = 0, 7 do
-        for c = 0, 7 do
-          if sunk(fx0 + c, fyTop + row) then relief = true break end
-        end
-        if relief then break end
-      end
-    end
-    if not relief then
-      quads[#quads + 1] = { { x0, y0, z1 }, { x1, y0, z1 },
-        { x1, y1, z1 }, { x0, y1, z1 },
-        uv = { { u0, v1 }, { u1, v1 }, { u1, v0 }, { u0, v0 } },
-        shade = BOOK_SHADE.south }
-    else
-      local ax = (tile % perRow) * 8
-      local ay = math.floor(tile / perRow) * 8
-      for row = 0, 7 do
-        local fy = fyTop + row
-        local wy = y0 + 7 - row             -- the drawing's row 0 is the top
-        local c = 0
-        while c < 8 do
-          local s = sunk(fx0 + c, fy)
-          local n = 1
-          while c + n < 8 and sunk(fx0 + c + n, fy) == s do n = n + 1 end
-          local pz = s and z1 - 1 or z1
-          local qu0 = (ax + c + 0.05) / atlasW
-          local qu1 = (ax + c + n - 0.05) / atlasW
-          local qv0 = (ay + row + 0.05) / atlasH
-          local qv1 = (ay + row + 1 - 0.05) / atlasH
-          quads[#quads + 1] = { { x0 + c, wy, pz }, { x0 + c + n, wy, pz },
-            { x0 + c + n, wy + 1, pz }, { x0 + c, wy + 1, pz },
-            uv = { { qu0, qv1 }, { qu1, qv1 }, { qu1, qv0 }, { qu0, qv0 } },
-            shade = BOOK_SHADE.south }
-          c = c + n
-        end
-      end
-      -- the reveals: where a sunk texel meets a proud one, the frame's
-      -- own one-voxel side shows.  It wears the PROUD neighbour's texel,
-      -- because that is the block it belongs to.  A pane running off the
-      -- bank, or off the top or bottom of the rank, needs none: the
-      -- flank and top faces already close it.
-      for row = 0, 7 do
-        local fy = fyTop + row
-        local wy = y0 + 7 - row
-        for c = 0, 7 do
-          if sunk(fx0 + c, fy) then
-            local X = x0 + c
-            local function reveal(nfx, nfy, verts, shade)
-              if nfx < 0 or nfx >= bankW or nfy < 0 or nfy >= bankH then
-                return
-              end
-              if sunk(nfx, nfy) then return end
-              local nk = nfy * bankW + nfx
-              if not srcU[nk] then return end
-              quads[#quads + 1] = { verts[1], verts[2], verts[3], verts[4],
-                u = (srcU[nk] + 0.5) / atlasW, v = (srcV[nk] + 0.5) / atlasH,
-                shade = shade }
-            end
-            reveal(fx0 + c - 1, fy, {
-              { X, wy, z1 }, { X, wy, z1 - 1 },
-              { X, wy + 1, z1 - 1 }, { X, wy + 1, z1 } }, BOOK_SHADE.flank)
-            reveal(fx0 + c + 1, fy, {
-              { X + 1, wy, z1 - 1 }, { X + 1, wy, z1 },
-              { X + 1, wy + 1, z1 }, { X + 1, wy + 1, z1 - 1 } },
-              BOOK_SHADE.flank)
-            reveal(fx0 + c, fy + 1, {
-              { X, wy, z1 - 1 }, { X + 1, wy, z1 - 1 },
-              { X + 1, wy, z1 }, { X, wy, z1 } }, BOOK_SHADE.sill)
-            reveal(fx0 + c, fy - 1, {
-              { X, wy + 1, z1 }, { X + 1, wy + 1, z1 },
-              { X + 1, wy + 1, z1 - 1 }, { X, wy + 1, z1 - 1 } },
-              BOOK_SHADE.lintel)
-          end
-        end
-      end
-    end
-
-    quads[#quads + 1] = { { x1, y0, z0 }, { x0, y0, z0 },
-      { x0, y1, z0 }, { x1, y1, z0 },
-      uv = { { u0, v1 }, { u1, v1 }, { u1, v0 }, { u0, v0 } },
-      shade = BOOK_SHADE.north }
-    if not joined(tx - 1) then
-      quads[#quads + 1] = { { x0, y0, z0 }, { x0, y0, z1 },
-        { x0, y1, z1 }, { x0, y1, z0 },
-        uv = { { u0, v1 }, { u1, v1 }, { u1, v0 }, { u0, v0 } },
-        shade = BOOK_SHADE.flank }
-    end
-    if not joined(tx + 1) then
-      quads[#quads + 1] = { { x1, y0, z1 }, { x1, y0, z0 },
-        { x1, y1, z0 }, { x1, y1, z1 },
-        uv = { { u0, v1 }, { u1, v1 }, { u1, v0 }, { u0, v0 } },
-        shade = BOOK_SHADE.flank }
-    end
-  end
-
-  local topTile = capTile or map:tileAt(tx, northTy)
-  local u0, u1, v0, v1 = uvRect(topTile)
-  for seg = 0, depth / 8 - 1 do
-    local sz0 = z0 + seg * 8
-    quads[#quads + 1] = { { x0, h, sz0 }, { x1, h, sz0 },
-      { x1, h, sz0 + 8 }, { x0, h, sz0 + 8 },
-      uv = { { u0, v0 }, { u1, v0 }, { u1, v1 }, { u0, v1 } },
-      shade = BOOK_SHADE.top }
-  end
-end
-
 function Structures.buildBookcases(S, map, x0, x1, y0, y1, data, perRow)
-  perRow = perRow or map.tileset.tilesPerRow or 16
-  -- What to do with the rows a rank VACATES (see TileShape.bookcaseBackfill).
-  -- Read once: it is a property of the tileset, not of the column.
-  local backfill = TileShape.bookcaseBackfill(map.tileset.id)
-  -- the front's measured relief: on for a shelf, off for the tilesets
-  -- that borrow the collapse for masonry or machinery
-  if not TileShape.bookcaseRelief(map.tileset.id) then data = nil end
-  -- Ranks are collected here and emitted after the sweep: a rank's panes
-  -- are measured over the whole BANK it stands in (see bookcasePanes),
-  -- and the bank is only known once every column has been read.  Nothing
-  -- below this loop mutates what the sweep reads, so deferring is free.
-  local order, banks = {}, {}
-  for tx = x0, x1 do
-    local ty = y1
-    while ty >= y0 do
-      local s = S.shapeAt[keyOf(tx, ty)]
-      if s and s.art == "bookcase" then
-        -- the contiguous pinned run above this front row
-        local north = ty
-        while north > y0 do
-          local ns = S.shapeAt[keyOf(tx, north - 1)]
-          if ns and ns.art == "bookcase" then north = north - 1 else break end
-        end
-        -- ranks of at most four drawn rows, southmost first
-        local front = ty
-        while front >= north do
-          local top = math.max(north, front - 3)
-          -- adopt the trim row just above as the cap: either undetected
-          -- structure the profile could not pin, or a row pinned `table`
-          -- because the same trim tiles cap other furniture too
-          local capTile = nil
-          if top == north then
-            local ck = keyOf(tx, north - 1)
-            local cs = S.shapeAt[ck]
-            if cs and not cs.flat and not S.skip[ck] and not S.runs[ck]
-               and (not cs.authored or cs.class == "table") then
-              capTile = S.tileAt[ck]
-            end
-          end
-          -- The box is one cell deep, so it covers only the run's southmost
-          -- rows; everything north of that is vacated.  By default a vacated
-          -- row is skipped and painted with synthesized ground -- right for a
-          -- shelf standing in a room.  `bookcase_backfill = "above"` hands it
-          -- the cell above the run instead, shape and art, so a wall cut into
-          -- a terrace has more terrace behind it rather than a trench.
-          local covered = math.min(2, front - top + 1)
-          local srcK = keyOf(tx, top - 1)
-          local src = backfill == "above" and S.shapeAt[srcK] or nil
-          for cy = top, front do
-            local tk = keyOf(tx, cy)
-            if src and cy <= front - covered then
-              S.shapeAt[tk] = src
-              S.tileAt[tk] = S.tileAt[srcK]
-            else
-              S.skip[tk] = true
-              S.ground[tk] = false
-            end
-          end
-          -- ranks of the same height standing side by side are one bank
-          local bands = (front - top + 1) + (capTile and 1 or 0)
-          local key = top .. ":" .. front .. ":" .. bands
-          local bank = banks[key]
-          if not bank then
-            bank = {}
-            banks[key] = bank
-            order[#order + 1] = key
-          end
-          bank[#bank + 1] = { tx = tx, top = top, front = front,
-                              cap = capTile, bands = bands }
-          front = top - 1
-        end
-        ty = north - 1
-      else
-        ty = ty - 1
-      end
-    end
-  end
-
-  -- tx ascends in the sweep above, so each bank's columns are already in
-  -- order; split them into the contiguous runs that actually touch
-  for _, key in ipairs(order) do
-    local run = banks[key]
-    local i = 1
-    while i <= #run do
-      local j = i
-      while j < #run and run[j + 1].tx == run[j].tx + 1 do j = j + 1 end
-      local pane, srcU, srcV, bankW, bankH =
-        bookcasePanes(map, data, perRow, run, i, j)
-      for k = i, j do
-        bookcaseRank(S, map, perRow, run, i, j, k,
-                     pane, srcU, srcV, bankW, bankH)
-      end
-      i = j + 1
-    end
-  end
+  return BookcaseBuilder.build(S, map, x0, x1, y0, y1, data, perRow,
+                               Structures.shadeClass)
 end
 
 -- ---- stairs: pinned cells that render as real steps ----
@@ -2105,179 +1763,6 @@ end
 -- walls) wear the matching slice of that drawing -- the railing's
 -- diagonal lands along the stepped silhouette -- while treads sample the
 -- art band drawn at their own height.
-local STAIR_STEPS = 4
-
-local STAIR_SHADE = { south = 1.0, north = 0.68, tread = 1.0,
-                      riser = 0.82, cap = 0.78,
-                      wellN = 0.9, wellS = 0.55, wellEnd = 0.15,
-                      wellTread = 0.8 }
-
-local function stairCell(S, map, data, cx, cy, s)
-  local perRow = map.tileset.tilesPerRow or 16
-  local atlasW = map.tileset.imageWidth or 128
-  local atlasH = map.tileset.imageHeight or 48
-  local quads = S.objectQuads
-  local down = s.class == "stair_down_e" or s.class == "stair_down_w"
-  local east = s.class == "stair_e" or s.class == "stair_down_e"
-  local mx, mz = cx * 16, cy * 16
-  local h = s.h or 16
-  local rise = h / STAIR_STEPS
-  local runW = 16 / STAIR_STEPS
-  local z0, z1 = mz, mz + 16
-
-  -- cell-space art coords (16x16, row 0 the top) -> atlas uv; callers keep
-  -- a quad's range inside one 8px tile so it never samples across a seam
-  local function uv(px, py)
-    px = math.max(0.05, math.min(15.95, px))
-    py = math.max(0.05, math.min(15.95, py))
-    local tile = S.tileAt[keyOf(cx * 2 + (px >= 8 and 1 or 0),
-                                cy * 2 + (py >= 8 and 1 or 0))]
-    return ((tile % perRow) * 8 + px % 8) / atlasW,
-           (math.floor(tile / perRow) * 8 + py % 8) / atlasH
-  end
-  -- corners run bottom-left, bottom-right, top-right, top-left as seen
-  -- from outside (the mesher's side convention); art rect in cell space
-  local function face(c1, c2, c3, c4, ax0, ay0, ax1, ay1, shade)
-    local u0, v0 = uv(ax0, ay0)
-    local u1, v1 = uv(ax1, ay1)
-    quads[#quads + 1] = { c1, c2, c3, c4,
-      uv = { { u0, v1 }, { u1, v1 }, { u1, v0 }, { u0, v0 } },
-      shade = shade }
-  end
-  -- a vertical face spanning heights [fy0, fy1] wearing art rows
-  -- [ay0, ay1], emitted per 8-row art band so no quad crosses the seam
-  local function banded(z, ax0, ax1, fy0, fy1, ay0, ay1, shade, flip)
-    local scale = (fy1 - fy0) / math.max(ay1 - ay0, 0.001)
-    for _, band in ipairs({ { ay0, math.min(8, ay1) },
-                            { math.max(ay0, 8), ay1 } }) do
-      local a0, a1 = band[1], band[2]
-      if a1 > a0 then
-        local by1 = fy1 - (a0 - ay0) * scale
-        local by0 = fy1 - (a1 - ay0) * scale
-        local xa, xb = mx + ax0, mx + ax1
-        if flip then
-          face({ xb, by0, z }, { xa, by0, z }, { xa, by1, z },
-               { xb, by1, z }, ax0, a0, ax1, a1, shade)
-        else
-          face({ xa, by0, z }, { xb, by0, z }, { xb, by1, z },
-               { xa, by1, z }, ax0, a0, ax1, a1, shade)
-        end
-      end
-    end
-  end
-
-  for i = 0, STAIR_STEPS - 1 do
-    local sx0 = east and (i * runW) or (16 - (i + 1) * runW)
-    local sx1 = sx0 + runW
-    local x0, x1 = mx + sx0, mx + sx1
-
-    if down then
-      -- stairwell: tread i sits (i+1) rises below the floor; the walls
-      -- above it are the excavation, wearing the drawing at its depth
-      local yTop = -(i + 1) * rise
-      local dep = (i + 1) * rise
-
-      face({ x0, yTop, z0 }, { x1, yTop, z0 },
-           { x1, yTop, z1 }, { x0, yTop, z1 },
-           sx0, dep - 1.4, sx1, dep, STAIR_SHADE.wellTread)
-
-      -- stairwell walls above this tread: north wall faces the camera
-      banded(z0, sx0, sx1, yTop, 0, 0, dep, STAIR_SHADE.wellN)
-      banded(z1, sx0, sx1, yTop, 0, 0, dep, STAIR_SHADE.wellS, true)
-
-      -- riser dropping to this tread from the shallower step
-      local rx = east and x0 or x1
-      local ry1 = -i * rise
-      local rax = east and (sx0 + 0.1) or (sx1 - 1.3)
-      if east then
-        face({ rx, yTop, z0 }, { rx, yTop, z1 },
-             { rx, ry1, z1 }, { rx, ry1, z0 },
-             rax, i * rise, rax + 1.2, dep, STAIR_SHADE.riser)
-      else
-        face({ rx, yTop, z1 }, { rx, yTop, z0 },
-             { rx, ry1, z0 }, { rx, ry1, z1 },
-             rax, i * rise, rax + 1.2, dep, STAIR_SHADE.riser)
-      end
-
-      -- the deep end: a dark opening under the wall the flight leaves by
-      if i == STAIR_STEPS - 1 then
-        local px = east and (mx + 16) or mx
-        local cax = east and 14.7 or 0.1
-        if east then
-          face({ px, -h, z1 }, { px, -h, z0 }, { px, 0, z0 }, { px, 0, z1 },
-               cax, 0, cax + 1.2, 16, STAIR_SHADE.wellEnd)
-        else
-          face({ px, -h, z0 }, { px, -h, z1 }, { px, 0, z1 }, { px, 0, z0 },
-               cax, 0, cax + 1.2, 16, STAIR_SHADE.wellEnd)
-        end
-      end
-    else
-      -- rising flight
-      local yTop = (i + 1) * rise
-      local py0 = 16 - yTop
-
-      -- south + north faces: the drawn flight sliced at this step's column
-      banded(z1, sx0, sx1, 0, yTop, py0, 16, STAIR_SHADE.south)
-      banded(z0, sx0, sx1, 0, yTop, py0, 16, STAIR_SHADE.north, true)
-
-      -- tread: the step's top, wearing the art band drawn at its height
-      face({ x0, yTop, z0 }, { x1, yTop, z0 },
-           { x1, yTop, z1 }, { x0, yTop, z1 },
-           sx0, py0, sx1, py0 + 1.4, STAIR_SHADE.tread)
-
-      -- riser: the vertical strip exposed above the previous step
-      local rx = east and x0 or x1
-      local ry0 = i * rise
-      local rax = east and (sx0 + 0.1) or (sx1 - 1.3)
-      if east then
-        face({ rx, ry0, z0 }, { rx, ry0, z1 },
-             { rx, yTop, z1 }, { rx, yTop, z0 },
-             rax, 16 - yTop, rax + 1.2, 16 - ry0, STAIR_SHADE.riser)
-      else
-        face({ rx, ry0, z1 }, { rx, ry0, z0 },
-             { rx, yTop, z0 }, { rx, yTop, z1 },
-             rax, 16 - yTop, rax + 1.2, 16 - ry0, STAIR_SHADE.riser)
-      end
-
-      -- cap the tall end of the flight so it never shows a hole
-      if i == STAIR_STEPS - 1 then
-        local px = east and (mx + 16) or mx
-        local cax = east and 14.7 or 0.1
-        if east then
-          face({ px, 0, z1 }, { px, 0, z0 }, { px, h, z0 }, { px, h, z1 },
-               cax, 0, cax + 1.2, 16, STAIR_SHADE.cap)
-        else
-          face({ px, 0, z0 }, { px, 0, z1 }, { px, h, z1 }, { px, h, z0 },
-               cax, 0, cax + 1.2, 16, STAIR_SHADE.cap)
-        end
-      end
-    end
-  end
-end
-
-function Structures.buildStairs(S, map, x0, x1, y0, y1)
-  local data = pixels(map.tileset)
-  for cy = math.floor(y0 / 2), math.floor(y1 / 2) do
-    for cx = math.floor(x0 / 2), math.floor(x1 / 2) do
-      local s = S.shapeAt[keyOf(cx * 2, cy * 2)]
-      if s and s.art == "stair" then
-        -- claim the cell whichever way the quads go: the mesher must not
-        -- box or floor it.  A rising flight stands on the map's common
-        -- floor; a stairwell IS the hole, so nothing is painted under it
-        local down = s.class == "stair_down_e" or s.class == "stair_down_w"
-        for dy = 0, 1 do
-          for dx = 0, 1 do
-            local tk = keyOf(cx * 2 + dx, cy * 2 + dy)
-            S.skip[tk] = true
-            if not down then S.ground[tk] = false end
-          end
-        end
-        if data then stairCell(S, map, data, cx, cy, s) end
-      end
-    end
-  end
-end
-
 -- ---- volume mode: per-column runs with real drawn heights ----
 
 -- `tiles` is a list of {tx, ty} forming one region (or what is left of one
@@ -2342,7 +1827,7 @@ function Structures.buildVolume(S, map, tiles)
       end
       local isDoor = false
       for ty = north, front do
-        if S.doorFold[keyOf(tx, ty)] then
+        if S.doorFold[GridKey.of(tx, ty)] then
           isDoor = true
           break
         end
@@ -2416,7 +1901,7 @@ function Structures.buildVolume(S, map, tiles)
     run.peak = h
     run.h = h - run.rise               -- facade height: what sides build to
     for ty = run.north, run.front do
-      S.runs[keyOf(r.tx, ty)] = run
+      S.runs[GridKey.of(r.tx, ty)] = run
     end
   end
 end
@@ -2450,7 +1935,7 @@ function Structures.extractObjects(S, map, region, data, perRow, force)
   local bh = (region.maxY - region.minY + 1) * 8
 
   local member = {}
-  for _, c in ipairs(region.tiles) do member[keyOf(c[1], c[2])] = true end
+  for _, c in ipairs(region.tiles) do member[GridKey.of(c[1], c[2])] = true end
 
   -- Image over the region bbox plus a 1px ground apron. Pixel states:
   --   solid   opaque member art (non-white, or white that survives)
@@ -2478,7 +1963,7 @@ function Structures.extractObjects(S, map, region, data, perRow, force)
       local px, py = ix - 1, iy - 1
       local tx = region.minX + math.floor(px / 8)
       local ty = region.minY + math.floor(py / 8)
-      local k = keyOf(tx, ty)
+      local k = GridKey.of(tx, ty)
       local inside = px >= 0 and px < bw and py >= 0 and py < bh
       -- a forced (pinned) prop floods from every apron even when the
       -- neighbours are solid: the pin itself declares the art a prop
@@ -2535,7 +2020,7 @@ function Structures.extractObjects(S, map, region, data, perRow, force)
   if force and force ~= "opaque" then
     local strict = false
     do
-      local fs = S.shapeAt[keyOf(region.tiles[1][1], region.tiles[1][2])]
+      local fs = S.shapeAt[GridKey.of(region.tiles[1][1], region.tiles[1][2])]
       strict = fs ~= nil and fs.class == "cutout"
     end
     -- The rim vote reads the shades on the DRAWING'S OWN bounding box, so a
@@ -2555,7 +2040,7 @@ function Structures.extractObjects(S, map, region, data, perRow, force)
       local named = TileShape.propBg(map.tileset.id)
       if named then
         for _, c in ipairs(region.tiles) do
-          local rule = named[S.tileAt[keyOf(c[1], c[2])]]
+          local rule = named[S.tileAt[GridKey.of(c[1], c[2])]]
           if rule then
             for shadeName in pairs(rule) do bg[shadeName] = true end
             break
@@ -2633,7 +2118,7 @@ function Structures.extractObjects(S, map, region, data, perRow, force)
   for _, c in ipairs(region.tiles) do
     Budget.tick()
     if force then
-      sprite[keyOf(c[1], c[2])] = true
+      sprite[GridKey.of(c[1], c[2])] = true
     else
       local bx = (c[1] - region.minX) * 8
       local by = (c[2] - region.minY) * 8
@@ -2643,7 +2128,7 @@ function Structures.extractObjects(S, map, region, data, perRow, force)
           if flooded[(by + py + 1) * W + (bx + px + 1)] then bg = bg + 1 end
         end
       end
-      if bg / 64 >= TILE_BG_RATIO then sprite[keyOf(c[1], c[2])] = true end
+      if bg / 64 >= TILE_BG_RATIO then sprite[GridKey.of(c[1], c[2])] = true end
     end
   end
 
@@ -2652,7 +2137,7 @@ function Structures.extractObjects(S, map, region, data, perRow, force)
   local clusterSeen = {}
   for _, c in ipairs(region.tiles) do
     Budget.tick()
-    local k = keyOf(c[1], c[2])
+    local k = GridKey.of(c[1], c[2])
     if sprite[k] and not clusterSeen[k] then
       local cluster = { tiles = {}, minX = c[1], maxX = c[1],
                         minY = c[2], maxY = c[2] }
@@ -2666,7 +2151,7 @@ function Structures.extractObjects(S, map, region, data, perRow, force)
         cluster.minY = math.min(cluster.minY, cc[2])
         cluster.maxY = math.max(cluster.maxY, cc[2])
         for _, d in ipairs(DIRS4) do
-          local nk = keyOf(cc[1] + d[1], cc[2] + d[2])
+          local nk = GridKey.of(cc[1] + d[1], cc[2] + d[2])
           if sprite[nk] and not clusterSeen[nk] then
             clusterSeen[nk] = true
             queue2[#queue2 + 1] = { cc[1] + d[1], cc[2] + d[2] }
@@ -2676,14 +2161,14 @@ function Structures.extractObjects(S, map, region, data, perRow, force)
       if Structures.buildObject(S, map, region, cluster,
                                 state, flooded, srcU, srcV, W, force) then
         for _, cc in ipairs(cluster.tiles) do
-          claimed[keyOf(cc[1], cc[2])] = true
+          claimed[GridKey.of(cc[1], cc[2])] = true
         end
       end
     end
   end
 
   for _, c in ipairs(region.tiles) do
-    if not claimed[keyOf(c[1], c[2])] then leftover[#leftover + 1] = c end
+    if not claimed[GridKey.of(c[1], c[2])] then leftover[#leftover + 1] = c end
   end
   return leftover
 end
@@ -2706,7 +2191,7 @@ function Structures.buildObject(S, map, region, cluster,
     local touchesGround = false
     for _, c in ipairs(cluster.tiles) do
       for _, d in ipairs(dirs) do
-        local ss = S.shapeAt[keyOf(c[1] + d[1], c[2] + d[2])]
+        local ss = S.shapeAt[GridKey.of(c[1] + d[1], c[2] + d[2])]
         if ss and ss.flat and ss.class ~= "void" then
           touchesGround = true
           break
@@ -2738,7 +2223,7 @@ function Structures.buildObject(S, map, region, cluster,
   end
 
   local memberC = {}
-  for _, c in ipairs(cluster.tiles) do memberC[keyOf(c[1], c[2])] = true end
+  for _, c in ipairs(cluster.tiles) do memberC[GridKey.of(c[1], c[2])] = true end
 
   -- solid pixels of this cluster (art minus flooded background)
   local solidPx, count, bgCount = {}, 0, 0
@@ -2774,7 +2259,7 @@ function Structures.buildObject(S, map, region, cluster,
   -- a body, standing at the cluster's south row, base on the ground plane
   local depth = OBJECT_DEPTH
   if force then
-    local cs = S.shapeAt[keyOf(cluster.tiles[1][1], cluster.tiles[1][2])]
+    local cs = S.shapeAt[GridKey.of(cluster.tiles[1][1], cluster.tiles[1][2])]
     depth = (cs and PINNED_DEPTH[cs.class]) or PINNED_DEPTH.billboard
   end
   local wx0 = cluster.minX * 8
@@ -2805,7 +2290,7 @@ function Structures.buildObject(S, map, region, cluster,
   -- they were hoisted to stand on the clifftop instead of the path.
   local baseY, support = 0, nil
   if force and force ~= "opaque" then
-    local bs = S.shapeAt[keyOf(cluster.minX, cluster.maxY + 1)]
+    local bs = S.shapeAt[GridKey.of(cluster.minX, cluster.maxY + 1)]
     local blocked = not map:isWalkableCell(math.floor(cluster.minX / 2),
                                            math.floor(cluster.maxY / 2))
     -- `bookcase` supports as well as `upright`.  A prop drawn above an
@@ -2888,7 +2373,7 @@ function Structures.buildObject(S, map, region, cluster,
   -- cluster (two stools side by side, a leaf beside a vase), so this
   -- cannot be the default.
   if force then
-    local cs = S.shapeAt[keyOf(cluster.tiles[1][1], cluster.tiles[1][2])]
+    local cs = S.shapeAt[GridKey.of(cluster.tiles[1][1], cluster.tiles[1][2])]
     if cs and (cs.class == "cutout" or cs.class == "console")
        and #comps > 1 then
       local biggest = comps[1]
@@ -2944,7 +2429,7 @@ function Structures.buildObject(S, map, region, cluster,
   local votes, best, bestN = {}, nil, 0
   for _, c in ipairs(cluster.tiles) do
     for _, d in ipairs(DIRS4) do
-      local nk = keyOf(c[1] + d[1], c[2] + d[2])
+      local nk = GridKey.of(c[1] + d[1], c[2] + d[2])
       local ns = S.shapeAt[nk]
       if ns and ns.flat and ns.class ~= "void" and not memberC[nk] then
         local t = S.tileAt[nk]
@@ -2954,7 +2439,7 @@ function Structures.buildObject(S, map, region, cluster,
     end
   end
   for _, c in ipairs(cluster.tiles) do
-    local k = keyOf(c[1], c[2])
+    local k = GridKey.of(c[1], c[2])
     if support and (support.class == "wall" or support.class == "cliff"
                     or support.art == "bookcase"
                     or support.class == "building") then
@@ -2986,10 +2471,10 @@ function Structures.buildObject(S, map, region, cluster,
       -- trim row stays trim); only when the whole row is the prop does
       -- it fall back to the row below
       S.shapeAt[k] = support
-      local src = keyOf(c[1], cluster.maxY + 1)
+      local src = GridKey.of(c[1], cluster.maxY + 1)
       for dx = 1, 3 do
         for _, sx in ipairs({ c[1] - dx, c[1] + dx }) do
-          local nk = keyOf(sx, c[2])
+          local nk = GridKey.of(sx, c[2])
           local ns = S.shapeAt[nk]
           if not memberC[nk] and ns and ns.authored
              and ns.class == support.class then
@@ -2997,7 +2482,7 @@ function Structures.buildObject(S, map, region, cluster,
             break
           end
         end
-        if src ~= keyOf(c[1], cluster.maxY + 1) then break end
+        if src ~= GridKey.of(c[1], cluster.maxY + 1) then break end
       end
       S.tileAt[k] = S.tileAt[src]
     else
@@ -3239,7 +2724,7 @@ local function buildFigure(S, map, fig, tx, ty, perRow)
                                          math.floor((ty + fig.h - 1) / 2))
   if blocked then
     for dx = 0, fig.w - 1 do
-      local bs = S.shapeAt[keyOf(tx + dx, ty + fig.h)]
+      local bs = S.shapeAt[GridKey.of(tx + dx, ty + fig.h)]
       if bs and bs.authored and bs.art == "upright"
          and (bs.h or 0) > baseY then
         baseY = bs.h
@@ -3327,7 +2812,7 @@ local function buildFigure(S, map, fig, tx, ty, perRow)
   -- so nothing has to be synthesized or repainted from a neighbour vote.
   for i = 1, #fig.tiles do
     local dx, dy = (i - 1) % fig.w, math.floor((i - 1) / fig.w)
-    S.tileAt[keyOf(tx + dx, ty + dy)] = fig.under[i]
+    S.tileAt[GridKey.of(tx + dx, ty + dy)] = fig.under[i]
   end
 end
 
@@ -3342,22 +2827,10 @@ function Structures.buildFigures(S, map, x0, x1, y0, y1)
   local figures = TileShape.figures(map.tileset.id)
   if not figures then return end
   local perRow = map.tileset.tilesPerRow or 16
-  for _, fig in ipairs(figures) do
-    for ty = y0, y1 - fig.h + 1 do
-      for tx = x0, x1 - fig.w + 1 do
-        Budget.tick()
-        local hit = true
-        for i = 1, #fig.tiles do
-          local dx, dy = (i - 1) % fig.w, math.floor((i - 1) / fig.w)
-          if S.tileAt[keyOf(tx + dx, ty + dy)] ~= fig.tiles[i] then
-            hit = false
-            break
-          end
-        end
-        if hit then buildFigure(S, map, fig, tx, ty, perRow) end
-      end
-    end
-  end
+  StructureMatcher.each(figures, S.tileAt, x0, x1, y0, y1,
+                        function(fig, tx, ty)
+                          buildFigure(S, map, fig, tx, ty, perRow)
+                        end)
 end
 
 -- ---- mounted: a thing drawn INTO a wall band, stood proud of it ----
@@ -3401,7 +2874,7 @@ local function buildMountedAt(S, map, m, tx, ty, perRow)
   -- because they ARE the wall.
   for i = 1, #m.tiles do
     local dx, dy = (i - 1) % m.w, math.floor((i - 1) / m.w)
-    S.tileAt[keyOf(tx + dx, ty + dy)] = m.under[i]
+    S.tileAt[GridKey.of(tx + dx, ty + dy)] = m.under[i]
   end
 end
 
@@ -3414,22 +2887,15 @@ function Structures.buildMounted(S, map, x0, x1, y0, y1)
   local list = TileShape.mounted(map.tileset.id)
   if not list then return end
   local perRow = map.tileset.tilesPerRow or 16
-  for _, m in ipairs(list) do
-    for ty = y0, y1 - m.h + 1 do
-      for tx = x0, x1 - m.w + 1 do
-        Budget.tick()
-        local hit = true
-        for i = 1, #m.tiles do
-          local dx, dy = (i - 1) % m.w, math.floor((i - 1) / m.w)
-          if S.tileAt[keyOf(tx + dx, ty + dy)] ~= m.tiles[i] then
-            hit = false
-            break
-          end
-        end
-        if hit then buildMountedAt(S, map, m, tx, ty, perRow) end
-      end
-    end
-  end
+  StructureMatcher.each(list, S.tileAt, x0, x1, y0, y1,
+                        function(m, tx, ty)
+                          buildMountedAt(S, map, m, tx, ty, perRow)
+                        end)
+end
+
+-- Compatibility façade: stair geometry ownership lives in StairBuilder.
+function Structures.buildStairs(S, map, x0, x1, y0, y1)
+  return StairBuilder.build(S, map, x0, x1, y0, y1, pixels(map.tileset))
 end
 
 -- ---- tall grass ----
@@ -3464,427 +2930,37 @@ end
 -- out again in texture space -- so a run that is six pixels wide in the
 -- union may be two pixels wide in the frame on screen, and the four pixels
 -- that dropped out took the union's end walls with them. What is left
--- exposed is an interior boundary, which had no wall because in the union
--- it was not a boundary at all. That is the gap that survived closing the
--- run ends: the first frame looked solid and every other frame did not.
---
--- So an animated standee gets a wall on BOTH sides of EVERY pixel. A wall
--- between two lit pixels is enclosed by the front and back faces and never
--- seen; the moment its neighbour is keyed out it becomes the edge, already
--- in place and already wearing the right colour. Each is inset a hair into
--- its own pixel so the two that meet at a boundary are not coplanar -- the
--- voxel pass draws with culling off, and two quads in the same plane would
--- z-fight rather than politely take turns.
-local SIDE_INSET = 0.03
-
-local function sideQuads(quads, ix, ix2, yBot, yTop, zB, zF,
-                         ax0, ay0, atlasW, atlasH, py, lit, everyPixel)
-  local function texel(px)
-    return (ax0 + px + 0.5) / atlasW, (ay0 + py + 0.5) / atlasH
-  end
-  local function left(px, at)
-    local u, v = texel(px)
-    quads[#quads + 1] = {                 -- facing -X
-      { at, yBot, zB }, { at, yBot, zF },
-      { at, yTop, zF }, { at, yTop, zB },
-      uv = { { u, v }, { u, v }, { u, v }, { u, v } },
-      shade = OBJ_SHADE.side,
-    }
-  end
-  local function right(px, at)
-    local u, v = texel(px)
-    quads[#quads + 1] = {                 -- facing +X
-      { at, yBot, zF }, { at, yBot, zB },
-      { at, yTop, zB }, { at, yTop, zF },
-      uv = { { u, v }, { u, v }, { u, v }, { u, v } },
-      shade = OBJ_SHADE.side,
-    }
-  end
-  if everyPixel then
-    for px = ix, ix2 do
-      left(px, px + SIDE_INSET)
-      right(px, px + 1 - SIDE_INSET)
-    end
-    return
-  end
-  if not lit(ix - 1, py) then left(ix, ix) end
-  if not lit(ix2 + 1, py) then right(ix2, ix2 + 1) end
-end
-
--- A tall-grass CELL is four tufts: 2x2 tiles, and each 8x8 tile is one
--- whole clump of grass. Each tile stands as its own thin per-pixel slab
--- at ITS OWN depth -- the cell's north tile row in the north half of the
--- cell, the south row in the south half -- over the flat grass base the
--- tile already renders. So the player walks BETWEEN the two rows, and
--- the southern row occludes their feet the way the 2D grass overdraw
--- did. Transparency respected: only the tuft strokes stand. Runs of
--- adjacent pixels merge into single quads, and one template per grass
--- tile id is stamped across the map (grass comes in fields).
---
--- One tile is ONE standing piece, full height. The first cut split each
--- tile again into its top and bottom four art rows and stood those at
--- two different depths, which cut every blade that runs down the tile
--- clean in half -- the two halves ended up 4px tall and 4px apart in
--- depth, so a clump read as two stubs rather than one tuft.
-local GRASS_THICK = 2
-
-local function grassTemplate(map, data, tileId)
-  local perRow = map.tileset.tilesPerRow or 16
-  local atlasW = map.tileset.imageWidth or 128
-  local atlasH = map.tileset.imageHeight or 48
-  local ax0 = (tileId % perRow) * 8
-  local ay0 = math.floor(tileId / perRow) * 8
-
-  local function opaque(px, py)
-    if px < 0 or px > 7 or py < 0 or py > 7 then return false end
-    local r, g, b, a = data:getPixel(ax0 + px, ay0 + py)
-    return a > 0 and math.min(r, g, b) <= 0.83
-  end
-
-  local quads = {}
-  -- the slab stands across the middle of its own tile, so the two tile
-  -- rows of a cell are half a cell apart in depth
-  local zMid = 4
-  local zB, zF = zMid - GRASS_THICK / 2, zMid + GRASS_THICK / 2
-  for iy = 0, 7 do
-    local yTop = 8 - iy
-    local yBot = yTop - 1
-    local ix = 0
-    while ix < 8 do
-      if opaque(ix, iy) then
-        local ix2 = ix
-        while ix2 + 1 < 8 and opaque(ix2 + 1, iy) do
-          ix2 = ix2 + 1
-        end
-        local u0 = (ax0 + ix + 0.05) / atlasW
-        local u1 = (ax0 + ix2 + 0.95) / atlasW
-        local v0 = (ay0 + iy + 0.05) / atlasH
-        local v1 = (ay0 + iy + 0.95) / atlasH
-        quads[#quads + 1] = {           -- front
-          { ix, yBot, zF }, { ix2 + 1, yBot, zF },
-          { ix2 + 1, yTop, zF }, { ix, yTop, zF },
-          uv = { { u0, v1 }, { u1, v1 }, { u1, v0 }, { u0, v0 } },
-          shade = 1,
-        }
-        quads[#quads + 1] = {           -- back
-          { ix2 + 1, yBot, zB }, { ix, yBot, zB },
-          { ix, yTop, zB }, { ix2 + 1, yTop, zB },
-          uv = { { u1, v1 }, { u0, v1 }, { u0, v0 }, { u1, v0 } },
-          shade = 0.68,
-        }
-        -- blade tips: a top strip where the row above is clear
-        if not opaque(ix, iy - 1) then
-          quads[#quads + 1] = {
-            { ix, yTop, zB }, { ix2 + 1, yTop, zB },
-            { ix2 + 1, yTop, zF }, { ix, yTop, zF },
-            uv = { { u0, v0 }, { u1, v0 }, { u1, v0 }, { u0, v0 } },
-            shade = 1,
-          }
-        end
-        -- and underneath, where a blade ends in mid-air over the ground
-        if not opaque(ix, iy + 1) then
-          quads[#quads + 1] = {
-            { ix, yBot, zF }, { ix2 + 1, yBot, zF },
-            { ix2 + 1, yBot, zB }, { ix, yBot, zB },
-            uv = { { u0, v1 }, { u1, v1 }, { u1, v1 }, { u0, v1 } },
-            shade = OBJ_SHADE.bottom,
-          }
-        end
-        -- and the run's two end walls, which is what makes a blade a solid
-        -- thing rather than two billboards you can see between (sideQuads
-        -- above argues it, and why each wall wears its end pixel's colour)
-        sideQuads(quads, ix, ix2, yBot, yTop, zB, zF,
-                  ax0, ay0, atlasW, atlasH, iy, opaque)
-        ix = ix2 + 1
-      else
-        ix = ix + 1
-      end
-    end
-  end
-  return quads
-end
-
+-- Compatibility façade: vegetation ownership lives in VegetationBuilder.
 function Structures.buildGrass(S, map, x0, x1, y0, y1, data)
-  local templates = {}
-  local quads = S.grassQuads
-  for ty = y0, y1 do
-    for tx = x0, x1 do
-      Budget.tick()
-      local k = keyOf(tx, ty)
-      local s = S.shapeAt[k]
-      -- tufts only where the CELL is tall grass by the engine's own rule
-      -- (isGrassCell: the cell's collision tile). The grass GRAPHIC also
-      -- appears as decorative filler inside ordinary ground blocks, and a
-      -- tile-level test sprouted tufts all over town plazas.
-      if s and s.art == "grass"
-         and map:isGrassCell(math.floor(tx / 2), math.floor(ty / 2)) then
-        local tileId = S.tileAt[k]
-        local tpl = templates[tileId]
-        if not tpl then
-          tpl = grassTemplate(map, data, tileId)
-          templates[tileId] = tpl
-        end
-        local wx, wz = tx * 8, ty * 8
-        for _, q in ipairs(tpl) do
-          quads[#quads + 1] = {
-            { q[1][1] + wx, q[1][2], q[1][3] + wz },
-            { q[2][1] + wx, q[2][2], q[2][3] + wz },
-            { q[3][1] + wx, q[3][2], q[3][3] + wz },
-            { q[4][1] + wx, q[4][2], q[4][3] + wz },
-            uv = q.uv, shade = q.shade,
-          }
-        end
-      end
-    end
-  end
-end
-
--- ---- flowers ----
-
--- The animated flower tile stands up as a billboard ONE VOXEL deep, cut
--- to the drawing's darkest tones PLUS everything they enclose -- the
--- round-scenery hull's rule: flood the tile border through every
--- non-dark pixel, and what the flood cannot reach is the flower, its
--- pale petal insides included. The mesh is static and the flower is
--- not, so the geometry spans the UNION of that mask over the base art
--- and every animation frame, and TerrainAtlas rewrites the tile's slot
--- each step with only the CURRENT frame's mask opaque -- the rest keyed
--- to alpha, which the voxel shader discards. The standing silhouette
--- trims itself frame by frame in texture space; the sway animates
--- without a vertex moving, off the same engine clock as the flat path.
---
--- The ground beneath is synthesized from the commonest flat neighbour,
--- like the ground under a detected prop: the tile's own slot no longer
--- holds art anyone can draw flat.
-local FLOWER_THICK = 1
-
-local function flowerFrames(tileset, tileId)
-  local out = {}
-  local ok, declared = pcall(function()
-    if tileset.animatedTiles then return tileset.animatedTiles end
-    local TileRenderer = require("src.render.TileRenderer")
-    return TileRenderer.defaultAnimatedTiles(tileset)
-  end)
-  if not ok then return out end
-  for _, spec in ipairs(type(declared) == "table" and declared or {}) do
-    if spec.kind == "frames" and spec.tile == tileId then
-      for _, path in pairs(spec.images or {}) do
-        local okF, frame = pcall(Assets.imageData, path)
-        if okF and frame then out[#out + 1] = frame end
-      end
-    end
-  end
-  return out
-end
-
-local function flowerTemplate(map, data, tileId)
-  local tileset = map.tileset
-  local perRow = tileset.tilesPerRow or 16
-  local atlasW = tileset.imageWidth or 128
-  local atlasH = tileset.imageHeight or 48
-  local ax0 = (tileId % perRow) * 8
-  local ay0 = math.floor(tileId / perRow) * 8
-
-  -- per image: dark tones, then the border flood that finds what they
-  -- enclose. Each image closes over ITS OWN outline before the union --
-  -- a pocket two frames only enclose together is not part of either.
-  local dark = {}
-  local function markMask(img, ox, oy)
-    local d, reach, stack = {}, {}, {}
-    for py = 0, 7 do
-      for px = 0, 7 do
-        local r, g, b, a = img:getPixel(ox + px, oy + py)
-        if a > 0 and math.min(r, g, b) <= 0.5 then
-          d[py * 8 + px] = true
-        end
-      end
-    end
-    for i = 0, 7 do
-      for _, s in ipairs({ i, 56 + i, i * 8, i * 8 + 7 }) do
-        if not d[s] and not reach[s] then
-          reach[s] = true
-          stack[#stack + 1] = s
-        end
-      end
-    end
-    while #stack > 0 do
-      local p = table.remove(stack)
-      local px, py = p % 8, math.floor(p / 8)
-      for _, dir in ipairs(DIRS4) do
-        local nx, ny = px + dir[1], py + dir[2]
-        if nx >= 0 and nx < 8 and ny >= 0 and ny < 8 then
-          local ni = ny * 8 + nx
-          if not d[ni] and not reach[ni] then
-            reach[ni] = true
-            stack[#stack + 1] = ni
-          end
-        end
-      end
-    end
-    for i = 0, 63 do
-      if d[i] or not reach[i] then dark[i] = true end
-    end
-  end
-  markMask(data, ax0, ay0)
-  for _, frame in ipairs(flowerFrames(tileset, tileId)) do
-    pcall(markMask, frame, 0, 0)
-  end
-
-  local function on(px, py)
-    if px < 0 or px > 7 or py < 0 or py > 7 then return false end
-    return dark[py * 8 + px] == true
-  end
-
-  local quads = {}
-  local zB = 4 - FLOWER_THICK / 2      -- one slab at the tile's middle
-  local zF = zB + FLOWER_THICK
-  for py = 0, 7 do
-    Budget.tick()
-    local yTop, yBot = 8 - py, 7 - py
-    local ix = 0
-    while ix < 8 do
-      if on(ix, py) then
-        local ix2 = ix
-        while ix2 + 1 < 8 and on(ix2 + 1, py) do ix2 = ix2 + 1 end
-        local u0 = (ax0 + ix + 0.05) / atlasW
-        local u1 = (ax0 + ix2 + 0.95) / atlasW
-        local v0 = (ay0 + py + 0.05) / atlasH
-        local v1 = (ay0 + py + 0.95) / atlasH
-        quads[#quads + 1] = {           -- front
-          { ix, yBot, zF }, { ix2 + 1, yBot, zF },
-          { ix2 + 1, yTop, zF }, { ix, yTop, zF },
-          uv = { { u0, v1 }, { u1, v1 }, { u1, v0 }, { u0, v0 } },
-          shade = OBJ_SHADE.front,
-        }
-        quads[#quads + 1] = {           -- back
-          { ix2 + 1, yBot, zB }, { ix, yBot, zB },
-          { ix, yTop, zB }, { ix2 + 1, yTop, zB },
-          uv = { { u1, v1 }, { u0, v1 }, { u0, v0 }, { u1, v0 } },
-          shade = OBJ_SHADE.back,
-        }
-        -- ------- the shell, closed on all four remaining faces
-        --
-        -- A flower SWAYS: the geometry spans the union of every animation
-        -- frame's mask and each frame is cut back out of it in texture
-        -- space (see the header). So "is there a pixel next door" has two
-        -- different answers -- one in the union this mesh was built from,
-        -- and one in the frame actually on screen -- and only the second
-        -- decides what is exposed.
-        --
-        -- Closing the union's own edges is therefore not enough, and was
-        -- the bug the first cut of this shipped: the base frame looked
-        -- solid and every other frame still had gaps, because a pixel that
-        -- drops out of a frame takes the union's wall with it and leaves an
-        -- interior boundary that never had one.
-        --
-        -- So every pixel gets a cap on all four of its remaining faces,
-        -- whatever its neighbours do. A cap between two lit pixels sits
-        -- inside the slab, enclosed by the front and back faces, and is
-        -- never seen; the moment its neighbour is keyed out it IS the edge,
-        -- already there and already wearing the right colour. Each samples
-        -- its own pixel's texel, so it appears and vanishes with the pixel
-        -- it belongs to rather than with the one it is closing off.
-        --
-        -- Inset a hair into its own pixel, because the voxel pass draws
-        -- with culling off: the two caps that meet at a boundary would be
-        -- coplanar and z-fight rather than politely take turns.
-        for px = ix, ix2 do
-          local tu = (ax0 + px + 0.5) / atlasW
-          local tv = (ay0 + py + 0.5) / atlasH
-          local xa, xb = px, px + 1
-          local yT = yTop - SIDE_INSET
-          local yB = yBot + SIDE_INSET
-          quads[#quads + 1] = {           -- the pixel's own lid
-            { xa, yT, zB }, { xb, yT, zB }, { xb, yT, zF }, { xa, yT, zF },
-            uv = { { tu, tv }, { tu, tv }, { tu, tv }, { tu, tv } },
-            shade = OBJ_SHADE.top,
-          }
-          quads[#quads + 1] = {           -- and its floor
-            { xa, yB, zF }, { xb, yB, zF }, { xb, yB, zB }, { xa, yB, zB },
-            uv = { { tu, tv }, { tu, tv }, { tu, tv }, { tu, tv } },
-            shade = OBJ_SHADE.bottom,
-          }
-        end
-        sideQuads(quads, ix, ix2, yBot, yTop, zB, zF,
-                  ax0, ay0, atlasW, atlasH, py, on, true)
-        ix = ix2 + 1
-      else
-        ix = ix + 1
-      end
-    end
-  end
-  return quads
+  return VegetationBuilder.buildGrass(S, map, x0, x1, y0, y1, data)
 end
 
 function Structures.buildFlowers(S, map, tw, th, x0, x1, y0, y1, data)
-  local templates = {}
-  -- flowerQuads, not objectQuads: flowers sit on WALKABLE cells, so
-  -- their mesh draws after the characters with the character pull
-  -- (ChunkMesher's flower mesh) -- terrain-baked they lose the depth
-  -- fight against the pulled card whenever the player stands among them
-  local quads = S.flowerQuads
-  for ty = y0, y1 do
-    for tx = x0, x1 do
-      Budget.tick()
-      local k = keyOf(tx, ty)
-      local s = S.shapeAt[k]
-      if s and s.art == "flower" then
-        -- the tile's atlas slot carries only the standing cutout now, so
-        -- EVERY flower position -- ring included -- paints synthesized
-        -- ground instead of its own art: the commonest flat neighbour
-        -- that is not itself a flower, else the map's commonest ground
-        -- (forMap's end-of-build vote resolves the `false`)
-        S.skip[k] = true
-        local votes, best, bestN = {}, nil, 0
-        for _, d in ipairs(DIRS4) do
-          local nk = keyOf(tx + d[1], ty + d[2])
-          local ns = S.shapeAt[nk]
-          if ns and ns.flat and ns.class ~= "void"
-             and ns.class ~= "flower" then
-            local t = S.tileAt[nk]
-            votes[t] = (votes[t] or 0) + 1
-            if votes[t] > bestN then best, bestN = t, votes[t] end
-          end
-        end
-        S.ground[k] = best or false
-
-        -- standee BODY only, like grass: standing scenery past a map's
-        -- edge would poke into the map next door
-        if tx >= 0 and ty >= 0 and tx < tw and ty < th then
-          local tileId = S.tileAt[k]
-          local tpl = templates[tileId]
-          if not tpl then
-            tpl = flowerTemplate(map, data, tileId)
-            templates[tileId] = tpl
-          end
-          local wx, wz = tx * 8, ty * 8
-          for _, q in ipairs(tpl) do
-            quads[#quads + 1] = {
-              { q[1][1] + wx, q[1][2], q[1][3] + wz },
-              { q[2][1] + wx, q[2][2], q[2][3] + wz },
-              { q[3][1] + wx, q[3][2], q[3][3] + wz },
-              { q[4][1] + wx, q[4][2], q[4][3] + wz },
-              uv = q.uv, shade = q.shade,
-            }
-          end
-        end
-      end
-    end
-  end
+  return VegetationBuilder.buildFlowers(S, map, tw, th, x0, x1, y0, y1, data)
 end
+
 
 -- Drop one map's analysis (Cut changed the block layer) or everything.
 -- Hull templates key on art content (tileset + tiles), which a block edit
 -- cannot change, so only the full drop clears them (atlas reload).
 function Structures.invalidate(mapId)
   if mapId then
-    cache[mapId] = nil
+    return Structures.release(mapId)
   else
     cache = {}
     atlasData = {}
     roundCache = {}
     Buildings.invalidate()
   end
+end
+
+-- Worker lifetime boundary. A worker reuses this module for the whole
+-- prebuild, so retaining one analysis per map grows until the process dies.
+-- The returned geometry owns flat output tables, not this analysis graph.
+function Structures.release(mapId)
+  if not mapId or cache[mapId] == nil then return false end
+  cache[mapId] = nil
+  return true
 end
 
 Assets.register(function() Structures.invalidate() end)

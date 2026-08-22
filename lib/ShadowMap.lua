@@ -30,6 +30,8 @@ local V = ...
 local Mat4 = V.require("Mat4")
 local Voxel = V.require("VoxelState")
 local ShadowSettings = V.require("ShadowSettings")
+local Platform = V.require("Platform")
+local PixelCanvas = V.require("PixelCanvas")
 
 local ShadowMap = {}
 
@@ -156,7 +158,7 @@ ShadowMap.SLOPE = 3.1
 ShadowMap.slack = ShadowMap.BIAS
 
 local SHADER = [[
-  varying float vDepth;
+  varying LOVE_HIGHP_OR_MEDIUMP float vDepth;
 #ifdef VERTEX
   uniform mat4 lightVP;
   uniform mat4 model;
@@ -174,8 +176,14 @@ local SHADER = [[
   }
 #endif
 #ifdef PIXEL
+#ifdef GL_ES
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+  precision highp float;
+#endif
+#endif
   uniform float sprite;   // 1 while the CAST is being drawn; see ShadowMap.sprites
-  vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
+  EFFECT_PREC vec4 effect(EFFECT_PREC vec4 color, Image tex, EFFECT_PREC vec2 tc,
+              EFFECT_PREC vec2 sc) {
     // the same alpha discard the main pass uses: a sprite card casts its
     // silhouette, not its 16x16 bounding box
     if (Texel(tex, tc).a < 0.5) discard;
@@ -189,12 +197,37 @@ local SHADER = [[
 #endif
 ]]
 
-ShadowMap._source = function() return SHADER end   -- named for the suite
+-- Match the scene and water shader compatibility path. LOVE's wrapper
+-- forward-declares effect() using its stage default precision, while some
+-- mobile compilers treat an implicit-precision definition as a different
+-- overload after this fragment asks for highp. Try the explicit mediump
+-- prototype first, then the stage-default spelling.
+local function source(bare)
+  return (bare and "#define EFFECT_PREC\n"
+               or "#define EFFECT_PREC mediump\n") .. SHADER
+end
+
+ShadowMap._source = source                 -- named for the suite
 
 local shader = nil            -- nil = untried, false = unavailable
+local shaderError = nil       -- retained for mobile compiler diagnostics
+local shaderPrecision = nil   -- "mediump" or "default" when compilation succeeds
+local shaderFallbackError = nil -- pinned prototype error before a retry
 local canvas = nil            -- nil = untried, false = unavailable
+local canvasError = nil       -- retained when PixelCanvas cannot allocate
 local canvasRes = 0           -- the edge `canvas` was made at
 local spriteCanvas = nil      -- the CAST layer: sprites only (see below)
+local spriteCanvasError = nil
+-- GLES devices can allocate a colour canvas while rejecting LOVE's implicit
+-- transient depth attachment. Keep an explicit depth canvas as the primary
+-- target, with the implicit form as a compatibility fallback. The two colour
+-- layers are never bound at the same time, so one depth canvas can be reused.
+local depthCanvas = nil       -- nil = untried, false = unavailable
+local depthCanvasRes = 0
+local depthFailures = {}
+local depthBinding = nil      -- "explicit", "internal", or "unavailable"
+local depthError = nil
+local depthFallbackError = nil
 local blank = nil             -- 1x1 stand-in so the sampler is never unbound
 local drawing = false         -- world layer open (beginWorld)
 local drawingSprites = false  -- sprite layer open (beginSprites)
@@ -203,8 +236,25 @@ local spritesReady = false
 local lastSig = nil
 local lastSpriteSig = nil
 local prevBlend, prevAlphaMode = nil, nil
+local activePass = nil        -- "world" or "sprite"
+local lastPass = nil
+local lastPassError = nil
+local passCounts = { begins = 0, finishes = 0, aborts = 0 }
+
+-- The engine's scene renderer uses the same preference order. Depth formats
+-- are optional in GLES; probing the actual canvas is the capability test.
+local DEPTH_FORMATS = { "depth24", "depth24stencil8", "depth32f", "depth16" }
+
+local function shadowColorFormat()
+  local ok, ios = pcall(Platform.isIOS)
+  return ok and ios and "rgba8" or nil
+end
 
 local IDENTITY = Mat4.identity()
+local shadowProj = Mat4.identity()
+local shadowScale = Mat4.identity()
+local shadowClipVP = Mat4.identity()
+local shadowUvVP = Mat4.identity()
 
 -- world -> [0,1] cube, applied on top of the clip matrix: the main pass
 -- samples the map with the xy and compares against the z
@@ -247,10 +297,108 @@ end
 
 local function getShader()
   if shader == nil then
-    local ok, sh = pcall(love.graphics.newShader, SHADER)
-    shader = (ok and sh) or false
+    local function compile(bare)
+      local ok, sh = pcall(love.graphics.newShader, source(bare))
+      if ok and sh then return sh end
+      return nil, ok and "newShader returned nil" or tostring(sh)
+    end
+    local sh, err = compile(false)
+    if sh then
+      shaderPrecision = "mediump"
+    else
+      local retry, retryErr = compile(true)
+      if retry then
+        sh = retry
+        shaderPrecision = "default"
+        shaderFallbackError = err
+      else
+        shaderError = "mediump: " .. tostring(err)
+                       .. "; default: " .. tostring(retryErr)
+      end
+    end
+    shader = sh or false
   end
   return shader or nil
+end
+
+local function releaseDepthCanvas()
+  if depthCanvas and depthCanvas.release then
+    pcall(depthCanvas.release, depthCanvas)
+  end
+  depthCanvas = nil
+  depthCanvasRes = 0
+end
+
+-- Allocate a real depth attachment when the backend supports one. This is
+-- deliberately separate from the packed colour map: the colour stores the
+-- light-space distance, while the depth attachment makes nearer casters win
+-- when the map is filled.
+local function getDepthCanvas(res)
+  if depthCanvas == false and depthCanvasRes == res then return nil end
+  if depthCanvas and depthCanvasRes == res then return depthCanvas end
+  releaseDepthCanvas()
+  depthFailures = {}
+  if not (love and love.graphics and love.graphics.newCanvas) then
+    depthCanvas = false
+    depthCanvasRes = res
+    depthFailures[1] = { format = "all", error = "newCanvas unavailable" }
+    return nil
+  end
+  for _, format in ipairs(DEPTH_FORMATS) do
+    -- dpiscale = 1, or the attachment mismatches the colour canvas on a
+    -- highdpi surface (iOS/Android): newCanvas defaults dpiscale to the
+    -- surface's, so a 1024 depth canvas is 2048 physical there while the
+    -- packed map is 1024 -- Metal rejects the mismatched bind and the
+    -- pass silently falls back to the internal depth (the BattlePics
+    -- bug, one file earlier). Desktop never saw it: dpiscale is 1 there.
+    local ok, made = pcall(love.graphics.newCanvas, res, res,
+                           { format = format, dpiscale = 1 })
+    if ok and made then
+      depthCanvas = made
+      depthCanvasRes = res
+      pcall(made.setFilter, made, "nearest", "nearest")
+      pcall(made.setWrap, made, "clamp", "clamp")
+      return made
+    end
+    depthFailures[#depthFailures + 1] = {
+      format = format,
+      error = ok and "newCanvas returned nil" or tostring(made),
+    }
+  end
+  depthCanvas = false
+  depthCanvasRes = res
+  return nil
+end
+
+-- Bind the packed colour map plus a depth target. Prefer the explicit depth
+-- canvas because it is the path already proven by Voxel3D on mobile. If a
+-- driver rejects that attachment, try LOVE's internal depth buffer before
+-- declaring the advanced shadow pass unavailable.
+local function bindShadowTarget(color)
+  depthFallbackError = nil
+  if depthCanvas and depthCanvas ~= false then
+    local ok, err = pcall(love.graphics.setCanvas,
+                          { color, depthstencil = depthCanvas })
+    if ok then
+      depthBinding = "explicit"
+      depthError = nil
+      return true
+    end
+    depthFallbackError = tostring(err)
+    releaseDepthCanvas()
+    depthCanvas = false
+  end
+
+  local ok, err = pcall(love.graphics.setCanvas, { color, depth = true })
+  if ok then
+    depthBinding = "internal"
+    depthError = nil
+    return true
+  end
+  pcall(love.graphics.setCanvas)
+  depthBinding = "unavailable"
+  depthError = tostring(err)
+  return false, depthError
 end
 
 -- The map canvas at edge `res`, rebuilt when the rung changes (a zoom
@@ -269,12 +417,21 @@ end
 -- nothing closer along the sun ray sits in EITHER layer.
 local function getCanvas(res)
   if canvas == false then return nil end
-  if canvas and canvasRes == res then return canvas end
-  local ok, c = V.require("PixelCanvas").new(res, res)
+  if canvas and canvasRes == res then
+    getDepthCanvas(res)
+    return canvas
+  end
+  -- iOS/Metal's gamma-correct color path can alter the packed depth bytes.
+  -- Keep the workaround platform-scoped; every other platform retains the
+  -- historical default color canvas while all targets keep dpiscale = 1.
+  local format = shadowColorFormat()
+  local ok, c, err = PixelCanvas.new(res, res, format)
   if not (ok and c) then
+    canvasError = err or "newCanvas returned nil"
     canvas = false
     return nil
   end
+  canvasError = nil
   -- nearest: the 2x2 filter in the main pass wants raw texels, and a
   -- linearly blended PACKED depth is not a depth at all
   c:setFilter("nearest", "nearest")
@@ -286,18 +443,22 @@ local function getCanvas(res)
     pcall(spriteCanvas.release, spriteCanvas)
   end
   if ShadowMap.SPRITE_LAYER then
-    local okS, sc = V.require("PixelCanvas").new(res, res)
+    local okS, sc, errS = PixelCanvas.new(res, res, format)
     if okS and sc then
+      spriteCanvasError = nil
       sc:setFilter("nearest", "nearest")
       pcall(sc.setWrap, sc, "clamp", "clamp")
       spriteCanvas = sc
     else
+      spriteCanvasError = errS or "newCanvas returned nil"
       spriteCanvas = false
     end
   else
+    spriteCanvasError = nil
     spriteCanvas = false
   end
   spritesReady = false
+  getDepthCanvas(res)
   return canvas
 end
 
@@ -327,11 +488,7 @@ local unavailable = nil    -- why available() last answered false
 -- player guessing.
 function ShadowMap.available()
   if unavailable then return false end
-  if love.system and love.system.getOS and love.system.getOS() == "iOS" then
-    unavailable = "shadows are disabled on iOS"
-    return false
-  end
-  if not (love.graphics and love.graphics.newCanvas
+  if not (love and love.graphics and love.graphics.newCanvas
           and love.graphics.setDepthMode) then
     unavailable = "no canvas/depth-mode graphics API"
     return false
@@ -340,10 +497,12 @@ function ShadowMap.available()
   -- one this frame actually wants
   if getShader() == nil then
     unavailable = "the shadow shader did not compile"
+                    .. (shaderError and (": " .. shaderError) or "")
     return false
   end
   if getCanvas(ShadowMap.SIZES[1]) == nil then
     unavailable = "the shadow canvas could not be allocated"
+                    .. (canvasError and (": " .. canvasError) or "")
     return false
   end
   return true
@@ -354,6 +513,40 @@ end
 function ShadowMap.unavailableReason()
   if ShadowMap.available() then return nil end
   return unavailable
+end
+
+-- Data-only capability state for the debugger. `available()` remains the
+-- single gate used by rendering; this report adds the compiler/allocation
+-- detail that a boolean cannot carry into a support log.
+function ShadowMap.diagnostics()
+  local ok = ShadowMap.available()
+  return {
+    available = ok,
+    reason = ok and "ready" or unavailable,
+    shaderError = shaderError,
+    shaderPrecision = shaderPrecision,
+    shaderFallbackError = shaderFallbackError,
+    canvasError = canvasError,
+    spriteCanvasError = spriteCanvasError,
+    depth = {
+      formats = DEPTH_FORMATS,
+      failures = depthFailures,
+      binding = depthBinding,
+      error = depthError,
+      fallbackError = depthFallbackError,
+    },
+    resolution = ShadowMap.res,
+    worldReady = ready,
+    spriteReady = spritesReady,
+    activePass = activePass,
+    lastPass = lastPass,
+    lastFailure = ShadowMap.beginFailure or lastPassError,
+    passCounts = {
+      begins = passCounts.begins,
+      finishes = passCounts.finishes,
+      aborts = passCounts.aborts,
+    },
+  }
 end
 
 -- The map to sample, or the blank stand-in. Never nil once the main pass
@@ -577,15 +770,16 @@ local function fit(cx, cy, vw, vh)
   -- skips the pass, and the frame renders flat-lit instead of poisoned.
   -- NaN compares false, so the plain > tests above reject it too.
   if ShadowMap._degenerate(w, h, near, far) then return false end
-  local proj = Mat4.ortho(l, r, b, t, near, far)
+  local proj = Mat4.orthoInPlace(shadowProj, l, r, b, t, near, far)
   -- flip clip-space Y for the same reason the camera does: we bypass
   -- LOVE's transform_projection, and canvas coordinates run Y DOWN, so
   -- without this the map is stored upside down relative to the uv the
   -- main pass reads it with
-  proj = Mat4.mul(Mat4.scale(1, -1, 1), proj)
+  Mat4.scaleInPlace(shadowScale, 1, -1, 1)
+  Mat4.mulInPlace(proj, shadowScale, proj)
 
-  ShadowMap.clipVP = Mat4.mul(proj, view)
-  ShadowMap.uvVP = Mat4.mul(TO_UNIT, ShadowMap.clipVP)
+  ShadowMap.clipVP = Mat4.mulInPlace(shadowClipVP, proj, view)
+  ShadowMap.uvVP = Mat4.mulInPlace(shadowUvVP, TO_UNIT, ShadowMap.clipVP)
   -- what the frustum ended up covering, for probes: the lateral extent in
   -- world pixels divided by RES is how fine a shadow edge can land
   ShadowMap.extent = { r - l, t - b, far - near }
@@ -668,18 +862,21 @@ end
 -- the default is the WORLD layer (terrain, water, flowers, figures).
 -- The two layers share the same fitted box, so only a world begin
 -- re-fits; a sprite begin reuses the current fit.
--- Why begin() last returned false (transient -- cleared by the next
--- successful begin), for diagnostics. Policy gates (the sprite layer being
--- off on a rung) are not failures and leave this alone.
+-- Why begin() last returned false, for diagnostics. Policy gates (the sprite
+-- layer being off on a rung) are not failures and leave this alone.
 ShadowMap.beginFailure = nil
 
 function ShadowMap.begin(cx, cy, vw, vh, sprites)
+  local passName = sprites and "sprite" or "world"
+  activePass = nil
+  ShadowMap.beginFailure = nil
   if sprites and (not ShadowMap.SPRITE_LAYER or not actorLayerActive) then
     return false
   end
   local sh = getShader()
   if not sh then
     ShadowMap.beginFailure = "the shadow shader did not compile"
+    lastPass, lastPassError = passName, ShadowMap.beginFailure
     return false
   end
   if not sprites then
@@ -689,10 +886,12 @@ function ShadowMap.begin(cx, cy, vw, vh, sprites)
     -- canvas would be a 1024 map wearing a 1536 fit's snap and bias.
     if not fit(cx, cy, vw, vh) then
       ShadowMap.beginFailure = "the light frustum is degenerate this frame"
+      lastPass, lastPassError = passName, ShadowMap.beginFailure
       return false
     end
     if getCanvas(ShadowMap.res) == nil then
       ShadowMap.beginFailure = "the shadow canvas could not be allocated"
+      lastPass, lastPassError = passName, ShadowMap.beginFailure
       return false
     end
   end
@@ -700,28 +899,45 @@ function ShadowMap.begin(cx, cy, vw, vh, sprites)
   if not c or c == false then
     ShadowMap.beginFailure = sprites and "the sprite shadow canvas is unavailable"
                              or "the shadow canvas is unavailable"
+    lastPass, lastPassError = passName, ShadowMap.beginFailure
     return false
   end
-  local ok = pcall(love.graphics.setCanvas, { c, depth = true })
+  local ok, bindErr = bindShadowTarget(c)
   if not ok then
-    pcall(love.graphics.setCanvas)
-    ShadowMap.beginFailure = "the shadow canvas could not be bound"
+    ShadowMap.beginFailure = "the shadow depth target could not be bound"
+                         .. (bindErr and (": " .. bindErr) or "")
+    unavailable = ShadowMap.beginFailure
+    lastPass, lastPassError = passName, ShadowMap.beginFailure
     return false
   end
-  prevBlend, prevAlphaMode = love.graphics.getBlendMode()
-  -- white clears to depth 1 + 1/255, past the far plane: a texel nothing
-  -- was drawn into can never shadow anything
-  love.graphics.clear(1, 1, 0, 1, true, true)
-  love.graphics.setDepthMode("lequal", true)
-  love.graphics.setMeshCullMode("none")
-  -- replace, not alpha blend: these are packed numbers, not colors
-  love.graphics.setBlendMode("replace", "premultiplied")
-  love.graphics.setShader(sh)
-  love.graphics.setColor(1, 1, 1, 1)
-  pcall(sh.send, sh, "lightVP", "row", ShadowMap.clipVP)
-  -- the world until a cast pass says otherwise, reset per pass so one that
-  -- forgot to put it back cannot leak into the next map's terrain
-  pcall(sh.send, sh, "sprite", 0)
+  local setupOk, setupErr = pcall(function()
+    prevBlend, prevAlphaMode = love.graphics.getBlendMode()
+    -- white clears to depth 1 + 1/255, past the far plane: a texel nothing
+    -- was drawn into can never shadow anything. The seventh argument is
+    -- the depth clear: the fill's depth test depends on a fresh buffer,
+    -- and Metal does not initialise one the way OpenGL drivers do.
+    love.graphics.clear(1, 1, 0, 1, true, true, true)
+    love.graphics.setDepthMode("lequal", true)
+    love.graphics.setMeshCullMode("none")
+    -- replace, not alpha blend: these are packed numbers, not colors
+    love.graphics.setBlendMode("replace", "premultiplied")
+    love.graphics.setShader(sh)
+    love.graphics.setColor(1, 1, 1, 1)
+    pcall(sh.send, sh, "lightVP", "row", ShadowMap.clipVP)
+    -- the world until a cast pass says otherwise, reset per pass so one that
+    -- forgot to put it back cannot leak into the next map's terrain
+    pcall(sh.send, sh, "sprite", 0)
+  end)
+  if not setupOk then
+    pcall(love.graphics.setShader)
+    pcall(love.graphics.setDepthMode)
+    pcall(love.graphics.setCanvas)
+    pcall(love.graphics.setBlendMode, prevBlend or "alpha", prevAlphaMode)
+    pcall(love.graphics.setColor, 1, 1, 1, 1)
+    ShadowMap.beginFailure = "shadow pass setup failed: " .. tostring(setupErr)
+    lastPass, lastPassError = passName, ShadowMap.beginFailure
+    return false
+  end
   if sprites then
     drawingSprites = true
     spritesReady = false
@@ -729,7 +945,10 @@ function ShadowMap.begin(cx, cy, vw, vh, sprites)
     drawing = true
     ready = false
   end
-  ShadowMap.beginFailure = nil
+  activePass = passName
+  lastPass = passName
+  lastPassError = nil
+  passCounts.begins = passCounts.begins + 1
   return true
 end
 
@@ -785,17 +1004,33 @@ function ShadowMap.finish(sig, sprites)
     lastSig = sig
     ready = true
   end
+  activePass = nil
+  lastPass = sprites and "sprite" or "world"
+  lastPassError = nil
+  passCounts.finishes = passCounts.finishes + 1
 end
 
 -- Unconditionally restore the GL state a pass changes, after an error
 -- anywhere inside begin..finish. A pass that dies mid-draw leaves the
 -- shadow canvas bound, and every later frame renders the WORLD into that
 -- 1024px offscreen map -- a black screen, exactly the Mediatek report.
--- Callers pcall-wrap their pass and call this from the error handler;
--- harmless (and cheap) when no pass is open.
-function ShadowMap.abort()
-  drawing, drawingSprites = false, false
-  ready, spritesReady = false, false
+-- Callers pcall-wrap their pass and call this from the error handler. Only the
+-- active layer is invalidated: a failed actor pass must not erase a world map
+-- that already finished successfully.
+function ShadowMap.abort(sprites, err)
+  local passName = sprites == nil and activePass
+                 or (sprites and "sprite" or "world")
+  if passName == "sprite" then
+    drawingSprites = false
+    spritesReady = false
+  elseif passName == "world" then
+    drawing = false
+    ready = false
+  end
+  activePass = nil
+  lastPass = passName or lastPass
+  lastPassError = tostring(err or ShadowMap.beginFailure or "shadow pass aborted")
+  passCounts.aborts = passCounts.aborts + 1
   pcall(love.graphics.setShader)
   pcall(love.graphics.setDepthMode)
   pcall(love.graphics.setCanvas)
@@ -806,10 +1041,26 @@ end
 -- Drop the GPU objects (window resize, hot reload).
 function ShadowMap.invalidate()
   canvas, canvasRes, blank = nil, 0, nil
+  releaseDepthCanvas()
+  depthCanvas = nil
+  depthFailures = {}
+  depthBinding = nil
+  depthError = nil
+  depthFallbackError = nil
+  canvasError = nil
+  spriteCanvasError = nil
+  shaderError = nil
+  shaderPrecision = nil
+  shaderFallbackError = nil
+  shader = nil
   spriteCanvas = nil
   drawing, drawingSprites = false, false
   ready, spritesReady = false, false
   lastSig, lastSpriteSig = nil, nil
+  activePass = nil
+  lastPass = nil
+  lastPassError = nil
+  passCounts = { begins = 0, finishes = 0, aborts = 0 }
   unavailable = nil
   ShadowMap.beginFailure = nil
 end

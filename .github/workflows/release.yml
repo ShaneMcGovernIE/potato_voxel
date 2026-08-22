@@ -28,6 +28,8 @@ on:
     paths-ignore:
       - '.github/**'
       - '**.md'
+      - 'tests/**'
+      - 'docs/**'
   workflow_dispatch:
     inputs:
       version:
@@ -139,8 +141,16 @@ jobs:
 
           git archive HEAD | tar -x -C "$staging"
 
+          # Keep repository notes and agent/workbench material out of the
+          # downloadable mod. The archive should contain only the mod itself.
           rm -rf "$staging/.github" "$staging/.gitattributes" \
-                 "$staging/.gitignore" "$staging/.luarc.json"
+                 "$staging/.gitignore" "$staging/.luarc.json" \
+                 "$staging/.agents" "$staging/.codex" \
+                 "$staging/docs" "$staging/tools"
+
+          find "$staging" -type f \( -iname 'AGENTS.md' -o \
+            -iname 'agent.md' -o -iname 'CLAUDE.md' -o -iname 'GEMINI.md' -o \
+            -iname 'RTK.md' \) -delete
 
           python3 - "$staging/manifest.json" "$VERSION" <<'PY'
           import json, sys

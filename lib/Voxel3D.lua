@@ -34,6 +34,7 @@ local Sky = V.require("Sky")
 local DayNight = V.require("DayNight")
 local GlassMask = V.require("GlassMask")
 local PixelCanvas = V.require("PixelCanvas")
+local Diagnostics = V.require("DiagnosticsBridge")
 
 local Voxel3D = {}
 
@@ -71,7 +72,7 @@ Voxel3D.FACE_SHADE = {
 
 local SHADER = [[
   varying float vShade;
-  varying vec3 vSun;          // this fragment's place in the sun's view
+  varying LOVE_HIGHP_OR_MEDIUMP vec3 vSun; // this fragment's place in the sun's view
   varying float vFog;         // how deep into the map's haze it stands
 #ifdef VOXEL_GRID
   // model space, one unit per voxel -- see VoxelGrid. Precision matters
@@ -153,6 +154,11 @@ local SHADER = [[
   }
 #endif
 #ifdef PIXEL
+#ifdef GL_ES
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+  precision highp float;
+#endif
+#endif
   uniform Image sunMap;
   uniform Image sunMap2;      // the CAST layer: sprites only (see ShadowMap)
   uniform float sunDark;      // how far into black a shadow goes; 0 = off
@@ -253,7 +259,8 @@ local SHADER = [[
   uniform float glassGlint;   // and its strength: 0 while standing still
   uniform float glassOn;      // 0 for sprite-sheet draws (see Voxel3D.glass)
 
-  vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
+  EFFECT_PREC vec4 effect(EFFECT_PREC vec4 color, Image tex, EFFECT_PREC vec2 tc,
+              EFFECT_PREC vec2 sc) {
     vec4 p = Texel(tex, tc);
     // sprite sheets key GB OBJ color 0 to alpha 0; discarding rather than
     // blending keeps those texels out of the depth buffer, so a model never
@@ -315,13 +322,40 @@ local SHADER = [[
 #endif
 ]]
 
+-- LOVE's wrapper forward-declares effect() using its stage default precision.
+-- Some mobile compilers treat a definition whose implicit parameter precision
+-- differs from that prototype as a second overload and reject the shader.
+-- Keep the proven Water.lua two-variant seam: pin the effect parameters AND
+-- its return type to mediump first, then retry with no qualifier for runtimes
+-- whose prototype uses the default instead. The return matters as much as the
+-- parameters: a stage-default highp return vs the wrapper's mediump-default
+-- prototype is a redeclaration error (S0023) on Mali-family ES compilers
+-- (the Pixel log: "Function 'effect' redeclared with a different precision
+-- qualifier on the return type"), even with the parameters matched.
+local function source(grid, bare)
+  local head = ""
+  if grid then head = head .. "#define VOXEL_GRID 1\n" end
+  head = head .. (bare and "#define EFFECT_PREC\n"
+                       or "#define EFFECT_PREC mediump\n")
+  return head .. SHADER
+end
+
+Voxel3D._source = source                 -- named for the suite
+
 -- Two compilations of SHADER: the plain scene, and the same thing with the
 -- voxel wireframe compiled in. The wireframe needs shader derivatives
 -- (fwidth), the one piece of this a driver can refuse, so it is a separate
 -- build rather than a branch -- a refusal costs the grid and nothing else.
--- Each entry is nil = untried, false = unavailable.
+-- Each entry is nil = untried, false = unavailable. The companion error is
+-- retained because a boolean hardware gate is not enough to diagnose a
+-- mobile shader regression after the engine falls back to 2D.
 local shaders = { [false] = nil, [true] = nil }
+local shaderErrors = { [false] = nil, [true] = nil }
+local shaderPrecision = { [false] = nil, [true] = nil }
+local shaderFallbackErrors = { [false] = nil, [true] = nil }
 local activeShader = nil      -- the variant this pass bound
+local depthFailures = {}
+Voxel3D.beginFailure = nil
 
 -- Scene canvases, one per NAMED SLOT. There are exactly two callers and
 -- they want different sizes -- the free-roam pass renders at the window's
@@ -356,10 +390,17 @@ local DEPTH_FORMATS = { "depth24", "depth24stencil8", "depth32f", "depth16" }
 local function newDepth(w, h)
   if not (love.graphics and love.graphics.newCanvas) then return nil end
   local c = nil
+  depthFailures = {}
   for _, format in ipairs(DEPTH_FORMATS) do
+    -- dpiscale = 1, or the depth attachment mismatches its colour canvas
+    -- on a highdpi surface (iOS/Android) and the bind is rejected.
     local ok, made = pcall(love.graphics.newCanvas, w, h,
-                           { format = format, readable = true })
+                           { format = format, readable = true, dpiscale = 1 })
     if ok and made then c = made break end
+    depthFailures[#depthFailures + 1] = {
+      format = format,
+      error = ok and "newCanvas returned nil" or tostring(made),
+    }
   end
   if not c then return nil end
   -- nearest: a depth is a distance, and a blend of two of them is a
@@ -393,6 +434,17 @@ local function releaseSlot(slotHeld)
 end
 
 local IDENTITY = Mat4.identity()
+local mainCamProj = Mat4.identity()
+local mainCamScale = Mat4.identity()
+local mainCamView = Mat4.identity()
+local mainCamVP = Mat4.identity()
+local shadowBlobMat = Mat4.identity()
+local shadowCardA = Mat4.identity()
+local shadowCardB = Mat4.identity()
+local shadowSquash = { 1, Voxel3D.SHADOW_KX, 0, 0,
+                       0, 0,                 0, 0,
+                       0, Voxel3D.SHADOW_KZ, 1, 0,
+                       0, 0,                 0, 1 }
 
 -- Whether the driver admits to supporting derivatives. Only a hint --
 -- the compile below is the real test -- but it saves building a shader
@@ -413,9 +465,26 @@ function Voxel3D.shader(grid)
     if grid and not derivativesOK() then
       shaders[grid] = false
     else
-      local src = grid and ("#define VOXEL_GRID 1\n" .. SHADER) or SHADER
-      local ok, sh = pcall(love.graphics.newShader, src)
-      shaders[grid] = ok and sh or false
+      local function compile(bare)
+        local ok, sh = pcall(love.graphics.newShader, source(grid, bare))
+        if ok and sh then return sh end
+        return nil, ok and "newShader returned nil" or tostring(sh)
+      end
+      local sh, err = compile(false)
+      if sh then
+        shaderPrecision[grid] = "mediump"
+      else
+        local retry, retryErr = compile(true)
+        if retry then
+          sh = retry
+          shaderPrecision[grid] = "default"
+          shaderFallbackErrors[grid] = err
+        else
+          shaderErrors[grid] = "mediump: " .. tostring(err)
+                               .. "; default: " .. tostring(retryErr)
+        end
+      end
+      shaders[grid] = sh or false
     end
   end
   return shaders[grid] or nil
@@ -425,11 +494,53 @@ end
 -- love.graphics), without shader support, or where a depth canvas cannot be
 -- created -- every caller treats that as "stay on the 2D path".
 function Voxel3D.available()
-  if not (love.graphics and love.graphics.newCanvas
-          and love.graphics.setDepthMode) then
-    return false
+  return Voxel3D.diagnostics().available
+end
+
+-- A data-only capability report for the debugger and support exports. The
+-- probe intentionally compiles the plain scene shader, but does not allocate
+-- a full-size scene target; beginScene records allocation/bind failures when
+-- the first real dimensions are known.
+function Voxel3D.diagnostics()
+  local g = love and love.graphics
+  local out = {
+    available = false,
+    reason = nil,
+    shader = { plain = shaders[false] ~= false and shaders[false] ~= nil,
+               grid = shaders[true] ~= false and shaders[true] ~= nil },
+    shaderErrors = { plain = shaderErrors[false], grid = shaderErrors[true] },
+    shaderPrecision = { plain = shaderPrecision[false],
+                        grid = shaderPrecision[true] },
+    shaderFallbackErrors = { plain = shaderFallbackErrors[false],
+                             grid = shaderFallbackErrors[true] },
+    depth = { formats = DEPTH_FORMATS, failures = depthFailures },
+    lastFailure = Voxel3D.beginFailure,
+  }
+  if not g then
+    out.reason = "no graphics module"
+    return out
   end
-  return Voxel3D.shader() ~= nil
+  if not g.newCanvas then
+    out.reason = "missing graphics API: newCanvas"
+    return out
+  end
+  if not g.setDepthMode then
+    out.reason = "missing graphics API: setDepthMode"
+    return out
+  end
+  if not g.newShader then
+    out.reason = "missing graphics API: newShader"
+    return out
+  end
+  local sh = Voxel3D.shader()
+  if not sh then
+    out.reason = "scene_shader_compile"
+    out.error = shaderErrors[false] or "plain scene shader unavailable"
+    return out
+  end
+  out.available = true
+  out.reason = "ready"
+  return out
 end
 
 -- Build a mesh in the shared format. `verts` is the LOVE vertex list and
@@ -628,16 +739,18 @@ function Voxel3D.viewProjection(cx, cy, vw, vh)
   -- parallel to the view direction, so there is no degenerate a = 0 case.
   local up = { 0, math.sin(a), -math.cos(a) }
 
-  local proj = Mat4.perspective(fov, vw / vh,
-                                math.max(1, dist * 0.05), dist * 4 + 4096)
+  local proj = Mat4.perspectiveInPlace(mainCamProj, fov, vw / vh,
+                                       math.max(1, dist * 0.05), dist * 4 + 4096)
   -- Flip clip-space Y. Mat4.perspective emits textbook GL clip space with
   -- +Y up, but we bypass LOVE's own transform_projection, and LOVE's canvas
   -- coordinates run Y DOWN -- so without this the entire scene composites
   -- vertically mirrored: north at the bottom and buildings extruding
   -- downward. Winding flips with it, which is free here because the pass
   -- draws with culling off.
-  proj = Mat4.mul(Mat4.scale(1, -1, 1), proj)
-  return Mat4.mul(proj, Mat4.lookAt(eye, focus, up))
+  Mat4.scaleInPlace(mainCamScale, 1, -1, 1)
+  Mat4.mulInPlace(proj, mainCamScale, proj)
+  Mat4.lookAtInPlace(mainCamView, eye, focus, up)
+  return Mat4.mulInPlace(mainCamVP, proj, mainCamView)
 end
 
 -- ------- the horizon
@@ -866,6 +979,7 @@ end
 -- `slot` names which cached canvas to render into (see `slots` above);
 -- omitted is the free-roam world pass.
 function Voxel3D.beginScene(w, h, cx, cy, vw, vh, sky, slot)
+  Voxel3D.beginFailure = nil
   -- the wireframe variant when the player has it on AND it built; either
   -- answer falls through to the plain scene rather than to no scene
   local grid = VoxelGrid.enabled()
@@ -873,12 +987,19 @@ function Voxel3D.beginScene(w, h, cx, cy, vw, vh, sky, slot)
   if not sh then
     grid, sh = false, Voxel3D.shader()
   end
-  if not sh then return false end
+  if not sh then
+    Voxel3D.beginFailure = shaderErrors[false]
+                           or "plain scene shader unavailable"
+    return false
+  end
   local name = slot or "world"
   local slotHeld = slots[name]
   if not (slotHeld and slotHeld.w == w and slotHeld.h == h) then
-    local ok, c = PixelCanvas.new(w, h)
-    if not ok then return false end
+    local ok, c, err = PixelCanvas.new(w, h)
+    if not ok then
+      Voxel3D.beginFailure = err or "scene color canvas allocation failed"
+      return false
+    end
     c:setFilter("nearest", "nearest")
     if slotHeld then releaseSlot(slotHeld) end
     -- the depth canvas is sized with its colour, so a window resize
@@ -900,6 +1021,9 @@ function Voxel3D.beginScene(w, h, cx, cy, vw, vh, sky, slot)
   end
   if not ok then
     pcall(love.graphics.setCanvas)
+    Voxel3D.beginFailure = held.depth
+                           and "scene depth canvas could not bind"
+                           or "scene canvas/depth target could not bind"
     return false
   end
   -- Ahead of the clear, because the sky's bands are placed off the ground
@@ -1150,13 +1274,23 @@ function Voxel3D.beginWater(paint)
     held.mirror = c
   end
   love.graphics.setShader()
-  -- the frame's own depth rides along, so the paint below can test against
-  -- it; the copy underneath switches the test off rather than detaching it
-  local ok = pcall(love.graphics.setCanvas,
-                   { held.mirror, depthstencil = held.depth })
-  if not ok then
-    pcall(love.graphics.setCanvas, depthTarget())
-    return nil
+  -- The full target first: the mirror with the frame's readable depth
+  -- attached, so the paint below can test against it. Some mobile drivers
+  -- (the Pixel's Mali) refuse to re-attach a readable depth to a second
+  -- colour canvas -- the scene bind is fine, the mirror's is not. The
+  -- copy itself does not need the depth, so retry without it; the loss is
+  -- the cast-sprite paint, which cannot depth-test and is skipped.
+  local withDepth = pcall(love.graphics.setCanvas,
+                          { held.mirror, depthstencil = held.depth })
+  if not withDepth then
+    local okP, err = pcall(love.graphics.setCanvas, held.mirror)
+    if not okP then
+      pcall(love.graphics.setCanvas, depthTarget())
+      return nil
+    end
+    paint = nil   -- no depth to test against: skip the cast pass
+    Diagnostics.note("water mirror capture: depthless fallback (%s)",
+                     tostring(err))
   end
   love.graphics.setDepthMode("always", false)
   -- COLOUR only. The last two arguments are what keep the depth buffer the
@@ -1335,11 +1469,26 @@ end
 -- every vertex asks about the exact surface the sun recorded rather than
 -- one a few pixels behind it, and a figure cannot fringe itself. On the
 -- caster itself it is a no-op -- that quad is already flat.
+--
+-- Built in scratch matrices rather than allocating: this runs once per
+-- character per frame (twice when the water's reflection draws the cast).
+-- The result is a SHARED table, so callers must consume it before the
+-- next call -- every caller does (the snug pass copies it straight into
+-- its own scratch, and shadowMatrix folds it into a fresh matrix).
+local casterA = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }
+local casterB = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }
+
 function Voxel3D.casterMatrix(px, py, y, mirror)
-  local m = Mat4.translate(px + 8, y, py + 8)
-  if mirror then m = Mat4.mul(m, Mat4.scale(-1, 1, 1)) end
-  return Mat4.mul(Mat4.mul(m, Mat4.translate(-8, 0, 0)),
-                  Mat4.scale(1, 1, 0))
+  Mat4.translateInPlace(casterA, px + 8, y, py + 8)
+  if mirror then
+    Mat4.scaleInPlace(casterB, -1, 1, 1)
+    Mat4.mulInPlace(casterA, casterA, casterB)
+  end
+  Mat4.translateInPlace(casterB, -8, 0, 0)
+  Mat4.mulInPlace(casterA, casterA, casterB)
+  Mat4.scaleInPlace(casterB, 1, 1, 0)
+  Mat4.mulInPlace(casterA, casterA, casterB)
+  return casterA
 end
 
 -- Quantize fallback contact shadows to world pixels.  Actor positions are
@@ -1354,13 +1503,13 @@ end
 -- that need it, but the fallback actor path uses shadowBlobMatrix below.
 function Voxel3D.shadowMatrix(px, py, gh, lift, mirror)
   local card = Voxel3D.casterMatrix(px, py, gh + (lift or 0), mirror)
-  -- flatten about the ground plane: y' = 0, x/z shear by height above it
-  local squash = { 1, Voxel3D.SHADOW_KX, 0, 0,
-                   0, 0,                 0, 0,
-                   0, Voxel3D.SHADOW_KZ, 1, 0,
-                   0, 0,                 0, 1 }
-  local m = Mat4.mul(squash, Mat4.mul(Mat4.translate(0, -gh, 0), card))
-  return Mat4.mul(Mat4.translate(0, gh + Voxel3D.SHADOW_EPS, 0), m)
+  shadowSquash[2] = Voxel3D.SHADOW_KX
+  shadowSquash[10] = Voxel3D.SHADOW_KZ
+  Mat4.translateInPlace(shadowCardA, 0, -gh, 0)
+  Mat4.mulInPlace(shadowCardA, shadowCardA, card)
+  Mat4.mulInPlace(shadowCardA, shadowSquash, shadowCardA)
+  Mat4.translateInPlace(shadowCardB, 0, gh + Voxel3D.SHADOW_EPS, 0)
+  return Mat4.mulInPlace(shadowCardB, shadowCardB, shadowCardA)
 end
 
 -- Stable, low-end contact/blob shadow: fixed footprint, no sprite texture or
@@ -1369,7 +1518,7 @@ end
 -- sun vector; that is the classic readable contact shadow at this quality rung.
 function Voxel3D.shadowBlobMatrix(px, py, gh)
   local x, z = Voxel3D.shadowPosition(px, py)
-  return Mat4.translate(x + 8, gh + Voxel3D.SHADOW_EPS, z + 8)
+  return Mat4.translateInPlace(shadowBlobMat, x + 8, gh + Voxel3D.SHADOW_EPS, z + 8)
 end
 
 -- The decal pass draws between terrain and characters: depth-tested so a
@@ -1498,6 +1647,12 @@ function Voxel3D.invalidate()
   end
   canvas, canvasW, canvasH = nil, 0, 0
   held = nil
+  shaders[false], shaders[true] = nil, nil
+  shaderErrors[false], shaderErrors[true] = nil, nil
+  shaderPrecision[false], shaderPrecision[true] = nil, nil
+  shaderFallbackErrors[false], shaderFallbackErrors[true] = nil, nil
+  depthFailures = {}
+  Voxel3D.beginFailure = nil
   -- the VR sky's disc mesh belongs to this context like the canvases do
   if discMesh and discMesh.release then pcall(discMesh.release, discMesh) end
   discMesh = nil

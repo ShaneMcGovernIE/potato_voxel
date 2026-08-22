@@ -151,10 +151,11 @@ local function prefetchArena(state, host)
   for _, nb in ipairs(state.neighbors or {}) do live[nb.map.id] = true end
   ChunkMesher.setLive(live)
   TerrainAtlas.setLive(live)
-  ChunkMesher.request(host, false, nil, true)
-  local terrain, water = ChunkMesher.pair(host, false)
-  if not terrain then terrain, water = ChunkMesher.pair(host, true) end
-  return terrain, {}, water, {}
+  ChunkMesher.request(host, "body", nil, true)
+  ChunkMesher.request(host, "ring", nil, true)
+  local terrain, water = ChunkMesher.pair(host, "body")
+  local ring, ringWater = ChunkMesher.pair(host, "ring")
+  return terrain, {}, water, {}, ring, ringWater
 end
 
 -- ------- the sun
@@ -310,14 +311,14 @@ end
 -- -- goes in the signature; the terrain half of the answer would otherwise
 -- keep a stale pass alive and freeze the shadows in whatever pose they were
 -- first drawn in.
-local function shadowSignature(state, arena, terrain, nbMesh, token)
+local function shadowSignature(state, arena, terrain, ring, nbMesh, token)
   local host = arena.map or state.map
   -- `turn` is in the signature with the corner and the shape: the same corner
   -- turned a quarter is a different footprint standing on different ground,
   -- and a cast kept from the other one freezes the shadows across it
   local parts = { "battle", host.id, arena.x, arena.y, arena.shape,
                   tostring(arena.turn or 0),
-                  tostring(terrain), tostring(token or 0),
+                  tostring(terrain), tostring(ring), tostring(token or 0),
                   -- the cycle keeps running through a fight, and an arena lit
                   -- from somewhere new must be re-cast from there
                   math.floor(ShadowMap.KX * 128),
@@ -326,12 +327,12 @@ local function shadowSignature(state, arena, terrain, nbMesh, token)
   return table.concat(parts, ",")
 end
 
-local function castShadows(state, arena, terrain, nbMesh, cx, cy, vw, vh,
+local function castShadows(state, arena, terrain, ring, nbMesh, cx, cy, vw, vh,
                            atlasFor, cards, token, host, neighbors,
-                           water, nbWater, groundY, actorShadows, externalActors)
+                           water, ringWater, nbWater, groundY, actorShadows)
   if not ShadowMap.available() then return end
-  local worldSig = shadowSignature(state, arena, terrain, nbMesh)
-  local spriteSig = shadowSignature(state, arena, terrain, nbMesh, token)
+  local worldSig = shadowSignature(state, arena, terrain, ring, nbMesh)
+  local spriteSig = shadowSignature(state, arena, terrain, ring, nbMesh, token)
   local worldStale = ShadowMap.stale(worldSig, false)
   local spriteStale = actorShadows and ShadowMap.stale(spriteSig, true) or false
   if not worldStale and not spriteStale then return end
@@ -342,23 +343,17 @@ local function castShadows(state, arena, terrain, nbMesh, cx, cy, vw, vh,
     -- only thing the sun has to see besides the Pokemon themselves.
     if arena.discs then
       pcall(function()
-        V.require("StadiumStage").cast(ShadowMap, arena, groundY or 0)
+        V.require("DiscArena").cast(ShadowMap, arena, groundY or 0)
       end)
-      if not externalActors then
-        pcall(function() V.require("Stadium").cast(ShadowMap) end)
-      end
     else
       -- the one shared world-layer run (lib/ShadowCast.lua)
       ShadowCast.terrainAndWater(ShadowMap, ChunkMesher, {
         map = host, atlasFor = atlasFor,
-        terrain = terrain, water = water,
+        terrain = terrain, ring = ring,
+        water = water, ringWater = ringWater,
         neighbors = neighbors,
         nbMesh = nbMesh, nbWater = nbWater,
       })
-      -- Stadium models are real geometry, not cut-out sprite cards.
-      if not externalActors then
-        pcall(function() V.require("Stadium").cast(ShadowMap) end)
-      end
     end
     ShadowMap.finish(worldSig, false)
   end
@@ -464,6 +459,10 @@ local function tickTiles()
   pcall(require("src.render.TileRenderer").tick)
 end
 
+-- `drawActors` is supplied only by StadiumBattleFX's optional arena provider.
+-- PotatoVoxel always owns the map stage; SBFX may then draw its selected
+-- actors into the same world pass without taking over PotatoVoxel's camera or
+-- battle canvas.
 function BattleScene.render(state, arena, textures, token, drawActors)
   if not (state and state.map and arena) then return nil end
   if not Voxel3D.available() then return nil end
@@ -489,17 +488,10 @@ function BattleScene.render(state, arena, textures, token, drawActors)
   -- no glint in the arena: the drift is the shot breathing, not the player
   -- moving, and a shimmer on background windows would fight the mons
   Voxel3D.glassGlint = 0
-  -- the host floor's atmosphere reaches the staged shot at HALF density --
-  -- a fight in Viridian Forest sits in the same haze the walk there did,
-  -- thinned so neither mon goes soft -- and its god rays stay out of it:
-  -- this camera is low and long, and a bright blade across a combatant
-  -- reads as a rendering fault, not weather. nil almost everywhere.
-  local ForestAtmos = V.require("ForestAtmos")
-  local atmos = ForestAtmos.frame(host)
-  Voxel3D.fog = atmos and { color = atmos.fog.color,
-                            density = atmos.fog.density * 0.5,
-                            start = atmos.fog.start,
-                            heightK = atmos.fog.heightK } or nil
+  -- The FOREST FX atmosphere is gone (see the removals ADR): the staged
+  -- shot draws under the same clear air as every other map now, so there
+  -- is no fog to hand the shader.
+  Voxel3D.fog = nil
 
   -- A B RUNG stands the fight on two carried discs against the sky, with no
   -- map in the shot at all (see StadiumStage). Everything below still runs --
@@ -510,14 +502,15 @@ function BattleScene.render(state, arena, textures, token, drawActors)
 
   -- shares the free-roam mode's request/evict bookkeeping, so a battle warms
   -- exactly the meshes walking around would have and nothing extra
-  local terrain, nbMesh, water, nbWater
+  local terrain, nbMesh, water, nbWater, ring, ringWater
   if discs then
     -- and nothing is meshed for a disc fight, which is the other half of why
     -- the rung works everywhere: there is no waiting for a chunk to build, so
     -- the first frame of the first battle on a cold map is the finished shot
-    nbMesh, water, nbWater = {}, nil, {}
+    nbMesh, water, nbWater, ring, ringWater = {}, nil, {}, nil, nil
   else
-    terrain, nbMesh, water, nbWater = prefetchArena(state, host)
+    terrain, nbMesh, water, nbWater, ring, ringWater =
+      prefetchArena(state, host)
     if not terrain then return nil end
   end
 
@@ -548,10 +541,7 @@ function BattleScene.render(state, arena, textures, token, drawActors)
   -- and the real one is rebuilt inside the scene below.
   Voxel3D.camera = cam
   Voxel3D.viewProjection(cx, cy, vw, vh)
-  -- A Battle Presentation host supplies its independently selected actor
-  -- renderer. In that mode PotatoVoxel's cards and bundled Stadium models
-  -- must not also enter the scene.
-  local cards = drawActors and {} or monCards(arena, groundY, textures)
+  local cards = monCards(arena, groundY, textures)
   Voxel3D.camera = nil
   local actorShadows = not drawActors
     and BrickProfile.battleActorShadowMap(VoxelState.level)
@@ -561,9 +551,9 @@ function BattleScene.render(state, arena, textures, token, drawActors)
   -- the main pass sends sunDark=0 and the mons stand flat-lit).
   local battleShadows = ShadowSettings.enabled()
   if battleShadows then
-    castShadows(state, arena, terrain, nbMesh, cx, cy, vw, vh, atlasFor,
-                cards, token, host, neighbors, water, nbWater, groundY,
-                actorShadows, drawActors ~= nil)
+    castShadows(state, arena, terrain, ring, nbMesh, cx, cy, vw, vh,
+                atlasFor, cards, token, host, neighbors,
+                water, ringWater, nbWater, groundY, actorShadows)
   else
     ShadowMap.off()
   end
@@ -625,9 +615,10 @@ function BattleScene.render(state, arena, textures, token, drawActors)
       -- neighbouring maps, no water, no grass and no flowers -- see the
       -- matching skips further down. What is behind them is the sky the
       -- clear painted.
-      V.require("StadiumStage").draw(arena, groundY)
+      V.require("DiscArena").draw(arena, groundY)
     else
     Voxel3D.draw(terrain, atlasFor(host), nil)
+    Voxel3D.draw(ring, atlasFor(host), nil)
     for i, nb in ipairs(neighbors) do
       Voxel3D.draw(nbMesh[i], atlasFor(nb.map),
                    Mat4.translate(nb.ox, 0, nb.oy))
@@ -642,6 +633,7 @@ function BattleScene.render(state, arena, textures, token, drawActors)
     -- (No mirror also means the mons need no second draw into one -- they
     -- just composite over the water below, like everything else on the set.)
     if water then Voxel3D.draw(water, atlasFor(host)) end
+    if ringWater then Voxel3D.draw(ringWater, atlasFor(host)) end
     for i, nb in ipairs(neighbors) do
       if nbWater and nbWater[i] then
         Voxel3D.draw(nbWater[i], atlasFor(nb.map),
@@ -674,25 +666,23 @@ function BattleScene.render(state, arena, textures, token, drawActors)
     -- and no glass either: the cards wear the battle screen, not the
     -- tileset atlas, so the mask's coordinates mean nothing on them
     Voxel3D.glass(false)
-    for _, card in ipairs(cards) do
-      -- the sun stored this card snugged (castShadows), so its own shadow
-      -- lookup must read the same snugged transform -- see ShadowMap.snug
-      Voxel3D.draw(BattleBillboard.mesh(), card.tex, card.model,
-                   BattleBillboard.PULL, ShadowMap.snug(card.model), false)
+    if drawActors then
+      drawActors({
+        vp = Voxel3D.vp,
+        groundY = groundY,
+        width = rw,
+        height = rh,
+      })
+    else
+      for _, card in ipairs(monCards(arena, groundY, textures)) do
+        -- the sun stored this card snugged (castShadows), so its own shadow
+        -- lookup must read the same snugged transform -- see ShadowMap.snug
+        Voxel3D.draw(BattleBillboard.mesh(), card.tex, card.model,
+                     BattleBillboard.PULL, ShadowMap.snug(card.model), false)
+      end
     end
     Voxel3D.glass(true)
     Voxel3D.seams(true)
-    -- and the STADIUM models, inside the same flash window and with the
-    -- same camera-ward pull, so a Pokemon standing on its tile still wins
-    -- the depth test against the tile. They manage the wireframe and the
-    -- glass mask around their own draws (StadiumRig), which is why this
-    -- sits outside the pair above rather than inside it.
-    if not drawActors then
-      local okStadium, stadiumErr = pcall(function()
-        V.require("Stadium").draw(BattleBillboard.PULL)
-      end)
-      if not okStadium then V.require("Stadium").report(stadiumErr) end
-    end
     if flashing then Voxel3D.flatten(nil) end
     -- grass and flowers ride the same camera-ward pull the free-roam pass
     -- gives them, measured against THIS camera's pitch rather than the
@@ -713,14 +703,6 @@ function BattleScene.render(state, arena, textures, token, drawActors)
                      Mat4.translate(nb.ox, 0, nb.oy), fpull,
                      ShadowMap.snug(Mat4.translate(nb.ox, 0, nb.oy)))
       end
-    end
-    if drawActors then
-      drawActors({
-        vp = Voxel3D.vp,
-        groundY = groundY,
-        width = pw,
-        height = ph,
-      })
     end
     local canvas = AntiAlias.resolve(Voxel3D.endScene(), sceneW, sceneH, "battle")
     if renderScale < 1 then

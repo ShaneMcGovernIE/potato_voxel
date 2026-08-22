@@ -31,6 +31,12 @@ local V = {
     if name == "Mat4" then return Mat4 end
     if name == "VoxelState" then return Voxel end
     if name == "ShadowSettings" then return ShadowSettings end
+    if name == "Platform" then
+      return { isIOS = function() return false end }
+    end
+    if name == "PixelCanvas" then
+      return assert(loadfile(root .. "/lib/PixelCanvas.lua"))(V)
+    end
     error("golden: unexpected require " .. tostring(name))
   end,
 }

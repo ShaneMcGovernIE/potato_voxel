@@ -86,23 +86,52 @@ local Water = {}
 
 -- ------- the row
 --
--- Three rungs rather than a toggle, because the two halves of this cost
--- very different things. SKY is a handful of instructions per water pixel
--- and no extra buffers read; FULL adds the screen-space march, which is the
--- part that samples a depth texture twenty-odd times. A phone that wants the
--- sunset on the lake but not the ray march has somewhere to stand.
+-- Four rungs rather than a toggle, because the parts of this cost very
+-- different things. SKY is a handful of instructions per water pixel
+-- and no extra buffers read; FULL adds the screen-space march, which is
+-- the part that samples a depth texture twenty-odd times; HALF is the
+-- same march at a reduced ray budget -- a second shader compilation
+-- with fewer RAY_STEPS/RAY_REFINE defines, the same pattern the voxel
+-- wireframe already uses -- so a device that wants the reflection but
+-- not the whole walk has somewhere to stand, and FULL stays exactly as
+-- it always was.
 Water.KEY = "water"
 Water.LABEL = "WATER"
 
 Water.setting = ModSetting.new(Water.KEY, Water.LABEL,
-                               { "off", "sky", "full" },
-                               { "OFF", "SKY", "FULL" })
+                               { "off", "sky", "half", "full" },
+                               { "OFF", "SKY", "HALF", "FULL" })
+
+-- Android water flag (2026-08-16): the reflective pass renders with hard
+-- banded stripes on Mali-family GPUs -- the lowp-sampler fix did not
+-- fully land (the field log's "shadow stripes all the way down" survived
+-- every toggle). Until the shader is fixed, Android runs the flat water
+-- fallback: the WATER row is hidden and a persisted FULL setting is
+-- ignored. Lazy so the headless suite can flip it mid-run.
+local androidChecked = false
+local android = false
+
+function Water.onAndroid()
+  if Water._androidOverride ~= nil then return Water._androidOverride end
+  if not androidChecked then
+    androidChecked = true
+    local ok, Platform = pcall(require, "src.core.Platform")
+    if ok and type(Platform) == "table" then
+      local okP, info = pcall(Platform.detect)
+      android = okP and type(info) == "table"
+                and tostring(info.os or "") == "Android"
+    end
+  end
+  return android
+end
 
 function Water.level()
+  if Water.onAndroid() then return 0 end
   local v = Water.setting:get()
   if v == "off" then return 0 end
   if v == "sky" then return 1 end
-  return 2
+  if v == "half" then return 2 end
+  return 3
 end
 
 -- Whether the reflective pass should run at all (either rung above OFF).
@@ -214,6 +243,15 @@ Water.WAVE_HEIGHT = 5
 
 -- ------- the trains
 --
+-- The train constants below are the DEFAULT profile. The same tables in
+-- WAVE_PROFILES (keyed by tileset id) replace them per map, sent as
+-- uniforms (uTrain1..3, uSwell, uBend) so a map's water character can be
+-- tuned without a shader recompile -- a pool stays calm while the sea
+-- runs its surf. The rate below is still derived from the same numbers
+-- the field is built out of: Water.begin derives it from the ACTIVE
+-- profile's dominant train, so a custom profile's speed follows its
+-- wavelength instead of drifting.
+--
 -- Each is { fx, fz, speed, weight }. The vector is the train's DIRECTION and
 -- its frequency in one -- the crest runs across it, and two pi over its
 -- length is the wavelength in world pixels -- and `speed` is what walks it.
@@ -228,9 +266,6 @@ Water.WAVE_HEIGHT = 5
 -- tiles, so a crest is a run of hundreds of columns at one height with a
 -- step down either side. Pitched anywhere near a pixel they stop being waves
 -- and become static -- every column its own island.
---
--- Read into the shader source rather than sent as uniforms, so the rate
--- below can be derived from the same numbers the field is built out of.
 Water.WAVE_TRAINS = {
   { 0.150, 0.062, 1.60, 0.60 },
   { 0.058, 0.132, -1.05, 0.29 },
@@ -274,6 +309,27 @@ Water.WAVE_SWELL = { 0.0325, 0.0134, 0.55, 0.35 }
 -- bowed stretch of crest moves on one tick varies, and by under a pixel.
 Water.WAVE_BEND = { -0.0138, 0.0333, 0.35, 1.10 }
 
+-- Per-tileset wave profiles: a tileset id names its own { trains, swell,
+-- bend } tables (the same shapes the defaults above carry), and a tileset
+-- with no entry rides the defaults. The GYM pool is the shipped example:
+-- still water, long slow swells instead of the overworld's travelling
+-- crests -- an indoor pool is not the sea.
+Water.WAVE_PROFILES = {
+  GYM = {
+    trains = {
+      { 0.080, 0.030, 0.55, 0.30 },
+      { 0.030, 0.085, -0.35, 0.12 },
+      { -0.020, 0.012, 0.20, 0.05 },
+    },
+    swell = { 0.020, 0.008, 0.25, 0.15 },
+    bend = { -0.008, 0.020, 0.15, 0.40 },
+  },
+}
+
+function Water.profileFor(tilesetId)
+  return tilesetId and Water.WAVE_PROFILES[tilesetId] or nil
+end
+
 -- ------- and the beat they move on
 --
 -- The surface does not slide, it advances in STEPS, off the engine's own
@@ -298,8 +354,11 @@ Water.WAVE_PIXELS_PER_STEP = 1
 -- Radians of wave phase per second. A train travels `speed / frequency`
 -- world pixels per radian of phase, so the phase that moves the dominant one
 -- a pixel is its frequency over its speed -- times the step rate.
-function Water.waveRate()
-  local t = Water.WAVE_TRAINS[1]
+-- `trains` is the profile the pass actually runs under (nil = the default
+-- table above), so a custom profile's speed is derived from its own
+-- dominant train rather than tuned beside it.
+function Water.waveRate(trains)
+  local t = (trains or Water.WAVE_TRAINS)[1]
   local freq = math.sqrt(t[1] * t[1] + t[2] * t[2])
   local speed = math.abs(t[3])
   if not (freq > 0 and speed > 0) then return 0 end
@@ -409,7 +468,7 @@ Water.EDGE_FADE = 0.14         -- reflection eased off over this much of the fra
 -- stage applies and therefore lands in the same place the geometry did.
 local SHADER_SRC = [[
 varying float vShade;
-varying vec3 vSun;
+varying LOVE_HIGHP_OR_MEDIUMP vec3 vSun;
 // World position, as drawn -- and a varying that cannot ride GLSL ES's
 // mediump fragment default: everything below floors it into columns and
 // marches it through the frame's matrices, and a route's coordinates run
@@ -479,12 +538,22 @@ uniform float sunDark;
 uniform float sunBias;
 uniform vec2 sunTexel;
 uniform vec3 dayTint;
+// the map's haze, the scene shader's own record (see Voxel3D.fog) --
+// distance dissolves into it, altitude climbs out of it, and a lake
+// on a foggy map is the same air its banks are
+uniform vec3 fogColor;
+uniform vec4 fogInfo;
 
 // the frame as it stood before the water went down, and its depth. The
 // depth sampler is qualified because GLSL ES defaults samplers to LOWP no
 // matter what floats are set to, and eight bits of depth is a march with
-// nothing to land on. The frame copy is honest 8-bit colour and can stay.
-uniform Image reflectTex;
+// nothing to land on. The frame copy is honest 8-bit colour and can stay
+// -- but the SKY RAMP is not: its texels are a smooth gradient, and on
+// Mali-family GPUs LOWP is fixed point, so the reflected sky's bands
+// quantise into the hard steps a field log read as "shadow stripes all
+// the way down". Same precedent, same fix.
+uniform LOVE_HIGHP_OR_MEDIUMP Image reflectTex;
+uniform LOVE_HIGHP_OR_MEDIUMP Image skyRamp;
 uniform LOVE_HIGHP_OR_MEDIUMP Image depthTex;
 
 uniform float rays;          // 0 = sky only, 1 = march the screen too
@@ -495,6 +564,14 @@ uniform float waveHeight;    // the tallest column, in whole world pixels
 uniform float waveSlope;     // how far a column's neighbours tilt its normal
 uniform float waveSlopeLean; // and how far the horizon lean may open that up
 uniform float waveT;
+// the active wave profile (see Water.WAVE_PROFILES): trains as
+// { fx, fz, speed, weight } quads, the swell and bend fields likewise --
+// sent rather than pasted so a map's water character is a uniform swap
+uniform vec4 uTrain1;
+uniform vec4 uTrain2;
+uniform vec4 uTrain3;
+uniform vec4 uSwell;
+uniform vec4 uBend;
 uniform vec4 faceShade;      // the mesh's own direction shading: E, W, S, N
 uniform vec2 atlasSize;      // the tileset atlas, in texels
 uniform float fresnelFloor;
@@ -506,7 +583,6 @@ uniform float rayThick;
 uniform float edgeFade;
 
 // the sky, as Sky paints it
-uniform Image skyRamp;
 uniform float skyCount;
 uniform float skyEdge;       // the sky's bottom, in canvas pixels
 uniform float skyStart;      // where the checker begins inside a band
@@ -772,13 +848,16 @@ vec4 march(vec3 origin, vec3 dir) {
 // lake's worth of pixels.
 //
 // The SMOOTH surface underneath, 0 to 1 -- the thing the columns are a
-// quantisation of. Summed from Water.WAVE_TRAINS, which is where the trains
-// and the reasoning behind their weights live; pasted in rather than sent,
-// so the speed derived from those same numbers cannot drift from the field
-// they describe.
+// quantisation of. Summed from the active profile's trains (the uniforms
+// above), so the field the shader sums is the one Water.begin sent --
+// the profile the map asked for, never a copy kept in step by hand.
 float waveRaw(vec2 q) {
-  float h = 0.0;
-//@TRAINS
+  float h = sin(dot(q, uTrain1.xy) + waveT * uTrain1.z
+                 + uBend.w * sin(dot(q, uBend.xy) + waveT * uBend.z))
+             * uTrain1.w * (1.0 - uSwell.w * (0.5 + 0.5 *
+                 sin(dot(q, uSwell.xy) + waveT * uSwell.z)));
+  h += sin(dot(q, uTrain2.xy) + waveT * uTrain2.z) * uTrain2.w;
+  h += sin(dot(q, uTrain3.xy) + waveT * uTrain3.z) * uTrain3.w;
   return h * 0.5 + 0.5;
 }
 
@@ -947,8 +1026,11 @@ vec2 waveUV(vec2 tc, vec2 col) {
 // side, with the water falling back to flat. So the qualifier is a define
 // the Lua side fills in, and Water.shader compiles the pinned form first
 // and the bare one only if that is refused. Whichever prototype a runtime
-// brought, one of the two agrees with it.
-vec4 effect(EFFECT_PREC vec4 color, Image tex, EFFECT_PREC vec2 tc,
+// brought, one of the two agrees with it. The RETURN type is pinned the
+// same way: on Mali-family ES compilers a stage-default (highp) return
+// vs the wrapper's mediump-default prototype is a redeclaration error
+// (S0023), even with the parameters matched.
+EFFECT_PREC vec4 effect(EFFECT_PREC vec4 color, Image tex, EFFECT_PREC vec2 tc,
             EFFECT_PREC vec2 sc) {
   // THE DEPTH TEST, done here because the buffer that would have done it is
   // detached for the length of this pass so it can be READ (see the header).
@@ -1026,6 +1108,17 @@ vec4 effect(EFFECT_PREC vec4 color, Image tex, EFFECT_PREC vec2 tc,
   // `face` is the column's own side shading, which is what makes a crest
   // read as a solid thing with a lit flank rather than as a bright patch
   vec3 base = p.rgb * vShade * face * sunlight(vSun) * dayTint;
+  // and the map's haze, the scene shader's own rule: distance dissolves
+  // into it, altitude climbs out of it. The REFLECTION below already
+  // carries it -- the frame the march copies was drawn fogged -- so this
+  // only has to fog the surface itself, or a hazy bank above clear water
+  // would read as two different airs.
+  if (fogInfo.x > 0.0) {
+    float fogRun = max(0.0, length(vBent.xyz - eye) - fogInfo.y);
+    float wFog = (1.0 - exp(-fogInfo.x * fogRun))
+                 * exp(-max(vBent.y, 0.0) * fogInfo.z);
+    base = mix(base, fogColor, wFog);
+  }
 
   // the reflection follows the WAVES' own shape -- the tilt this column
   // takes from the neighbours it stands beside -- rather than an invented
@@ -1110,45 +1203,18 @@ end
 
 Water._craterSource = craterSource     -- named for the suite
 
--- and the wave trains, pasted in for the same reason: the rate is derived
--- from this table (Water.waveRate), so the field the shader sums has to be
--- the one that table describes rather than a copy of it kept in step by hand.
---
--- The dominant train carries the swell and the bend (see WAVE_SWELL): its
--- phase wobbles by the bend field and its amplitude breathes with the swell
--- envelope, both off the same tables the constants above document. One
--- statement per train either way, which is what the suite counts.
-local function trainSource()
-  local out = {}
-  for i, t in ipairs(Water.WAVE_TRAINS) do
-    if i == 1 then
-      local s = Water.WAVE_SWELL
-      local b = Water.WAVE_BEND
-      out[#out + 1] = (
-        "  h += sin(dot(q, vec2(%.4f, %.4f)) + waveT * %.4f\n"
-        .. "           + %.4f * sin(dot(q, vec2(%.4f, %.4f)) + waveT * %.4f))\n"
-        .. "       * %.4f * (1.0 - %.4f * (0.5 + 0.5 *\n"
-        .. "           sin(dot(q, vec2(%.4f, %.4f)) + waveT * %.4f)));")
-        :format(t[1], t[2], t[3],
-                b[4], b[1], b[2], b[3],
-                t[4], s[4], s[1], s[2], s[3])
-    else
-      out[#out + 1] = ("  h += sin(dot(q, vec2(%.4f, %.4f)) + waveT * %.4f)"
-                       .. " * %.4f;"):format(t[1], t[2], t[3], t[4])
-    end
-  end
-  return table.concat(out, "\n")
-end
+-- the march's step budget, per rung: FULL takes the full walk, HALF (the
+-- same reflective pass at a reduced budget) its own compilation
+local HALF_STEPS = 16
+local HALF_REFINE = 4
 
-Water._trainSource = trainSource       -- named for the suite
-
-local function source(grid, bare)
+local function source(grid, bare, half)
   local src = SHADER_SRC:gsub("//@CRATERS", (craterSource():gsub("%%", "%%%%")))
-  src = src:gsub("//@TRAINS", (trainSource():gsub("%%", "%%%%")))
   local head = ("#define RAY_STEPS %d\n#define RAY_REFINE %d\n"
                 .. "#define WAVE_STEPS %d\n#define WAVE_STRIDE %.1f\n")
-    :format(Water.RAY_STEPS, Water.RAY_REFINE, Water.WAVE_STEPS,
-            Water.WAVE_STRIDE)
+    :format(half and HALF_STEPS or Water.RAY_STEPS,
+            half and HALF_REFINE or Water.RAY_REFINE,
+            Water.WAVE_STEPS, Water.WAVE_STRIDE)
   if grid then head = head .. "#define VOXEL_GRID 1\n" end
   -- effect()'s parameter precision -- see the signature for why it cannot
   -- simply be spelled there. Empty is a define all the same: the params
@@ -1161,24 +1227,31 @@ end
 
 Water._source = source                 -- named for the suite
 
--- Two compilations, exactly as Voxel3D keeps two of the scene shader: the
--- wireframe variant needs derivatives, the one thing a driver can refuse,
--- and a refusal must cost the seams on the water and nothing else.
--- nil = untried, false = unavailable.
-local shaders = { [false] = nil, [true] = nil }
+-- Four compilations: the two (wireframe / plain) from before, each in a
+-- FULL and a HALF ray budget -- the same second-compilation pattern the
+-- wireframe already uses, squared for the rung. The wireframe variant
+-- needs derivatives, the one thing a driver can refuse, and a refusal
+-- must cost the seams on the water and nothing else; the HALF variants
+-- exist so the cheaper rung is a shader choice, not a per-fragment
+-- branch. nil = untried, false = unavailable.
+local shaders = { [false] = { [false] = nil, [true] = nil },
+                  [true] = { [false] = nil, [true] = nil } }
 
-function Water.shader(grid)
+function Water.shader(grid, half)
   grid = grid and true or false
-  if shaders[grid] == nil then
+  half = half and true or false
+  local slot = shaders[grid]
+  if slot[half] == nil then
     if not (love.graphics and love.graphics.newShader) then
-      shaders[grid] = false
+      slot[half] = false
     else
-      local ok, sh = pcall(love.graphics.newShader, source(grid))
+      local ok, sh = pcall(love.graphics.newShader, source(grid, false, half))
       if not ok then
         -- the pinned prototype was the wrong one for this runtime; the bare
         -- one is the only other shape there is, and a driver that refuses
         -- both was never going to draw this water anyway
-        local bareOk, bareSh = pcall(love.graphics.newShader, source(grid, true))
+        local bareOk, bareSh = pcall(love.graphics.newShader,
+                                     source(grid, true, half))
         if bareOk then ok, sh = bareOk, bareSh end
       end
       if not ok and V and V.mod and V.mod.log then
@@ -1187,20 +1260,21 @@ function Water.shader(grid)
         V.mod.log:warn("water shader did not compile: %s -- lakes draw flat",
                        tostring(sh))
       end
-      shaders[grid] = (ok and sh) or false
+      slot[half] = (ok and sh) or false
     end
   end
-  return shaders[grid] or nil
+  return slot[half] or nil
 end
 
 -- ------- the pass
 
 local active = nil        -- the shader this pass bound, or nil
 
--- The ripple phase. Driven by the ENGINE's tile-animation clock, the same
+-- The ripple phase, off the ACTIVE profile's trains. Driven by the
+-- ENGINE's tile-animation clock, the same
 -- 60Hz counter the water tiles rotate on, so the ripple and the art it
 -- ripples move off one number rather than drifting against each other.
-local function waveTime()
+local function waveTime(trains)
   -- lazily, and through the mod namespace: TerrainAtlas reaches into the
   -- engine's renderer at load time, and nothing about a settings row should
   -- depend on that having happened yet
@@ -1211,7 +1285,8 @@ local function waveTime()
   -- floored to the wave beat (see WAVE_FPS). The engine's counter runs at
   -- 60, so this is the frame that step began on.
   local period = 60 / math.max(1, Water.WAVE_FPS)
-  return (math.floor(frame / period) * period / 60) * Water.waveRate()
+  return (math.floor(frame / period) * period / 60)
+         * Water.waveRate(trains)
 end
 
 Water._waveTime = waveTime
@@ -1229,12 +1304,13 @@ Water._waveTime = waveTime
 --
 -- Returns false when the pass cannot run, in which case the caller draws the
 -- water mesh through the ordinary scene shader instead.
-function Water.begin(ctx)
+function Water.begin(ctx, profile)
   if not (ctx and ctx.reflect and ctx.depth) then return false end
   local level = Water.level()
   if level <= 0 then return false end
-  local sh = ctx.grid and Water.shader(true) or nil
-  if not sh then sh = Water.shader(false) end
+  local half = level == 2
+  local sh = ctx.grid and Water.shader(true, half) or nil
+  if not sh then sh = Water.shader(false, half) end
   if not sh then return false end
 
   love.graphics.setShader(sh)
@@ -1267,6 +1343,14 @@ function Water.begin(ctx)
   local texel = 1 / ShadowMap.res
   send("sunTexel", { texel, texel })
   send("dayTint", Voxel3D.tint or { 1, 1, 1 })
+  -- the map's haze, the scene shader's own fog record -- so a lake on a
+  -- foggy map is the same air its banks are (the scene pass set it; nil
+  -- draws clear, exactly as the terrain does)
+  local fog = Voxel3D.fog
+  send("fogColor", (fog and fog.color) or { 0, 0, 0 })
+  send("fogInfo", fog and
+        { fog.density or 0, fog.start or 0, fog.heightK or 0, 0 }
+        or { 0, 0, 0, 0 })
 
   send("rays", level >= 2 and 1 or 0)
   -- the horizon lean, and the direction it leans toward (see Water.lean)
@@ -1276,7 +1360,22 @@ function Water.begin(ctx)
   send("waveHeight", Water.WAVE_HEIGHT)
   send("waveSlope", Water.WAVE_SLOPE)
   send("waveSlopeLean", Water.WAVE_SLOPE_LEAN)
-  send("waveT", waveTime())
+  -- the active profile's wave field: the trains, swell and bend as quads,
+  -- and the phase derived from THAT profile's dominant train (a custom
+  -- profile's speed follows its wavelength -- see waveRate)
+  local trains = profile and profile.trains or Water.WAVE_TRAINS
+  local swell = profile and profile.swell or Water.WAVE_SWELL
+  local bend = profile and profile.bend or Water.WAVE_BEND
+  for _, spec in ipairs({ { "uTrain1", trains[1] },
+                          { "uTrain2", trains[2] },
+                          { "uTrain3", trains[3] } }) do
+    local t = spec[2]
+    send(spec[1], { t[1] or 0, t[2] or 0, t[3] or 0, t[4] or 0 })
+  end
+  send("uSwell", { swell[1] or 0, swell[2] or 0, swell[3] or 0,
+                   swell[4] or 0 })
+  send("uBend", { bend[1] or 0, bend[2] or 0, bend[3] or 0, bend[4] or 0 })
+  send("waveT", waveTime(trains))
   -- the columns' side faces wear the MESH's own direction shading, sent in
   -- rather than restated, so a wave crest is lit like every other voxel
   local fs = Voxel3D.FACE_SHADE
@@ -1392,9 +1491,11 @@ end
 -- Drop the compiled shaders (window resize, hot reload): they are GPU
 -- objects on a context that may not exist any more.
 function Water.invalidate()
-  for k, sh in pairs(shaders) do
-    if sh and sh.release then pcall(sh.release, sh) end
-    shaders[k] = nil
+  for _, slot in pairs(shaders) do
+    for k, sh in pairs(slot) do
+      if sh and sh.release then pcall(sh.release, sh) end
+      slot[k] = nil
+    end
   end
   active = nil
 end

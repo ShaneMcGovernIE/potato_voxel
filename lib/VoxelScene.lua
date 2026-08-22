@@ -22,6 +22,8 @@ local ShadowCast = V.require("ShadowCast")
 local shadowUnavailableLogged = false
 local BrickProfile = V.require("BrickProfile")
 local ChunkMesher = V.require("ChunkMesher")
+local MeshPrefetchPolicy = V.require("MeshPrefetchPolicy")
+local AtlasPrewarmPolicy = V.require("AtlasPrewarmPolicy")
 local SpriteBillboards = V.require("SpriteBillboards")
 local TileShape = V.require("TileShape")
 local TerrainAtlas = V.require("TerrainAtlas")
@@ -32,8 +34,9 @@ local VoxelGrid = V.require("VoxelGrid")
 local DayNight = V.require("DayNight")
 local FirstPerson = V.require("FirstPerson")
 local ShadowSettings = V.require("ShadowSettings")
+local MapAtmos = V.require("MapAtmos")
 local BattleBillboard = V.require("BattleBillboard")
-local Pokedex = V.require("Pokedex")
+local Diagnostics = V.require("DiagnosticsBridge")
 local PaletteFX = require("src.render.PaletteFX")
 local Map = require("src.world.Map")
 
@@ -295,6 +298,27 @@ local billboardMat = Mat4.identity()
 local figureMat = Mat4.identity()
 local figureCasterMat = Mat4.identity()
 
+local nbMatrices = {}
+for i = 1, 16 do
+  nbMatrices[i] = Mat4.identity()
+end
+
+local function nbTransform(i, ox, oy)
+  local m = nbMatrices[i]
+  if not m then
+    m = Mat4.identity()
+    nbMatrices[i] = m
+  end
+  return Mat4.translateInPlace(m, ox, 0, oy)
+end
+
+local waterDraws = {}
+local function clearWaterDraws()
+  for i = 1, #waterDraws do
+    waterDraws[i] = nil
+  end
+end
+
 local function billboardMatrix(px, py, y, mirror)
   local b = FirstPerson.cardBlend()
   Mat4.translateInPlace(billboardMat, px + 8, y, py + 8)
@@ -456,6 +480,14 @@ function VoxelScene.prefetch(state)
     -- RED++ bakes one atlas per map, so its animated copy is per map too
     -- and is bounded by the same neighbourhood
     TerrainAtlas.setLive(live)
+    -- The pipeline calls prefetch while a warp transition covers the world.
+    -- Prime the destination's private animated atlas there, instead of
+    -- creating it on its first visible voxel frame.
+    local okVR, VR = pcall(V.require, "VR")
+    local paletteFor = okVR and VR and VR.paletteFor or nil
+    for _, map in ipairs(AtlasPrewarmPolicy.maps(state.map, state.neighbors)) do
+      TerrainAtlas.prewarm(map, modeColors(paletteFor, map))
+    end
   end
 
   -- masks: where connected neighbour BODIES sit, so the border ring is
@@ -469,40 +501,29 @@ function VoxelScene.prefetch(state)
 
   -- Builds are asynchronous (ChunkMesher.pump runs in the pipeline's
   -- update): request what this frame wants and draw what is ready.
-  -- The current map draws its body-only mesh while the full one (the
-  -- border ring) is still building -- a seam crossing promotes a
-  -- neighbour whose body is already cached, and the ring pops in a few
-  -- frames later, mostly hidden behind the map just left. A neighbour
-  -- missing its body-only mesh draws its cached FULL mesh instead -- a
-  -- crossing demotes the map just left, and it must not vanish from
-  -- behind the player while its body variant builds; its ring is
-  -- already masked out under this map's body, so the stand-in is safe.
+  -- The current map always draws its body and adds the disjoint border-ring
+  -- delta when ready. Neighbours need only their bodies. This removes the
+  -- old full payload, which duplicated every body vertex in storage and GPU
+  -- memory, while keeping the same visible geometry.
   -- The water surface rides along with whichever variant answers: it was
   -- cut out of that build's own geometry (ChunkMesher.pair), so the two
   -- always come from the same slot and a lake is never drawn twice or left
   -- as a hole.
-  -- URGENT only for a map never seen this session: the full mesh is
-  -- what a visible seam crossing must serve, and a destination that
-  -- was ever a neighbour already has a cache entry (prefetch asked for
-  -- its body), so its full can cook at idle priority too -- the body
-  -- stands in via the fallback below, and the crossing never spends
-  -- the urgent 10ms slice on visible frames (the area-entry hitch).
-  -- Only the first voxel frame / a warp into somewhere unseen (both
-  -- hidden behind the fade or the toggle) gets the urgent full. This
-  -- is race-free: a neighbour's entry exists from its first request,
-  -- not only once its body mesh has finished cooking.
-  ChunkMesher.request(state.map, false, masks, not ChunkMesher.seen(state.map.id))
-  local terrain, water = ChunkMesher.pair(state.map, false)
-  if not terrain then
-    terrain, water = ChunkMesher.pair(state.map, true)
-  end
+  -- The destination body is first because it gates the scene; its ring is
+  -- promoted ahead of neighbours so rapid crossings do not expose a seam.
+  local neighborPriorities = MeshPrefetchPolicy.neighborPriorities(
+    state.map, state.neighbors)
+  ChunkMesher.request(state.map, "body", nil, true, false,
+                      MeshPrefetchPolicy.CURRENT_BODY)
+  ChunkMesher.request(state.map, "ring", masks, true, false,
+                      MeshPrefetchPolicy.CURRENT_RING)
+  local terrain, water = ChunkMesher.pair(state.map, "body")
+  local ring, ringWater = ChunkMesher.pair(state.map, "ring")
   local nbMesh, nbWater = {}, {}
   for i, nb in ipairs(state.neighbors or {}) do
-    ChunkMesher.request(nb.map, true)
-    nbMesh[i], nbWater[i] = ChunkMesher.pair(nb.map, true)
-    if not nbMesh[i] then
-      nbMesh[i], nbWater[i] = ChunkMesher.pair(nb.map, false)
-    end
+    ChunkMesher.request(nb.map, "body", nil, false, false,
+                        neighborPriorities[i])
+    nbMesh[i], nbWater[i] = ChunkMesher.pair(nb.map, "body")
   end
   if Voxel.loading and Voxel.loadingMap ~= state.map.id then
     Voxel.finishLoading()
@@ -517,7 +538,7 @@ function VoxelScene.prefetch(state)
     Voxel.finishLoading(state.map.id)
   end
   Voxel.ready = terrain ~= nil and not Voxel.loading
-  return terrain, nbMesh, water, nbWater
+  return terrain, nbMesh, water, nbWater, ring, ringWater
 end
 
 -- Capture every entity's pose for this frame. pose() advances the hop /
@@ -731,10 +752,10 @@ end
 -- GPUs they don't reliably (that fight is what put the Android port back on
 -- flat water). Confined to the curve there is no regression to reach: the
 -- flat world never had the far-shore bug in the first place.
-function VoxelScene.drawWater(draws, cast)
+local waterDiagShown = false
+function VoxelScene.drawWater(draws, cast, waterProfile)
   -- prepass only under the bend; see the header
-  local curved = (Voxel3D.curveK or 0) > 0
-  if curved then
+  local curved = (Voxel3D.curveK or 0) > 0  if curved then
     for _, d in ipairs(draws) do
       Voxel3D.draw(d[1], d[2], d[3])
     end
@@ -751,13 +772,20 @@ function VoxelScene.drawWater(draws, cast)
       screen = { w, h }, cell = Voxel3D.cell, fov = Voxel3D.fovY,
       skyEdge = Voxel3D.skyEdge, grid = VoxelGrid.enabled(),
       lookFlat = Voxel3D.lookFlat, descent = Voxel3D.descent,
-    })
+    }, waterProfile)
     if ok then
       for _, d in ipairs(draws) do
         Water.draw(d[1], d[2], d[3])
       end
       Water.finish()
       plain = false
+    elseif not waterDiagShown then
+      -- The reflective pass bailed: say which gate refused it, once, so
+      -- a support log can tell a driver limitation from a shader bug.
+      waterDiagShown = true
+      local reason = (not mirror or not depth)
+        and "mirror capture failed" or "water shader/uniforms failed"
+      Diagnostics.note("water pass skipped: %s (flat water fallback)", reason)
     end
     -- Unconditionally, and OUTSIDE the success branch: beginWater unbinds
     -- the shader and the depth mode BEFORE it can discover it cannot go on,
@@ -765,6 +793,11 @@ function VoxelScene.drawWater(draws, cast)
     -- exactly like one that succeeded -- otherwise every pass after it runs
     -- with no shader and no depth test.
     Voxel3D.endWater()
+  elseif not waterDiagShown then
+    waterDiagShown = true
+    local reason = (not Water.enabled() and "WATER row off")
+      or "depth canvas not readable on this driver"
+    Diagnostics.note("water pass skipped: %s (flat water fallback)", reason)
   end
   -- the fallback flat draw -- unless the curve's prepass already put the
   -- same meshes down, in which case a bailed frame is already whole
@@ -780,7 +813,7 @@ end
 -- redrawing the whole world from the sun would buy nothing -- which is
 -- most of a dialog, a menu, or any moment standing still.
 local sigBuf = {}
-local function shadowSignature(terrain, nbMesh, posed, cx, cy, vw, vh)
+local function shadowSignature(terrain, ring, nbMesh, posed, cx, cy, vw, vh)
   local n = 0
   local function put(v)
     n = n + 1
@@ -811,6 +844,7 @@ local function shadowSignature(terrain, nbMesh, posed, cx, cy, vw, vh)
   -- spot re-fits and redraws exactly like a camera move ("" outside 1ST)
   put(FirstPerson.signature())
   put(tostring(terrain))
+  put(tostring(ring))
   for i = 1, #nbMesh do put(tostring(nbMesh[i])) end
   for _, p in ipairs(posed) do
     put(p.sprite.def.image)
@@ -846,8 +880,9 @@ end
 -- only when nothing closer along the sun ray sits in EITHER layer. The
 -- two layers share the fitted box (a sprite begin reuses the world's
 -- fit), so shadow edges land identically wherever they come from.
-local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
-                           atlasFor, water, nbWater, battleCards, battleToken)
+local function castShadows(state, terrain, ring, nbMesh, posed, cx, cy, vw, vh,
+                           atlasFor, water, ringWater, nbWater,
+                           battleCards, battleToken)
   if not ShadowMap.available() then
     if not shadowUnavailableLogged then
       shadowUnavailableLogged = true
@@ -862,8 +897,9 @@ local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
   -- fit-moving terms too -- a camera move re-fits and must re-draw BOTH
   -- layers (the sprite cards sit in the new box), while a sprite idle
   -- animation moves only the sprite signature.
-  local worldSig = shadowSignature(terrain, nbMesh, {}, cx, cy, vw, vh)
-  local spriteSig = shadowSignature(terrain, nbMesh, posed, cx, cy, vw, vh)
+  local worldSig = shadowSignature(terrain, ring, nbMesh, {}, cx, cy, vw, vh)
+  local spriteSig = shadowSignature(terrain, ring, nbMesh, posed,
+                                    cx, cy, vw, vh)
   if battleToken then spriteSig = spriteSig .. "|btl" .. tostring(battleToken) end
 
   local worldStale = ShadowMap.stale(worldSig, false)
@@ -889,7 +925,8 @@ local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
       -- shared world-layer run (lib/ShadowCast.lua)
       ShadowCast.terrainAndWater(ShadowMap, ChunkMesher, {
         map = state.map, atlasFor = atlasFor,
-        terrain = terrain, water = water,
+        terrain = terrain, ring = ring,
+        water = water, ringWater = ringWater,
         neighbors = state.neighbors or {},
         nbMesh = nbMesh, nbWater = nbWater,
       })
@@ -909,22 +946,20 @@ local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
         end)
       end
       ShadowMap.sprites(false)
-      -- the STADIUM models: geometry, not cut-outs -- un-snugged, and drawn
-      -- OUTSIDE the sprite flag exactly as the battle pass draws them, so
-      -- water receives them like every other world caster (the battle
-      -- arena always behaved this way; the overworld drew them inside the
-      -- flag and lakes declined the arena's own shadow)
+      -- a staged fight's discs, if one is standing: geometry, not
+      -- cut-outs -- un-snugged, and drawn OUTSIDE the sprite flag exactly
+      -- as the battle pass draws them, so water receives them like every
+      -- other world caster.
       pcall(function()
         local stageArena, stageY = V.require("OverworldBattle").stage()
         if stageArena and stageArena.discs then
-          V.require("StadiumStage").cast(ShadowMap, stageArena, stageY or 0)
+          V.require("DiscArena").cast(ShadowMap, stageArena, stageY or 0)
         end
-        V.require("Stadium").cast(ShadowMap)
       end)
       ShadowMap.finish(worldSig, false)
     end)
     if not ok then
-      ShadowMap.abort()
+      ShadowMap.abort(false, err)
       pcall(print, "[PotatoVoxel] shadow world pass aborted: " .. tostring(err))
     end
   end
@@ -932,7 +967,7 @@ local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
   -- sprite layer: posed characters + battle cards, snugged and marked as
   -- the cast so water declines them. Only when a sprite actually moved.
   if spriteLayer and (spriteStale or worldStale) then
-    local ok = pcall(function()
+    local ok, err = pcall(function()
       if not ShadowMap.begin(cx, cy, vw, vh, true) then return end
       ShadowMap.sprites(true)
       for _, p in ipairs(posed) do
@@ -960,7 +995,10 @@ local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
       ShadowMap.sprites(false)
       ShadowMap.finish(spriteSig, true)
     end)
-    if not ok then ShadowMap.abort() end
+    if not ok then
+      ShadowMap.abort(true, err)
+      pcall(print, "[PotatoVoxel] shadow sprite pass aborted: " .. tostring(err))
+    end
   end
 end
 
@@ -975,7 +1013,8 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- return nil: the engine keeps the 2D path for the frame and
   -- Voxel.ready holds the camera tween at flat, so the switch waits
   -- invisibly instead of freezing or tilting an empty stage.
-  local terrain, nbMesh, water, nbWater = VoxelScene.prefetch(state)
+  local terrain, nbMesh, water, nbWater, ring, ringWater =
+    VoxelScene.prefetch(state)
   if not terrain then return nil end
 
   local cam = state.camera
@@ -999,12 +1038,10 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   Voxel3D.glassNight = outdoor and DayNight.windowLight() or 0
   local g = VoxelScene.glintStep(glint, cx, cy)
   Voxel3D.glassPhase, Voxel3D.glassGlint = g.phase, g.amp
-  -- and the map's atmosphere, if it has one (see ForestAtmos): the haze
-  -- the scene shader folds every surface into, in the hour's colour.
-  -- nil for every map without an entry -- a clear day, exactly as before.
-  local ForestAtmos = V.require("ForestAtmos")
-  local atmos = ForestAtmos.frame(state.map)
-  Voxel3D.fog = atmos and atmos.fog or nil
+  -- the map's haze, when the player has the ATMOS row on and the map has
+  -- an entry (see MapAtmos / data/voxel_atmos.lua); nil draws under clear
+  -- air, which is every map without one and every map with the row off.
+  Voxel3D.fog = MapAtmos.fogFor(state.map)
 
   local function atlasFor(map)
     return TerrainAtlas.forMap(map, modeColors(paletteFor, map))
@@ -1065,8 +1102,9 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   local shadowsOn = BrickProfile.shadowsEnabled(Voxel.level)
                 and ShadowSettings.enabled()
   if shadowsOn then
-    castShadows(state, terrain, nbMesh, posed, shCx, shCy, vw, vh, atlasFor,
-                water, nbWater, battleCards, battleToken)
+    castShadows(state, terrain, ring, nbMesh, posed, shCx, shCy, vw, vh,
+                atlasFor, water, ringWater, nbWater,
+                battleCards, battleToken)
   else
     ShadowMap.off()
   end
@@ -1078,9 +1116,10 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   local function drawScene()
 
   Voxel3D.draw(terrain, atlasFor(state.map), nil)
+  Voxel3D.draw(ring, atlasFor(state.map), nil)
   for i, nb in ipairs(state.neighbors or {}) do
     Voxel3D.draw(nbMesh[i], atlasFor(nb.map),
-                 Mat4.translate(nb.ox, 0, nb.oy))
+                 nbTransform(i, nb.ox, nb.oy))
   end
 
   -- Without a shadow map (headless, or a driver that could not make the
@@ -1119,23 +1158,35 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- lake would otherwise wear one as a black smear. Water covers them,
   -- which is the same answer the shadow map's own pass gives (see
   -- ShadowMap.sprites) -- people do not shadow water either way.
-  local waterDraws = {}
+  clearWaterDraws()
+  local wCount = 0
   if water then
-    waterDraws[#waterDraws + 1] = { water, atlasFor(state.map), nil }
+    wCount = wCount + 1
+    local d = waterDraws[wCount] or {}
+    d[1], d[2], d[3] = water, atlasFor(state.map), nil
+    waterDraws[wCount] = d
+  end
+  if ringWater then
+    wCount = wCount + 1
+    local d = waterDraws[wCount] or {}
+    d[1], d[2], d[3] = ringWater, atlasFor(state.map), nil
+    waterDraws[wCount] = d
   end
   for i, nb in ipairs(state.neighbors or {}) do
     if nbWater and nbWater[i] then
-      waterDraws[#waterDraws + 1] = { nbWater[i], atlasFor(nb.map),
-                                      Mat4.translate(nb.ox, 0, nb.oy) }
+      wCount = wCount + 1
+      local d = waterDraws[wCount] or {}
+      d[1], d[2], d[3] = nbWater[i], atlasFor(nb.map), nbTransform(i, nb.ox, nb.oy)
+      waterDraws[wCount] = d
     end
   end
   -- the cast goes into the reflection copy only -- see drawWater for why it
   -- cannot be composited yet and why it is drawn through the same function
   -- the real pass below uses
-  if #waterDraws > 0 then
+  if wCount > 0 then
     VoxelScene.drawWater(waterDraws, function()
       drawCast(state, posed, atlasFor)
-    end)
+    end, Water.profileFor(state.map.tileset and state.map.tileset.id))
   end
 
 
@@ -1211,9 +1262,8 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
       pcall(function()
         local stageArena, stageY = V.require("OverworldBattle").stage()
         if stageArena and stageArena.discs then
-          V.require("StadiumStage").draw(stageArena, stageY or 0)
+          V.require("DiscArena").draw(stageArena, stageY or 0)
         end
-        V.require("Stadium").draw(BattleBillboard.PULL)
       end)
       if battleTex.flash then Voxel3D.flatten(nil) end
       -- and the MOVE ANIMATIONS, standing on the same arena: the
@@ -1242,9 +1292,9 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   local lean = math.max(leanAngle(), 0.05)
   local pull = VoxelScene.pull(lean)
   Voxel3D.draw(ChunkMesher.grass(state.map), atlasFor(state.map), nil, pull)
-  for _, nb in ipairs(state.neighbors or {}) do
+  for i, nb in ipairs(state.neighbors or {}) do
     Voxel3D.draw(ChunkMesher.grass(nb.map), atlasFor(nb.map),
-                 Mat4.translate(nb.ox, 0, nb.oy), pull)
+                 nbTransform(i, nb.ox, nb.oy), pull)
   end
   -- flower billboards: pulled like the characters and the grass, MINUS
   -- the depth of 8 world pixels along the view (8 sin a -- the camera
@@ -1261,49 +1311,11 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- through the same snugged transform the sun stored them with
   Voxel3D.draw(ChunkMesher.flowers(state.map), atlasFor(state.map), nil,
                fpull, ShadowMap.snug(nil))
-  for _, nb in ipairs(state.neighbors or {}) do
+  for i, nb in ipairs(state.neighbors or {}) do
+    local nbMat = nbTransform(i, nb.ox, nb.oy)
     Voxel3D.draw(ChunkMesher.flowers(nb.map), atlasFor(nb.map),
-                 Mat4.translate(nb.ox, 0, nb.oy), fpull,
-                 ShadowMap.snug(Mat4.translate(nb.ox, 0, nb.oy)))
-  end
-
-  -- The map's atmosphere -- god rays down from the invisible canopy, and
-  -- whatever drifts through them (see ForestAtmos). Additive over the
-  -- finished depth buffer, so the trees occlude the light and the light
-  -- writes nothing; here in the prop slot, after everything the beams
-  -- should fall across and inside drawScene so VR gets them per eye. On
-  -- the one map that has any, today.
-  ForestAtmos.draw(state.map)
-
-  -- The VR pokedex in the player's left hand, last of all: a prop over
-  -- the world drawn with real depth, so leaning it into a wall still
-  -- occludes honestly. Its frame only exists while a session is live and
-  -- the left hand is tracked (VR.lua sets it), so every flat frame skips
-  -- this in one field read. No wireframe and no glass, like the cast:
-  -- the device is a drawing riding the scene, not part of the terrain.
-  if Pokedex.frame then
-    Voxel3D.glass(false)
-    Voxel3D.seams(false)
-    Pokedex.draw()
-    Voxel3D.seams(true)
-    Voxel3D.glass(true)
-  end
-
-  -- HORDE MODE's handgun, in the same slot and for the same reasons: a
-  -- prop over the world with real depth, no wireframe and no glass. In VR
-  -- it rides the tracked right hand (lib/VR placed it this frame); on the
-  -- flat screen it is carried by the camera, which is why it draws here
-  -- rather than in the overlay -- a view model that is 2D cannot be
-  -- occluded by the wall the player just backed into.
-  do
-    local HordeGun = V.require("HordeGun")
-    if HordeGun.visible() then
-      Voxel3D.glass(false)
-      Voxel3D.seams(false)
-      HordeGun.draw()
-      Voxel3D.seams(true)
-      Voxel3D.glass(true)
-    end
+                 nbMat, fpull,
+                 ShadowMap.snug(nbMat))
   end
 
   end   -- drawScene
