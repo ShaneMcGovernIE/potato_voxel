@@ -459,7 +459,11 @@ local function tickTiles()
   pcall(require("src.render.TileRenderer").tick)
 end
 
-function BattleScene.render(state, arena, textures, token)
+-- `drawActors` is supplied only by StadiumBattleFX's optional arena provider.
+-- PotatoVoxel always owns the map stage; SBFX may then draw its selected
+-- actors into the same world pass without taking over PotatoVoxel's camera or
+-- battle canvas.
+function BattleScene.render(state, arena, textures, token, drawActors)
   if not (state and state.map and arena) then return nil end
   if not Voxel3D.available() then return nil end
   tickTiles()
@@ -539,7 +543,8 @@ function BattleScene.render(state, arena, textures, token)
   Voxel3D.viewProjection(cx, cy, vw, vh)
   local cards = monCards(arena, groundY, textures)
   Voxel3D.camera = nil
-  local actorShadows = BrickProfile.battleActorShadowMap(VoxelState.level)
+  local actorShadows = not drawActors
+    and BrickProfile.battleActorShadowMap(VoxelState.level)
   ShadowMap.setSpriteLayerActive(actorShadows)
   -- The SHADOWS row is the last word over the arena too: OFF skips the sun
   -- pass and the contact blobs alike (ShadowMap.off() drops both layers, so
@@ -661,11 +666,20 @@ function BattleScene.render(state, arena, textures, token)
     -- and no glass either: the cards wear the battle screen, not the
     -- tileset atlas, so the mask's coordinates mean nothing on them
     Voxel3D.glass(false)
-    for _, card in ipairs(monCards(arena, groundY, textures)) do
-      -- the sun stored this card snugged (castShadows), so its own shadow
-      -- lookup must read the same snugged transform -- see ShadowMap.snug
-      Voxel3D.draw(BattleBillboard.mesh(), card.tex, card.model,
-                   BattleBillboard.PULL, ShadowMap.snug(card.model), false)
+    if drawActors then
+      drawActors({
+        vp = Voxel3D.vp,
+        groundY = groundY,
+        width = rw,
+        height = rh,
+      })
+    else
+      for _, card in ipairs(monCards(arena, groundY, textures)) do
+        -- the sun stored this card snugged (castShadows), so its own shadow
+        -- lookup must read the same snugged transform -- see ShadowMap.snug
+        Voxel3D.draw(BattleBillboard.mesh(), card.tex, card.model,
+                     BattleBillboard.PULL, ShadowMap.snug(card.model), false)
+      end
     end
     Voxel3D.glass(true)
     Voxel3D.seams(true)

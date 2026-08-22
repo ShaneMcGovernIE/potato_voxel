@@ -88,6 +88,7 @@ local ChunkMesher = V.require("ChunkMesher")
 local VoxelGrid = V.require("VoxelGrid")
 local WorldCurve = V.require("WorldCurve")
 local OverworldBattle = V.require("OverworldBattle")
+local StadiumBattleFxProvider = V.require("StadiumBattleFxProvider")
 local BattleExit = V.require("BattleExit")
 local BattleFeature = V.require("BattleFeature")
 local DayNight = V.require("DayNight")
@@ -143,6 +144,10 @@ local HoldChord = V.require("HoldChord")
 local publishedLoading
 -- Last DEBUGGER-option value applied to the overlay; see the tick below.
 local lastDebuggerSetting = false
+
+mod.events:on("mods.loaded", function()
+  StadiumBattleFxProvider.register()
+end)
 
 local function publishLoading()
   local loading = Voxel.loading == true
