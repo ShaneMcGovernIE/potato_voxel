@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.8.4] - 2026-08-23
+
+### Fixed: staged battle layout and UI
+
+- BATTLE LAYOUT is no longer forced to OG or removed while staged battles are enabled; OG and WIDE are preserved through battle entry and map changes.
+- Unified battle layout metrics now keep rendering, captured battle textures, camera framing, HUD anchors, and coordinate conversion aligned for OG/WIDE, FIXED/FILL, DPI scaling, and offset screen positions.
+- Removed the translucent WIDE-mode HUD panels that could remain over the battle scene.
+- Removed isolated one-pixel islands from decoded battle art so a corrupt sprite texel cannot render as a detached black dash in the arena.
+
 ## [1.8.2] - 2026-08-19
 
 ### Fixed: voxel mode flickering between 2D and 3D (BUG-3)

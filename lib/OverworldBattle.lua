@@ -298,7 +298,9 @@ function OverworldBattle.animScale(shot, px, py)
   local dx, dy = shot.enemy[1] - px, shot.enemy[2] - py
   local span = math.sqrt(dx * dx + dy * dy)
   if not (span > 1) then return 1 end
-  local k = span / OverworldBattle.ANCHOR_SPAN
+  local base = shot.anchorSpan or OverworldBattle.ANCHOR_SPAN
+  if not (base > 0) then return 1 end
+  local k = span / base
   return math.max(OverworldBattle.ANIM_SCALE_MIN,
                   math.min(OverworldBattle.ANIM_SCALE_MAX, k))
 end
@@ -339,13 +341,11 @@ end
 
 -- ------- one right battle layout
 --
--- Everything this file composes is measured in the GB's own 160x144 frame: the
--- two ANCHORs the arena camera is solved to put a cell under, the HUD_RECTs
--- the frosted panels are cut to, and the full-frame white intercepted to let
--- the world through. BATTLE LAYOUT's WIDE lays the same battle out on a
--- 304x144 surface (src/battle/WideBattle.lua), which moves every one of those
--- -- the mons would stand where no camera was solved for them, and the panels
--- would land beside the HUDs they are supposed to be under.
+-- The classic anchors and HUD rectangles remain the OG defaults. The active
+-- BattleScene layout metrics replace them for WIDE, including the translated
+-- surface positions from src/battle/WideBattle.lua. The background-fill shim,
+-- camera shot and animation layer consume that same boundary, so the world
+-- and engine UI never solve against different surfaces.
 --
 -- So while a fight can be staged on the map there is one right answer, and it
 -- is SET rather than worked around. The engine reads the option live
@@ -353,20 +353,6 @@ end
 -- top state for its surface the same way), so writing it here lands on the
 -- battle being pushed as well as every one after it.
 --
--- This is the last line rather than the first: the OPTIONS menu takes the row
--- off the list and pins the value while 3D-BTL is on (see main.lua), so a
--- player is never offered a switch that gets reverted under them. What reaches
--- here is a value that arrived some other way -- a save written before the mod
--- was installed, the mod manager's own page, another mod.
-function OverworldBattle.forceOG(g)
-  g = g or game()
-  local opts = g and g.save and g.save.options
-  if not opts or opts.battleLayout ~= "wide" then return false end
-  opts.battleLayout = "og"
-  if g.writeOptions then pcall(g.writeOptions, g) end
-  return true
-end
-
 -- Where THIS fight stands, on whichever rung is running: the map's own
 -- ground, or the pair of discs a B rung carries with it.
 --
@@ -403,10 +389,6 @@ function OverworldBattle.begin(state, battle)
 
   local arena = OverworldBattle.stageFor(state)
   if not arena then return false end
-
-  -- the fight is staged from here on, so the layout it is composed for is not
-  -- optional any more (see forceOG)
-  OverworldBattle.forceOG()
 
   session = { state = state, arena = arena, battle = battle, shot = nil,
               armed = false, token = 0 }
@@ -517,7 +499,7 @@ function OverworldBattle.update(dt)
   end
   session.token = (session.token or 0) + 1
   local ok, shot = pcall(BattleScene.render, session.state, session.arena,
-                         textures, session.token)
+                         textures, session.token, session.battle)
   if not ok then
     -- One failure retires the arena for THIS battle and nothing else: the
     -- battle screen carries on as the engine's own, the free-roam pipeline
@@ -587,6 +569,7 @@ end
 -- made through sideTexture: let the engine draw what it always draws,
 -- catch it on a canvas, stand the canvas in the scene.
 local animLayer = nil
+local animLayerW, animLayerH = nil, nil
 -- the engine's own drawAnimLayer, captured by install(). Declared HERE,
 -- above the function that reads it: a local declared further down the
 -- chunk would leave this function reading a global of the same name --
@@ -597,12 +580,15 @@ local innerAnim = nil
 function OverworldBattle.animTexture(battle)
   if not (innerAnim and battle) then return nil end
   if not (love.graphics and love.graphics.newCanvas) then return nil end
-  if not animLayer then
+  local layout = BattleScene.layoutMetrics(battle)
+  if not animLayer or animLayerW ~= layout.surfaceW
+     or animLayerH ~= layout.surfaceH then
     local ok, c = pcall(love.graphics.newCanvas,
-                        BattleScene.GB_W, BattleScene.GB_H)
+                        layout.surfaceW, layout.surfaceH, { dpiscale = 1 })
     if not (ok and c) then return nil end
     pcall(c.setFilter, c, "nearest", "nearest")
     animLayer = c
+    animLayerW, animLayerH = layout.surfaceW, layout.surfaceH
   end
   local g = love.graphics
   local prevCanvas = g.getCanvas()
@@ -613,6 +599,8 @@ function OverworldBattle.animTexture(battle)
     g.clear(0, 0, 0, 0)
     g.setBlendMode("alpha")
     g.setColor(1, 1, 1, 1)
+    local dx, dy = BattleScene.animationOffset(battle, layout)
+    g.translate(dx, dy)
     innerAnim(battle, false)
     g.pop()
   end)
@@ -633,8 +621,11 @@ function OverworldBattle.worldAnim()
   local host = (session.state and session.state.map) or nil
   if not host then return nil end
   local groundY = BattleScene.groundY(host, session.arena)
+  local shot = session.shot
+  local layout = shot and shot.layout or BattleScene.layoutMetrics(session.battle)
+  local anchors = shot and shot.anchors or layout.anchors
   local model = BattleScene.fxCard(session.arena, groundY,
-                                   OverworldBattle.ANCHOR)
+                                   anchors, layout)
   if not model then return nil end
   return tex, model
 end
@@ -678,9 +669,10 @@ end
 local function withoutBackgroundFill(battle, fn)
   local g = love.graphics
   local rectangle = g.rectangle
+  local layout = BattleScene.layoutMetrics(battle)
   g.rectangle = function(mode, x, y, w, h, ...)
     if mode == "fill" and x == 0 and y == 0
-       and w == BattleScene.GB_W and h == BattleScene.GB_H then
+       and w == layout.surfaceW and h == layout.surfaceH then
       local r, gr, b, a = g.getColor()
       if r > 0.99 and gr > 0.99 and b > 0.99 then
         -- Two different full-frame whites, both replaced rather than drawn.
@@ -783,11 +775,11 @@ local innerPics = nil                   -- captured by install()
 -- (innerAnim, their sibling, is declared up beside animTexture, which
 -- sits earlier in the chunk than this group and must see the local)
 
-local function texCanvasFor(side)
+local function texCanvasFor(side, metrics)
   local c = texCanvas[side]
   if c then return c end
-  local ok, made = pcall(love.graphics.newCanvas, BattleScene.GB_W,
-                         BattleScene.GB_H, { dpiscale = 1 })
+  local ok, made = pcall(love.graphics.newCanvas, metrics.captureW,
+                         metrics.captureH, { dpiscale = 1 })
   if not ok then return nil end
   made:setFilter("nearest", "nearest")
   texCanvas[side] = made
@@ -821,7 +813,8 @@ local OFF = {
 function OverworldBattle.sideTexture(battle, side)
   if not (innerPics and battle) then return nil end
   if not sideVisible(battle, side) then return nil end
-  local canvas = texCanvasFor(side)
+  local metrics = BattleScene.layoutMetrics(battle)
+  local canvas = texCanvasFor(side, metrics)
   if not canvas then return nil end
 
   local g = love.graphics
@@ -866,7 +859,8 @@ function OverworldBattle.sideTexture(battle, side)
   elseif side == "player" and battle.showPlayerBack and battle.playerBackPic then
     trainer = true
   end
-  return { canvas = canvas, ax = ax, ay = ay, trainer = trainer }
+  return { canvas = canvas, ax = ax, ay = ay, trainer = trainer,
+           captureW = metrics.captureW, captureH = metrics.captureH }
 end
 
 -- Whether the hit flash is showing this frame.
@@ -1075,7 +1069,7 @@ function OverworldBattle.install()
     -- the air beside the one it was aimed at. Scaling about the same
     -- midpoint keeps every authored offset the same fraction of the gap it
     -- was authored as.
-    local a = OverworldBattle.ANCHOR
+    local a = shot.anchors or OverworldBattle.ANCHOR
     -- BACK SPRITES leaves the player's mon exactly where the GB put it, so that side
     -- contributes no movement at all and the pair's centre has gone half as
     -- far as the foe's mark did.
@@ -1174,22 +1168,12 @@ end
 -- Shadowed on the instance for this call only, the way drawZonePass shadows
 -- activeBgp: putting the field back to whatever it was (normally nil) lets the
 -- class method be found again.
--- Lay the plain HUD backings down under whichever blocks are about to
--- draw in the GB frame. The frosted-glass panels and the edge-snapped
--- composite are gone (see the removals ADR): the HUDs draw in their
--- classic slots, so each gets a simple semi-opaque backing -- the same
--- flat panels the old iOS path used -- and the text box keeps its own
--- white paper, exactly as the vanilla screen draws it.
+-- The engine owns the WIDE HUD panels and draws their bordered white boxes.
+-- Keep this seam as a no-op for callers from older staged-battle builds, but
+-- do not paint translucent backings over the world: those were the leftover
+-- frosted-glass rectangles visible between the real HUD and the battle field.
 function OverworldBattle.drawHudPanels(battle)
-  local shot = battle.dramaticShapeShot
-  if not shot then return end
-  local slide = (battle.introSlide or 0) * 4
-  local enemy, player = OverworldBattle.hudLive(battle, slide)
-  local rect = OverworldBattle.HUD_RECT
-  love.graphics.setColor(1, 1, 1, 0.84)
-  if enemy then love.graphics.rectangle("fill", rect.enemy[1], rect.enemy[2], rect.enemy[3], rect.enemy[4]) end
-  if player then love.graphics.rectangle("fill", rect.player[1], rect.player[2], rect.player[3], rect.player[4]) end
-  love.graphics.setColor(1, 1, 1, 1)
+  return
 end
 
 return OverworldBattle

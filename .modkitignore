@@ -16,6 +16,10 @@ tests/goldens/shadow_golden.txt
 # Repo-only: issue templates must never ship in the mod zip.
 .github
 tests/shadow_runtime_test.lua
+tests/battle_layout_test.lua
+tests/battle_wide_hud_test.lua
+tests/battle_pics_detached_pixel_test.lua
+tests/battle_shadow_alignment_test.lua
 tools/thread_smoke/main.lua
 
 # Local analysis, backup, and historical package artifacts.

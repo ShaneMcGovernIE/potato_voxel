@@ -113,6 +113,57 @@ BattlePics.FILL = { 1, 1, 1, 1 }
 -- Anything at or under this alpha counts as keyed-out rather than drawn.
 local CUT = 0.5
 
+-- A decoded battle pic is a single drawing. A lone opaque texel separated
+-- from that drawing is not a sprite feature: when its 160x144 capture is
+-- stood up in the voxel scene, it becomes a conspicuous floating dash.
+BattlePics.DETACHED_INK_MAX = 1
+
+-- Remove tiny disconnected opaque islands from a decoded pic. This is done
+-- before measuring the artwork's bounds, so a corrupt pixel cannot enlarge
+-- the fill region or survive as its own world-space billboard fragment.
+function BattlePics.removeDetachedPixels(data, w, h)
+  local seen, removed = {}, 0
+  local function keyFor(x, y) return y * w + x end
+  local function opaque(x, y)
+    local _, _, _, a = data:getPixel(x, y)
+    return a > CUT
+  end
+  local function visit(stack, x, y)
+    if x < 0 or y < 0 or x >= w or y >= h then return end
+    local key = keyFor(x, y)
+    if seen[key] or not opaque(x, y) then return end
+    seen[key] = true
+    stack[#stack + 1] = key
+  end
+
+  for y = 0, h - 1 do
+    for x = 0, w - 1 do
+      local first = keyFor(x, y)
+      if not seen[first] and opaque(x, y) then
+        local stack, component = {}, {}
+        visit(stack, x, y)
+        while #stack > 0 do
+          local key = stack[#stack]
+          stack[#stack] = nil
+          component[#component + 1] = key
+          local px, py = key % w, math.floor(key / w)
+          visit(stack, px - 1, py)
+          visit(stack, px + 1, py)
+          visit(stack, px, py - 1)
+          visit(stack, px, py + 1)
+        end
+        if #component <= BattlePics.DETACHED_INK_MAX then
+          for _, key in ipairs(component) do
+            data:setPixel(key % w, math.floor(key / w), 0, 0, 0, 0)
+            removed = removed + 1
+          end
+        end
+      end
+    end
+  end
+  return removed
+end
+
 -- Read the pixels the engine would actually blit. A LOVE Image does not hand
 -- its data back, so it is drawn into a canvas of its own size and the canvas
 -- is read -- which is also what makes this work for every path that produces
@@ -306,6 +357,7 @@ function BattlePics.filled(img, sealBottom)
     local data = readBack(img)
     if not data then return end
     local w, h = data:getDimensions()
+    local removed = BattlePics.removeDetachedPixels(data, w, h)
     local x0, y0, x1, y1 = inkBounds(data, w, h)
     if not x0 then return end          -- a pic with nothing drawn in it
     local outside = markOutside(data, w, h, x0, y0, x1, y1, sealBottom)
@@ -314,7 +366,7 @@ function BattlePics.filled(img, sealBottom)
     local fr = pr or fill[1]
     local fg = pg or fill[2]
     local fb = pb or fill[3]
-    local changed = false
+    local changed = removed > 0
     -- only inside the box: everything beyond it is frame the artist never
     -- reached, and filling that would put the mon in a white rectangle
     for y = y0, y1 do

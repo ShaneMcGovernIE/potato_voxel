@@ -53,10 +53,13 @@ local Map = require("src.world.Map")
 
 local BattleScene = {}
 
--- The GB frame the battle screen is drawn in, and the frame BattleCam's rig
--- is solved against.
+-- The classic frame the battle screen is drawn in.  BattleState may expose a
+-- wider native surface while a WIDE battle is active; all consumers go
+-- through layoutMetrics() below rather than assuming these dimensions.
 BattleScene.GB_W = 160
 BattleScene.GB_H = 144
+BattleScene.WIDE_W = 304
+BattleScene.WIDE_H = 144
 
 -- A map cell in world pixels: the overworld square a mon stands on, which is
 -- both what the arena is measured in and what a mon is sized to.
@@ -77,21 +80,6 @@ BattleScene.SHADOW_ALPHA = 0.68
 -- transparent would show the letterbox clear through the gaps.
 local INDOOR_SHADE = 4
 
--- ------- where the GB frame sits inside the window
---
--- Renderer blits worldOverride one canvas pixel to one screen pixel and then
--- blits the 160x144 UI canvas into a centred, integer-scaled letterbox. So
--- these have to agree with Renderer:endFrame exactly, or the pins land off
--- the mons by however much they disagree.
-function BattleScene.letterbox()
-  local Renderer = require("src.render.Renderer")
-  local pw, ph = BattleScene.pixelSize()
-  local s = Renderer:fitScale()
-  return math.floor((pw - BattleScene.GB_W * s) / 2),
-         math.floor((ph - BattleScene.GB_H * s) / 2),
-         s, pw, ph
-end
-
 -- The window in FRAMEBUFFER pixels, which is what the override blit works
 -- in. love.graphics.getDimensions is in LOVE units and differs from this by
 -- the display density on mobile.
@@ -101,6 +89,305 @@ function BattleScene.pixelSize()
     if pw and ph and pw > 0 and ph > 0 then return pw, ph end
   end
   return love.graphics.getDimensions()
+end
+
+local function number(value, fallback)
+  return type(value) == "number" and value or fallback
+end
+
+local function pair(value)
+  if type(value) ~= "table" then return nil end
+  local x = value.x
+  if x == nil then x = value[1] end
+  local y = value.y
+  if y == nil then y = value[2] end
+  if type(x) ~= "number" or type(y) ~= "number" then return nil end
+  return x, y
+end
+
+local function methodValue(owner, name, ...)
+  if not (owner and type(owner[name]) == "function") then return nil end
+  local ok, value, second = pcall(owner[name], owner, ...)
+  if not ok then return nil end
+  return value, second
+end
+
+local function methodTable(owner, name, ...)
+  if not (owner and type(owner[name]) == "function") then return nil end
+  local ok, value = pcall(owner[name], owner, ...)
+  return ok and value or nil
+end
+
+local function battleOptions(battle)
+  local game = battle and battle.game
+  return game and game.save and game.save.options or nil
+end
+
+-- Screen-position support is deliberately kept at this boundary.  Newer
+-- engine builds expose it on BattleState, while older compatible builds only
+-- carry the value in save options.  The battle renderer should not need to
+-- know which generation supplied the position.
+local function positionFor(battle, frame, surfaceW, surfaceH, scale, pw, ph)
+  local raw = frame and frame.position
+  local directX = frame and frame.viewportX
+  local directY = frame and frame.viewportY
+
+  if raw == nil then
+    local owners = {}
+    if battle then
+      owners[#owners + 1] = battle
+      if battle.game then
+        owners[#owners + 1] = battle.game
+        if battle.game.renderer then
+          owners[#owners + 1] = battle.game.renderer
+        end
+      end
+    end
+    for _, owner in ipairs(owners) do
+      for _, name in ipairs({ "screenPosition", "layoutPosition", "uiPosition" }) do
+        local value, second = methodValue(owner, name)
+        local x, y = pair(value)
+        if x ~= nil then raw = { x = x, y = y }; break end
+        if type(value) == "number" and type(second) == "number" then
+          raw = { x = value, y = second }; break
+        end
+        if type(value) == "string" then raw = value; break end
+      end
+      if raw ~= nil then break end
+    end
+  end
+
+  local options = battleOptions(battle)
+  if raw == nil and options then
+    for _, name in ipairs({ "battleScreenPosition", "battleScreenPos",
+                            "battlePosition", "screenPosition", "screenPos" }) do
+      if options[name] ~= nil then raw = options[name]; break end
+    end
+    if raw == nil then
+      local x = options.battleScreenX or options.battlePosX
+                or options.battleOffsetX
+      local y = options.battleScreenY or options.battlePosY
+                or options.battleOffsetY
+      if type(x) == "number" and type(y) == "number" then
+        raw = { x = x, y = y }
+      end
+    end
+  end
+
+  local offsetX, offsetY = pair(raw)
+  if offsetX == nil and type(raw) == "string" then
+    local name = raw:lower():gsub("_", "-")
+    local horizontal = name:find("left", 1, true) and -1
+                       or name:find("right", 1, true) and 1 or 0
+    local vertical = name:find("top", 1, true) and -1
+                     or name:find("bottom", 1, true) and 1 or 0
+    local spareX = math.max(0, pw - surfaceW * scale) / scale
+    local spareY = math.max(0, ph - surfaceH * scale) / scale
+    offsetX, offsetY = horizontal * spareX / 2, vertical * spareY / 2
+  end
+  offsetX, offsetY = offsetX or 0, offsetY or 0
+
+  local centeredX = math.floor((pw - surfaceW * scale) / 2)
+  local centeredY = math.floor((ph - surfaceH * scale) / 2)
+  local viewportX = directX or centeredX + math.floor(offsetX * scale + 0.5)
+  local viewportY = directY or centeredY + math.floor(offsetY * scale + 0.5)
+  if directX ~= nil then offsetX = (viewportX - centeredX) / scale end
+  if directY ~= nil then offsetY = (viewportY - centeredY) / scale end
+  return viewportX, viewportY, offsetX, offsetY
+end
+
+local function anchorsFor(battle, surfaceW, surfaceH)
+  local custom = methodTable(battle, "layoutAnchors", surfaceW, surfaceH)
+  if type(custom) == "table" and custom.player and custom.enemy then
+    return custom
+  end
+
+  -- WideBattle keeps the original 160px pic regions but translates the player
+  -- region by (20, 8) and the enemy region by (136, 0).  Keep those offsets in
+  -- the same layout boundary as the surface dimensions so the world cards,
+  -- effects and HUD all use one composition.
+  local playerX, playerY = 26, 96
+  local enemyX, enemyY = 124, 56
+  if surfaceW > BattleScene.GB_W then
+    playerX, playerY = playerX + 20, playerY + 8
+    enemyX, enemyY = enemyX + 136, enemyY
+  end
+  return {
+    player = { playerX, playerY },
+    enemy = { enemyX, enemyY },
+  }
+end
+
+local function hudFor(surfaceW)
+  if surfaceW > BattleScene.GB_W then
+    return {
+      enemy = { 0, 0, 128, 32 },
+      player = { 184, 56, 120, 40 },
+    }
+  end
+  return {
+    enemy = { 8, 0, 80, 32 },
+    player = { 72, 56, 88, 40 },
+  }
+end
+
+local function shiftedCamera(camera, metrics, vw, vh)
+  if not (camera and camera.eye and camera.focus) then return camera end
+  local centerX = metrics.viewportX + metrics.viewportW / 2
+  local centerY = metrics.viewportY + metrics.viewportH / 2
+  local deltaX = centerX - metrics.pw / 2
+  local deltaY = centerY - metrics.ph / 2
+  if math.abs(deltaX) < 0.01 and math.abs(deltaY) < 0.01 then
+    return camera
+  end
+
+  local eye, focus = camera.eye, camera.focus
+  local fx, fy, fz = focus[1] - eye[1], focus[2] - eye[2], focus[3] - eye[3]
+  local fl = math.sqrt(fx * fx + fy * fy + fz * fz)
+  if fl < 1e-6 then return camera end
+  fx, fy, fz = fx / fl, fy / fl, fz / fl
+  local up = camera.up or { 0, 1, 0 }
+  local rx = fy * up[3] - fz * up[2]
+  local ry = fz * up[1] - fx * up[3]
+  local rz = fx * up[2] - fy * up[1]
+  local rl = math.sqrt(rx * rx + ry * ry + rz * rz)
+  if rl < 1e-6 then return camera end
+  rx, ry, rz = rx / rl, ry / rl, rz / rl
+  local ux = ry * fz - rz * fy
+  local uy = rz * fx - rx * fz
+  local uz = rx * fy - ry * fx
+
+  -- `vw`/`vh` are the world span of the full render canvas at the focus
+  -- plane. Move the camera, rather than merely changing the post-projection
+  -- conversion, so the rendered world and the battle UI share the same
+  -- off-centre viewport.
+  local worldX = deltaX * vw / metrics.pw
+  local worldY = deltaY * vh / metrics.ph
+  local sx = -rx * worldX + ux * worldY
+  local sy = -ry * worldX + uy * worldY
+  local sz = -rz * worldX + uz * worldY
+
+  local out = {}
+  for key, value in pairs(camera) do out[key] = value end
+  out.eye = { eye[1] + sx, eye[2] + sy, eye[3] + sz }
+  out.focus = { focus[1] + sx, focus[2] + sy, focus[3] + sz }
+  if camera.up then out.up = { camera.up[1], camera.up[2], camera.up[3] } end
+  return out
+end
+
+-- The one layout boundary for staged battles.  Coordinates returned here are
+-- physical framebuffer pixels for the viewport, with logical battle pixels
+-- retained for the camera pins and HUD anchors.
+function BattleScene.layoutMetrics(battle, frame)
+  frame = frame or {}
+  local surfaceW, surfaceH = BattleScene.GB_W, BattleScene.GB_H
+  if battle and type(battle.uiSize) == "function" then
+    local ok, w, h = pcall(battle.uiSize, battle)
+    if ok and type(w) == "number" and type(h) == "number"
+       and w >= BattleScene.GB_W and h >= BattleScene.GB_H then
+      surfaceW, surfaceH = math.floor(w), math.floor(h)
+    end
+  elseif battle and type(battle.wideLayout) == "function" then
+    local ok, wide = pcall(battle.wideLayout, battle)
+    if ok and wide then surfaceW, surfaceH = BattleScene.WIDE_W, BattleScene.WIDE_H end
+  end
+
+  local pw = number(frame.pw, nil)
+  local ph = number(frame.ph, nil)
+  local dpiX = number(frame.dpiX, nil)
+  local dpiY = number(frame.dpiY, nil)
+  if not (pw and ph) then pw, ph = BattleScene.pixelSize() end
+  if not dpiX or not dpiY then
+    local ww, wh = love.graphics.getDimensions()
+    dpiX = dpiX or ((ww and ww > 0) and pw / ww or 1)
+    dpiY = dpiY or ((wh and wh > 0) and ph / wh or 1)
+  end
+  dpiX, dpiY = math.max(1e-6, dpiX), math.max(1e-6, dpiY)
+
+  local fill = frame.fill
+  if fill == nil and battle and type(battle.wantsFillScale) == "function" then
+    local ok, value = pcall(battle.wantsFillScale, battle)
+    fill = ok and value == true or false
+  end
+  fill = fill == true
+
+  local fitScale = math.min(pw / surfaceW, ph / surfaceH)
+  local fixedScale = math.max(1, math.floor(fitScale))
+  local fillScale = fitScale
+  local scale = number(frame.scale, nil)
+  if not scale and not frame.pw and not frame.ph then
+    local Renderer = require("src.render.Renderer")
+    local ok, currentW, currentH = pcall(Renderer.uiSize, Renderer)
+    if ok and currentW == surfaceW and currentH == surfaceH
+       and type(Renderer.fitScale) == "function" and not fill then
+      local okScale, fit = pcall(Renderer.fitScale, Renderer)
+      if okScale and type(fit) == "number" and fit > 0 then
+        scale, fixedScale = fit, fit
+      end
+    end
+  end
+  if not scale then
+    scale = fill and fillScale or fixedScale
+  end
+
+  local viewportX, viewportY, offsetX, offsetY =
+    positionFor(battle, frame, surfaceW, surfaceH, scale, pw, ph)
+  local anchors = anchorsFor(battle, surfaceW, surfaceH)
+  local dx = anchors.enemy[1] - anchors.player[1]
+  local dy = anchors.enemy[2] - anchors.player[2]
+
+  return {
+    surfaceW = surfaceW, surfaceH = surfaceH,
+    viewportX = viewportX, viewportY = viewportY,
+    viewportW = surfaceW * scale, viewportH = surfaceH * scale,
+    offsetX = offsetX, offsetY = offsetY,
+    scale = scale, fill = fill,
+    scaleMode = fill and "fill" or "fixed",
+    fitScale = fitScale, fixedScale = fixedScale, fillScale = fillScale,
+    dpiX = dpiX, dpiY = dpiY,
+    drawScaleX = scale / dpiX, drawScaleY = scale / dpiY,
+    pw = pw, ph = ph,
+    -- Side-pic captures remain a classic 160x144 logical frame even when
+    -- the composed battle surface is WIDE.  Animation captures use the full
+    -- surface; keeping both dimensions here prevents either caller from
+    -- baking that distinction into another layout assumption.
+    captureW = BattleScene.GB_W, captureH = BattleScene.GB_H,
+    anchors = anchors,
+    hud = hudFor(surfaceW),
+    anchorSpan = math.sqrt(dx * dx + dy * dy),
+  }
+end
+
+function BattleScene.animationOffset(battle, metrics)
+  if not (battle and metrics and metrics.surfaceW > BattleScene.GB_W) then
+    return 0, 0
+  end
+  local player = battle.animPlayer
+  local sprites
+  if battle.animPlaying and player then
+    local step = player.steps and player.steps[player.stepIndex]
+    sprites = step and step.sprites
+  elseif battle.lockedBall and player then
+    sprites = battle.lockedBall
+  end
+  if not sprites then return 0, 0 end
+  local ok, WideBattle = pcall(require, "src.battle.WideBattle")
+  if not (ok and WideBattle and type(WideBattle.animationOffset) == "function") then
+    return 0, 0
+  end
+  local okOffset, x, y = pcall(WideBattle.animationOffset, sprites)
+  if okOffset and type(x) == "number" and type(y) == "number" then
+    return x, y
+  end
+  return 0, 0
+end
+
+-- Renderer blits worldOverride one canvas pixel to one screen pixel and then
+-- blits the battle surface into the viewport described above.  Keep this
+-- compatibility helper for callers that only need the classic tuple.
+function BattleScene.letterbox(battle, frame)
+  local m = BattleScene.layoutMetrics(battle, frame)
+  return m.viewportX, m.viewportY, m.scale, m.pw, m.ph, m
 end
 
 function BattleScene.renderScale(level)
@@ -114,8 +401,8 @@ end
 -- tan(fov/2) * pw/ph, and the letterbox is 160*s of those pw pixels, which
 -- works back out to the GB frame's own 160/144. So one scale on the vertical
 -- pins both axes.
-function BattleScene.letterboxFov(fovGB, ph, s)
-  local span = BattleScene.GB_H * s
+function BattleScene.letterboxFov(fovGB, ph, s, surfaceH)
+  local span = (surfaceH or BattleScene.GB_H) * s
   if span <= 0 then return fovGB end
   return 2 * math.atan(math.tan(fovGB / 2) * ph / span)
 end
@@ -190,10 +477,12 @@ end
 -- turn it around to face the camera it is standing in front of.
 local function monMatrix(tex, x, groundY, z, mirror)
   local k = BattleBillboard.FULL_W / BattleBillboard.FULL_PIC
-  local w = BattleScene.GB_W * k
-  local h = BattleScene.GB_H * k
-  local ox = -((tex.ax / BattleScene.GB_W) - 0.5) * w
-  local oy = -((BattleScene.GB_H - tex.ay) / BattleScene.GB_H) * h
+  local captureW = tex.captureW or BattleScene.GB_W
+  local captureH = tex.captureH or BattleScene.GB_H
+  local w = captureW * k
+  local h = captureH * k
+  local ox = -((tex.ax / captureW) - 0.5) * w
+  local oy = -((captureH - tex.ay) / captureH) * h
   local yaw = BattleBillboard.yawToward(x, z, Voxel3D.eye)
   local card = Mat4.mul(Mat4.translate(ox, oy, 0), Mat4.scale(w, h, 1))
   if mirror then card = Mat4.mul(Mat4.scale(-1, 1, 1), card) end
@@ -242,11 +531,12 @@ BattleScene.monCards = monCards
 -- Reads Voxel3D.eye at CALL time, like the cards -- call it per eye.
 -- Returns the model matrix for BattleBillboard's unit card (x -0.5..0.5,
 -- y 0..1 up, v flipped), or nil where the anchors are degenerate.
-function BattleScene.fxCard(arena, groundY, anchors)
+function BattleScene.fxCard(arena, groundY, anchors, metrics)
   local p, e = anchors.player, anchors.enemy
   local dgb = e[1] - p[1]
   if math.abs(dgb) < 1 then return nil end
-  local GW, GH = BattleScene.GB_W, BattleScene.GB_H
+  local GW = metrics and metrics.surfaceW or BattleScene.GB_W
+  local GH = metrics and metrics.surfaceH or BattleScene.GB_H
   local Px, Py, Pz = arena.player[1], groundY, arena.player[2]
   local Ex, Ey, Ez = arena.enemy[1], groundY, arena.enemy[2]
   local s = BattleBillboard.FULL_W / BattleBillboard.FULL_PIC
@@ -401,20 +691,26 @@ function BattleScene.groundY(map, arena)
   return (ok and h) or 0
 end
 
--- Where a world point lands in GB frame coordinates under `vp`, or nil when
--- it is behind the camera. This is the function the pins are built on: it
--- takes the window-resolution clip position and divides the letterbox back
--- out of it, so the answer is in the same 160x144 space the battle screen
--- draws its pics in.
-function BattleScene.toGB(vp, wx, wy, wz, lx, ly, s, pw, ph)
+-- Where a world point lands in the active battle surface under `vp`, or nil
+-- when it is behind the camera. The metrics argument keeps the conversion
+-- aligned with OG/WIDE, FIXED/FILL, DPI and screen-position choices.
+function BattleScene.toGB(vp, wx, wy, wz, metricsOrX, ly, s, pw, ph)
   local cx = vp[1] * wx + vp[2] * wy + vp[3] * wz + vp[4]
   local cy = vp[5] * wx + vp[6] * wy + vp[7] * wz + vp[8]
   local cw = vp[13] * wx + vp[14] * wy + vp[15] * wz + vp[16]
   if cw <= 1e-6 then return nil end
+  local metrics
+  if type(metricsOrX) == "table" then
+    metrics = metricsOrX
+  else
+    metrics = { viewportX = metricsOrX, viewportY = ly, scale = s,
+                pw = pw, ph = ph }
+  end
   -- viewProjection already flipped clip Y into LOVE's Y-down convention
-  local px = (cx / cw * 0.5 + 0.5) * pw
-  local py = (cy / cw * 0.5 + 0.5) * ph
-  return (px - lx) / s, (py - ly) / s
+  local px = (cx / cw * 0.5 + 0.5) * metrics.pw
+  local py = (cy / cw * 0.5 + 0.5) * metrics.ph
+  return (px - metrics.viewportX) / metrics.scale,
+         (py - metrics.viewportY) / metrics.scale
 end
 
 -- Render the arena and hand back { canvas, player = {x,y}, enemy = {x,y} },
@@ -459,10 +755,14 @@ local function tickTiles()
   pcall(require("src.render.TileRenderer").tick)
 end
 
-function BattleScene.render(state, arena, textures, token)
+function BattleScene.render(state, arena, textures, token, battle)
   if not (state and state.map and arena) then return nil end
   if not Voxel3D.available() then return nil end
   tickTiles()
+
+  -- The battle state owns the active composition. Passing it explicitly keeps
+  -- the 3D pass in step with the UI when the stack is wide, filled or offset.
+  local metrics = BattleScene.layoutMetrics(battle)
 
   -- the floor the fight is staged on: normally the player's own, sometimes
   -- another floor of the same cave or building (see BattleArena)
@@ -510,7 +810,8 @@ function BattleScene.render(state, arena, textures, token)
     if not terrain then return nil end
   end
 
-  local lx, ly, s, pw, ph = BattleScene.letterbox()
+  local lx, ly, s, pw, ph = metrics.viewportX, metrics.viewportY,
+                             metrics.scale, metrics.pw, metrics.ph
   if not (pw > 0 and ph > 0 and s > 0) then return nil end
 
   local palette = paletteFor(state, host)
@@ -520,7 +821,7 @@ function BattleScene.render(state, arena, textures, token)
 
   local groundY = BattleScene.groundY(host, arena)
   local cam, pitch = BattleCam.rig(arena, groundY)
-  cam.fov = BattleScene.letterboxFov(cam.fov, ph, s)
+  cam.fov = BattleScene.letterboxFov(cam.fov, ph, s, metrics.surfaceH)
 
   local cx, cy = arena.mid[1], arena.mid[2]
   -- the world extents the sun frustum is fitted to; the camera itself is
@@ -528,8 +829,9 @@ function BattleScene.render(state, arena, textures, token)
   -- the player's zoom is part of this: the sun's box is fitted to what the
   -- frame holds, so a shot pulled wide has to light the ground it just
   -- brought into view rather than the ground the rig alone would have
-  local vh = BattleCam.frameH(arena) * ph / (BattleScene.GB_H * s)
+  local vh = BattleCam.frameH(arena) * ph / (metrics.surfaceH * s)
   local vw = vh * pw / ph
+  cam = shiftedCamera(cam, metrics, vw, vh)
 
   -- the cards need the camera's eye to face it, so the rig has to be live
   -- before they are built; Voxel3D.eye is set by viewProjection, which
@@ -698,22 +1000,22 @@ function BattleScene.render(state, arena, textures, token)
 
     local vp = Voxel3D.vp
     local pmx, pmy = BattleScene.toGB(vp, arena.player[1], groundY,
-                                      arena.player[2], lx, ly, s, pw, ph)
+                                      arena.player[2], metrics)
     local emx, emy = BattleScene.toGB(vp, arena.enemy[1], groundY,
-                                      arena.enemy[2], lx, ly, s, pw, ph)
+                                      arena.enemy[2], metrics)
     if not (pmx and emx) then return end
     -- How wide one overworld square is on screen where each mon stands, in
     -- GB pixels. This is what the pics are scaled to: a mon covers its own
     -- square and no more, at whatever the drift has done to the distance.
     local half = BattleScene.CELL / 2
     local pl = BattleScene.toGB(vp, arena.player[1] - half, groundY,
-                                arena.player[2], lx, ly, s, pw, ph)
+                                arena.player[2], metrics)
     local pr = BattleScene.toGB(vp, arena.player[1] + half, groundY,
-                                arena.player[2], lx, ly, s, pw, ph)
+                                arena.player[2], metrics)
     local el = BattleScene.toGB(vp, arena.enemy[1] - half, groundY,
-                                arena.enemy[2], lx, ly, s, pw, ph)
+                                arena.enemy[2], metrics)
     local er = BattleScene.toGB(vp, arena.enemy[1] + half, groundY,
-                                arena.enemy[2], lx, ly, s, pw, ph)
+                                arena.enemy[2], metrics)
     if not (pl and pr and el and er) then return end
     out = {
       canvas = canvas,
@@ -724,6 +1026,12 @@ function BattleScene.render(state, arena, textures, token)
       -- the letterbox, so the depth-of-field pass can put its sharp band on
       -- the two marks rather than on a fraction of the window
       lx = lx, ly = ly, scale = s, pw = pw, ph = ph,
+      viewportX = metrics.viewportX, viewportY = metrics.viewportY,
+      surfaceW = metrics.surfaceW, surfaceH = metrics.surfaceH,
+      offsetX = metrics.offsetX, offsetY = metrics.offsetY,
+      dpiX = metrics.dpiX, dpiY = metrics.dpiY,
+      anchors = metrics.anchors, anchorSpan = metrics.anchorSpan,
+      layout = metrics,
       -- and the hour's light, for anything drawn over this shot that is NOT
       -- geometry and so never went past the shader that applied it -- the back
       -- pic pinned to the menu (see OverworldBattle.backPinned). Neutral
