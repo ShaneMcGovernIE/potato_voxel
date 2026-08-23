@@ -191,7 +191,6 @@ function SettingsFeature.new(ctx)
   function feature.installRowsHook(options)
     local Cache = options.Cache
     local deferToNextTick = options.deferToNextTick
-    local OverworldBattle = ctx.OverworldBattle
     local DebugOverlay = ctx.DebugOverlay
 
     local function dropRow(rows, id)
@@ -234,10 +233,6 @@ function SettingsFeature.new(ctx)
       dropRow(out, "tilt")
       dropRow(out, "gbcfx")
       dropRow(out, "battleBg")
-      if ctx.stagedBattles() then
-        OverworldBattle.forceOG(game)
-        dropRow(out, "battleLayout")
-      end
       for i = #out, 1, -1 do
         local id = type(out[i]) == "table" and out[i].id or ""
         id = id or ""

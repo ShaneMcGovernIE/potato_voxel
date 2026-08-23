@@ -311,13 +311,12 @@ mod.content.render_pipelines:register("voxel", {
     -- The manager's page can change any of these rows mid-session, and the
     -- current API has no options-changed event to announce it: the settings
     -- read LIVE through the options API on every read (ModSetting:read),
-    -- and the two pins the old event carried are re-asserted here on this
-    -- always-running tick instead. Both are guarded no-ops when already
-    -- correct (DayNight.forceSync, OverworldBattle.forceOG).
+    -- and the one pin the old event carried is re-asserted here on this
+    -- always-running tick instead. It is guarded as a no-op when already
+    -- correct (DayNight.forceSync).
     if Voxel.isFull(level) then
       DayNight.forceSync(require("src.core.Game"))
     end
-    if stagedBattles() then OverworldBattle.forceOG() end
     Voxel.update(dt, level)
     -- the first-person head, on the same tick: its blend in and out of the
     -- orbit, the mouse capture lifecycle, and the frame's stick-rate look.
@@ -564,11 +563,6 @@ applyFull = function(level)
   -- menu, which is the one part of the old screen FULL is least about. Set the
   -- same way, and changed back on the same row a keypress later.
   OverworldBattle.backSetting:setIndex(1, Game)
-  -- and the battle screen the staged fight is composed for. WIDE re-lays that
-  -- screen out on a 304x144 surface, which moves every anchor the arena camera
-  -- is solved against (OverworldBattle.forceOG); FULL has just switched staged
-  -- fights on, so the layout follows them.
-  OverworldBattle.forceOG(Game)
   -- and the sky on the clock on the wall: FULL pins DAYTIME to SYNC. Unlike
   -- the rest of the preset this one IS held, not just set -- the row is off
   -- the menu while FULL owns it (the rows hook below), so a value changed
@@ -580,14 +574,10 @@ end
 -- Whether a fight can be staged on the map, as far as the OPTIONS menu is
 -- concerned: the 3D-BTL row, and nothing else.
 --
--- It used to answer yes under FULL as well, on the grounds that FULL owned
--- that row and switched it on. FULL no longer owns it -- the row stays on the
--- menu under FULL and can be switched off there (see the rows hook) -- so that
--- clause would now claim staged battles for a preset the player had just
--- turned them off inside, pinning BATTLE LAYOUT to OG for a fight that is
--- never staged. The row is the only thing that decides, which is what every
--- other reader of this setting already believed: OverworldBattle.begin and
--- wantsFront both gate on enabled() alone.
+-- FULL does not own this row -- it stays on the menu under FULL and can be
+-- switched off there (see the rows hook). The row is the only thing that
+-- decides whether a staged battle is active, which is what every other reader
+-- already expects: OverworldBattle.begin and wantsFront both gate on enabled().
 --
 -- Deliberately NOT gated on Voxel3D.available(): the engine offers a
 -- pipeline's row whether or not the hardware can run it (Pipelines.rows), so
@@ -670,13 +660,10 @@ Cache.installLifecycle()
 
 -- The mod manager writes and persists these settings on its own, and the
 -- current API has no options-changed event to announce it -- so there is
--- nothing to subscribe to here. The settings read LIVE through the
--- options API on every read (ModSetting:read), which is what keeps each
--- row's rung in step with a value changed from the manager's page. The
--- two pins the old event also carried -- BATTLE LAYOUT under staged
--- battles, DAYTIME held at SYNC under FULL -- are re-asserted every tick
--- from the voxel pipeline's update hook instead (both are guarded no-ops
--- when already correct).
+-- nothing to subscribe to here. The settings read LIVE through the options
+-- API on every read (ModSetting:read), which keeps each row's rung in step
+-- with a value changed from the manager's page. DAYTIME's FULL preset pin is
+-- re-asserted every tick from the voxel pipeline's update hook.
 
 -- WorldFeature owns map edit/reload hooks and the Map:setBlock invalidation
 -- seam. Installing here preserves their order before settings-menu refresh.
