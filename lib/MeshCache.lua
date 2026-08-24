@@ -102,7 +102,9 @@ end
 -- 26: compact quantization added costly whole-map save/load conversions.
 -- 27: restore GPU-native terrain/water payloads while retaining bounded
 -- streaming and body-plus-ring geometry. Reject every v26 cache artifact.
-MeshCache.GEOMETRY_VERSION = 27
+-- 28: authored .vox props (data/vox_props.lua) replace their drawings, so
+-- every v27 object stream is missing geometry the build now emits.
+MeshCache.GEOMETRY_VERSION = 28
 local Identity = CacheIdentity.new({
   geometryVersion = MeshCache.GEOMETRY_VERSION,
 })

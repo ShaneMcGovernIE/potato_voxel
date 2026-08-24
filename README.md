@@ -163,6 +163,12 @@ No. Voxel forks replace the same overworld systems and are not designed to run
 together. Choose one voxel mod for a test session; mixing them can make it
 look as though one mod's settings or models are missing.
 
+## Adding your own voxel models
+
+MagicaVoxel `.vox` models can replace a map drawing outright -- the S.S. Anne
+dock truck is one. See [VOX-PROPS.md](VOX-PROPS.md) for how to size,
+orient, place, and ship one.
+
 ## Reporting a problem
 
 Please use the [GitHub bug report form](https://github.com/ShaneMcGovernIE/potato_voxel/issues/new/choose)

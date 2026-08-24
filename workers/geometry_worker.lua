@@ -127,6 +127,12 @@ package.loaded["src.world.Map"] = Map
 -- dir, set per job ("" for a dev harness, "mods/<id>" in the game).
 local libs = {}
 local V = { mod = {}, path = "potato_voxel" }
+-- the main VM's mod:read, for libs that ship binary assets (VoxProps)
+function V.mod:read(rel)
+  local ok, body = pcall(love.filesystem.read,
+                         root == "" and rel or (root .. "/" .. rel))
+  return ok and body or nil
+end
 function V.require(name)
   local hit = libs[name]
   if hit ~= nil then return hit end
