@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.9.0] - 2026-08-24
+
+### Added: Gen 2 beta
+
+- Beta support for Gen 2 (Gold/Silver) via a dedicated `gen2/main.lua` renderer entry and `gen2compat` manifest flag.
+- New `GoldAtlas.lua` for Gen 2 sprite atlas handling and expanded `TileShape.lua` for Gen 2 tile shapes.
+- Voxel workbench: `VoxelWorkbench.lua` + `WorkbenchJson.lua` with a bundled web tool (`tools/workbench`) for editing building, cutout, and override data.
+- New datasets: `workbench_buildings.json`, `workbench_cutouts.json`, `workbench_overrides.json`, and a large expansion of `voxel_heights.lua`.
+- Manifest now declares both `gen1` and `gen2` game support.
+
 ## [1.8.4] - 2026-08-23
 
 ### Fixed: staged battle layout and UI
