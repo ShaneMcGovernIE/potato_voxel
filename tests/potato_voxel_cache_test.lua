@@ -27,8 +27,8 @@ local Brick = exports.brick
 local Battles = exports.lib.require("OverworldBattle")
 local QualityMode = exports.lib.require("QualityMode")
 
-T.eq(MeshCache.GEOMETRY_VERSION, 27,
-     "v27 invalidates save-time quantized terrain payloads")
+T.eq(MeshCache.GEOMETRY_VERSION, 28,
+     "v28 invalidates object streams built without authored vox props")
 
 -- Platform switching for the Switch-gated cache fixes: stub the OS the
 -- engine Platform module answers, exactly like the main suite does, and

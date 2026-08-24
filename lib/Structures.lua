@@ -54,6 +54,7 @@ local VegetationBuilder = V.require("VegetationBuilder")
 local StructureMatcher = V.require("StructureMatcher")
 local StairBuilder = V.require("StairBuilder")
 local BookcaseBuilder = V.require("BookcaseBuilder")
+local VoxProps = V.require("VoxProps")
 
 local Structures = {}
 
@@ -252,6 +253,7 @@ function Structures.forMap(map)
         runs = {}, skip = {}, ground = {}, doorFold = {}, objectQuads = {},
         grassQuads = {}, flowerQuads = {}, roundStamps = {}, figures = {} }
   Buildings.build(S, map, pixels(tileset), perRow)
+  VoxProps.build(S, map, pixels(tileset), perRow)
 
   -- Fold doors into their buildings. A door cell is WALKABLE (the player
   -- steps onto it to warp), so it resolves to ground and punches a hole in
@@ -2951,6 +2953,7 @@ function Structures.invalidate(mapId)
     atlasData = {}
     roundCache = {}
     Buildings.invalidate()
+    VoxProps.invalidate()
   end
 end
 

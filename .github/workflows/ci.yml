@@ -50,6 +50,10 @@ jobs:
         working-directory: mod
         run: luajit tests/voxel_loading_test.lua
 
+      - name: Authored vox props
+        working-directory: mod
+        run: luajit tests/vox_props_test.lua
+
       - name: modkit lint
         working-directory: engine
         run: python3 tools/modkit.py lint mods/potato_voxel
