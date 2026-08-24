@@ -1,0 +1,29 @@
+:root { color-scheme:dark; font:15px system-ui,sans-serif; background:#121826; color:#e6edf7 }
+* { box-sizing:border-box }
+body { margin:0 auto; max-width:1420px; padding:24px }
+header { display:flex; justify-content:space-between; align-items:start; gap:16px }
+h1 { margin:0; font-size:1.75rem } h2 { margin-top:0; font-size:1.1rem } p { margin:.35rem 0 0; color:#aebbd0 }
+main { display:grid; grid-template-columns:280px minmax(520px,1fr) 290px; gap:16px; margin-top:20px }
+.card { background:#1c2638; border:1px solid #34435c; border-radius:12px; padding:16px }
+label { display:block; margin:10px 0; color:#c7d4e9 }
+input,select,button { font:inherit; border-radius:7px; border:1px solid #53647f; padding:8px; background:#111927; color:inherit; width:100% }
+button { background:#3474d6; border:0; cursor:pointer; margin-top:8px; font-weight:650 }
+button:hover { filter:brightness(1.15) } button:disabled { cursor:not-allowed; opacity:.48; filter:none }.secondary { background:#46536b }
+.badge { padding:7px 10px; border-radius:999px; background:#664b26; white-space:nowrap }.badge.connected { background:#1f714e }
+.coordinates { display:grid; grid-template-columns:1fr 1fr 1.25fr; gap:8px }.coordinates label { margin:0 }
+.hint { font-size:.86rem; color:#9dabc2 }.hint.error { color:#ffb0a8 }.location { padding:10px; background:#111927; border-radius:8px; margin-bottom:10px }
+.nearby { display:grid; grid-template-columns:repeat(9,minmax(48px,1fr)); gap:4px }
+.cell { display:grid; grid-template-columns:1fr; place-items:center; gap:2px; background:#293750; color:#dae6fa; border:1px solid #53647f; padding:4px 2px; min-height:66px; text-align:center; margin:0; font-size:.68rem; line-height:1.05 }
+.cell small { color:#aebbd0; font-size:.62rem }.cell-art { width:36px; height:36px; image-rendering:pixelated; background:#101827; border:1px solid #111927 }
+.cell.active { outline:2px solid #ffca52; z-index:1 }.cell.capture { box-shadow:inset 0 0 0 2px #52c4ff }.cell.object-capture { box-shadow:inset 0 0 0 2px #d98bff }.cell.capture.object-capture { box-shadow:inset 0 0 0 2px #52c4ff, inset 0 0 0 4px #d98bff }.cell.player { border-color:#69e59d }
+.tiles { display:grid; grid-template-columns:1fr 1fr; gap:3px; margin-top:8px }.tile { margin:0; padding:5px; background:#293750; text-align:left; font-size:.78rem }.tile.active { outline:2px solid #ffca52 }
+.march { display:flex; gap:4px; align-items:center; margin:10px 0 }.march button { width:36px; margin:0; padding:5px }.march span { color:#9dabc2; font-size:.85rem }
+pre { white-space:pre-wrap; background:#111927; padding:10px; border-radius:8px; min-height:100px; overflow:auto }
+.cutout-editor { grid-column:1 / -1 }.cutout-layout { display:grid; grid-template-columns:minmax(256px,384px) minmax(240px,420px); gap:18px; align-items:start; margin-top:12px }.cutout-layout>div { max-width:420px }.cutout-layout button { margin-top:8px }.cutout-layout canvas { width:384px; height:384px; max-width:100%; aspect-ratio:1; image-rendering:pixelated; cursor:crosshair; border:1px solid #53647f; border-radius:8px; background:#111927 }
+.builder { grid-column:1 / -1; display:grid; grid-template-columns:minmax(360px,1fr) 330px; gap:18px; align-items:start }.builder-copy { min-width:0 }
+.capture-actions { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:12px }.capture-actions button { margin:0 }
+.recipe-fields { display:grid; grid-template-columns:repeat(4,minmax(120px,1fr)); gap:0 10px; margin-top:8px }.recipe-fields label { font-size:.84rem }.recipe-fields input { margin-top:4px }
+.capture-grid-wrap { grid-column:1 / -1 }.builder canvas#voxel-preview { width:330px; max-width:100%; background:#101827; border:1px solid #53647f; border-radius:8px; image-rendering:pixelated }.capture-grid-wrap pre { margin:0; font-size:.8rem }
+footer { margin:18px 0; color:#9dabc2; font-size:.85rem }
+@media (max-width:980px){main{grid-template-columns:1fr}.builder{grid-column:auto}.nearby{grid-template-columns:repeat(9,1fr)}}
+@media (max-width:700px){body{padding:14px}.builder{display:block}.cutout-layout{grid-template-columns:1fr}.builder canvas#voxel-preview{margin:0 0 12px}.capture-actions,.recipe-fields{grid-template-columns:1fr 1fr}.nearby{grid-template-columns:repeat(9,minmax(30px,1fr))}.cell{min-height:58px}.cell-art{width:28px;height:28px}}

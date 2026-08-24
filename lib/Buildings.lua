@@ -1433,6 +1433,10 @@ function Buildings.stats()
   return out
 end
 
+function Buildings.diagnostics()
+  return {}
+end
+
 -- Drop the prebuilt models (hot reload, or a mod shadowing the profile).
 function Buildings.invalidate()
   spec = nil

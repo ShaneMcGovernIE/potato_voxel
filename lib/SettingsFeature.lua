@@ -151,7 +151,7 @@ function SettingsFeature.new(ctx)
   end
 
   function feature.installMenuRefresh()
-    local OptionsMenu = require("src.ui.OptionsMenu")
+    local OptionsMenu = RuntimeHooks.optionsMenuOwner()
     local Pipelines = require("src.render.Pipelines")
     RuntimeHooks.wrapOnce(OptionsMenu, "update", "dramaticShapeFullHook",
       function(inner)
@@ -206,17 +206,24 @@ function SettingsFeature.new(ctx)
       game = game or require("src.core.Game")
       local opts = game and game.save and game.save.options
       local Tilt = require("src.render.Tilt")
-      local GBCFX = require("src.render.GBCFX")
-      local changed = false
+      local ShaderFX = require("src.render.ShaderFX")
+      local changed = ShaderFX.active() or false
       if opts then
-        changed = (opts.tilt or 0) ~= 0
-                    or (opts.gbcfx or 0) ~= 0
+        for _, slot in ipairs(ShaderFX.SLOTS) do
+          local key = ShaderFX.OPTION_KEY[slot]
+          if opts[key] and opts[key] ~= "" then
+            changed = true
+            opts[key] = nil
+          end
+        end
+        changed = changed
+                    or (opts.tilt or 0) ~= 0
                     or (opts.battleBg or "white") ~= "white"
-        opts.tilt, opts.gbcfx = 0, 0
+        opts.tilt = 0
         opts.battleBg = "white"
       end
-      pcall(Tilt.setLevel, 0)
-      pcall(GBCFX.setLevel, 0)
+      Tilt.setLevel(0)
+      ShaderFX.deactivate()
       if changed and game.writeOptions then
         deferToNextTick(function() pcall(game.writeOptions, game) end)
       end
@@ -231,7 +238,8 @@ function SettingsFeature.new(ctx)
       if type(out) ~= "table" then return out end
       feature.pinEngineFx(game)
       dropRow(out, "tilt")
-      dropRow(out, "gbcfx")
+      dropRow(out, "shaderfx")
+      dropRow(out, "shaderfx2")
       dropRow(out, "battleBg")
       for i = #out, 1, -1 do
         local id = type(out[i]) == "table" and out[i].id or ""

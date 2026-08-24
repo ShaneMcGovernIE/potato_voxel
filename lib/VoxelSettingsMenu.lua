@@ -38,6 +38,14 @@ function VoxelSettingsMenu:refresh()
   syncScroll(self)
 end
 
+local function click(game)
+  if not (game and game.data) then return end
+  pcall(require("src.core.Sound").play, game.data, "Press_AB")
+end
+
+function VoxelSettingsMenu:wantsFillScale() return true end
+function VoxelSettingsMenu:drawsWidescreen() return true end
+
 function VoxelSettingsMenu:update(dt)
   local input = self.game.input
   local cancelRow = #self.rows + 1
@@ -46,18 +54,14 @@ function VoxelSettingsMenu:update(dt)
   elseif input:wasPressed("down") then
     self.index = self.index < cancelRow and self.index + 1 or 1
   elseif input:wasPressed("b") or input:wasPressed("start") then
-    if self.game.data then
-      require("src.core.Sound").play(self.game.data, "Press_AB")
-    end
+    click(self.game)
     self.game.stack:pop()
     return
   else
     local row = self.rows[self.index]
     local changed = false
     if input:wasPressed("a") and self.index == cancelRow then
-      if self.game.data then
-        require("src.core.Sound").play(self.game.data, "Press_AB")
-      end
+      click(self.game)
       self.game.stack:pop()
       return
     elseif row and input:wasPressed("a") and row.activate then
@@ -75,9 +79,30 @@ function VoxelSettingsMenu:update(dt)
   syncScroll(self)
 end
 
-function VoxelSettingsMenu:draw()
+function VoxelSettingsMenu:drawPanel()
   OptionRows.draw(self.game, self.rows, self.index, self.scroll or 0,
                   "CANCEL", #self.rows + 1)
+end
+
+function VoxelSettingsMenu:draw()
+  self:drawPanel()
+end
+
+function VoxelSettingsMenu:drawWidescreen(winW, winH)
+  local G = love.graphics
+  G.setColor(1, 1, 1, 1)
+  G.rectangle("fill", 0, 0, winW, winH)
+  local ok, Chrome = pcall(require, "src.ui.gen2.Chrome")
+  if ok and Chrome and Chrome.fitScale then
+    local scale = Chrome.fitScale(winW, winH)
+    G.push()
+    G.translate(Chrome.fitOrigin(winW, winH, scale))
+    G.scale(scale, scale)
+    self:drawPanel()
+    G.pop()
+  else
+    self:drawPanel()
+  end
 end
 
 return VoxelSettingsMenu
