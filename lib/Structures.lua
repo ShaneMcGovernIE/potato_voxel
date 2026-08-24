@@ -2963,6 +2963,10 @@ function Structures.release(mapId)
   return true
 end
 
+function Structures.workbenchCutoutCount()
+  return 0
+end
+
 Assets.register(function() Structures.invalidate() end)
 
 return Structures

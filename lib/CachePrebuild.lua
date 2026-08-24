@@ -85,9 +85,8 @@ end
 -- authoritative generated map definitions and never constructs neighbours.
 local function masksFor(maps, id)
   local out = {}
-  -- The live renderer asks for two connection hops.  Keep that contract here
-  -- rather than reimplementing placement (and drifting when the engine does).
-  local neighbours = OverworldState.computeNeighbors(maps, id, 2)
+  local ok, neighbours = pcall(OverworldState.computeNeighbors, maps, id, 2)
+  if not ok then neighbours = {} end
   for _, neighbour in ipairs(neighbours or {}) do
     local other = maps[neighbour.id]
     if other then
@@ -394,7 +393,7 @@ function Prebuild.autoStart(game)
   if state.gateRan then return false end
   if state.declined then return false end
   if Prebuild.status() ~= "PREBUILD" then return false end
-  local ow = game and (game.overworld or game)
+  local ow = game and (game.overworld or game.world or game)
   if not (ow and ow.map and ow.camera) then return false end
   Diagnostics.trace("prebuild auto-start: cache incomplete, filling in "
                     .. "the background")

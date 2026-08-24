@@ -134,7 +134,7 @@
 -- and no single class covers that.  They live in the `buildings` list at
 -- the bottom of this file, as a band table over the drawing's rows.
 
-return {
+local profile = {
   version = 1,
 
   -- class -> height in world pixels
@@ -174,11 +174,36 @@ return {
     stair_w = 16,
     stair_down_e = 16,
     stair_down_w = 16,
+    terrace = 16,
+    waterfall = 32,
+    shell = 32,
+    column = 32,
+  },
+
+  -- Gen 2 collision-class pins (Gold / Silver / Crystal).
+  collision = {
+    [18] = "cylinder",
+    [21] = "cylinder",
+    [24] = "grass",
+    [51] = "cliff",
+    [113] = "wall",
+    [123] = "wall",
+    [144] = "counter",
+    [145] = "bookcase",
+    [147] = "console",
+    [148] = "console",
+    [150] = "bookcase",
+    [151] = "console",
+    [159] = "cylinder",
   },
 
   -- Only tiles the detector must not touch need listing. Tile ids are
   -- indices into the tileset's own 8x8 atlas.
   tilesets = {
+    -- =====================================================================
+    -- Gen 1  (Red / Blue / Yellow)
+    -- =====================================================================
+
     OVERWORLD = {
       -- the hop-down edges named by data.field.ledges' ledgeTile: their
       -- art is a ground lip seen from above, which the detector would
@@ -279,12 +304,9 @@ return {
       -- are thrown), and Vermilion's corner switchboard ($29/$2A over
       -- $0D/$0E and $1D/$1E), which is drawn 32px tall and so reads as
       -- two stacked courses of the same band.
-      wall = { 34, 35, 50, 51,
-               5, 16,
-               15, 36, 37, 38, 39, 53, 62, 66,
-               68, 69, 70, 71, 84, 86, 87,
-               32, 33, 48, 49,
-               13, 14, 29, 30, 41, 42 },
+      wall = {
+        5, 13, 14, 15, 16, 29, 30, 32, 33, 34, 35, 36, 37, 38, 39, 41,
+        42, 48, 49, 50, 51, 53, 62, 66, 68, 69, 70, 71, 84, 86, 87 },
       -- Fuchsia's invisible maze walls ($1F) are deliberately NOT here.
       -- The artist drew them as the floor with its stripes broken: on
       -- the GB they are invisible, and the puzzle IS walking into them.
@@ -343,8 +365,7 @@ return {
       -- -- PEWTER_GYM's walls and rock maze, and BRUNOS_ROOM's
       -- clusters.  DOJO shares gym.png but places none of them, so
       -- the pin is not copied there.
-      cylinder = { 44, 45, 46, 47,
-                   7, 8, 23, 24 },
+      cylinder = { 7, 8, 23, 24, 44, 45, 46, 47 },
       -- Grey gym bollards are the authored open-can model. Keep its mouth,
       -- base, well, height and taper parameters; `prop` makes them chunky
       -- per-pixel slabs and loses the reference silhouette.
@@ -360,8 +381,7 @@ return {
       -- ball like the shrubs beside it -- it takes the thin standee pool
       -- every interior plant takes, which is also a pool apart from the
       -- cylinders it touches.
-      prop = { 2, 18, 19, 56,
-               64, 65, 80, 81 },
+      prop = { 2, 18, 19, 56, 64, 65, 80, 81 },
       -- The Hall of Fame's recording machine, the one piece of real
       -- furniture in the tileset.  It is drawn 32px wide and THREE tile
       -- rows tall against the north band, and the detector made a mess
@@ -375,7 +395,7 @@ return {
       -- the plinth's top face through the authored-box support rule.
       -- 8 + 16 is exactly the 24px the machine is drawn.
       counter = { 88, 89, 90 },
-      billboard = { 91, 92, 93, 94, 54, 55, 85, 95 },
+      billboard = { 54, 55, 85, 91, 92, 93, 94, 95 },
       -- the ground painted under each pinned prop, by the prop tile's
       -- own id: statues and cans stand on the gyms' main floor ($11),
       -- Celadon's trees on the garden's light dither ($2B) rather than
@@ -595,6 +615,7 @@ return {
       -- tilePairs but no block in this tileset places either, so there
       -- is nothing for a pin to catch.
     },
+
     -- Viridian Forest.  Nearly everything drawn here is ROUND, and the
     -- detector was boxing all of it: the big trees came out as ragged
     -- mixed-height volumes (their sparse canopy-edge tiles read 0px,
@@ -615,8 +636,7 @@ return {
       -- claim its cells -- and so a stray partial drawing degrades to
       -- per-cell hulls rather than boxes
       canopy = { 4 },
-      cylinder = { 5, 6, 7, 21, 22, 23,
-                   35, 36, 37, 38, 39, 53, 54 },
+      cylinder = { 5, 6, 7, 21, 22, 23, 35, 36, 37, 38, 39, 53, 54 },
       -- the stumps ($02/$03/$12/$13): a hull whose drawn top is a CUT
       -- FACE.  The body builds from the bark rows alone, and the drawn
       -- ellipse of growth rings projects onto the hull's round flat
@@ -668,8 +688,7 @@ return {
       stool = { 2, 3, 18, 19 },
       -- the long table under the windows, and the PC desk's body with
       -- its hutch row -- the monitor standing on it is pinned below
-      table = { 38, 39, 41, 42, 43, 44, 50, 51,
-                58, 59, 60, 66, 67 },
+      table = { 38, 39, 41, 42, 43, 44, 50, 51, 58, 59, 60, 66, 67 },
       -- standing per-pixel props, black-outline segmented.  The PC
       -- (64/65 monitor top, 32/33 monitor bottom + keyboard) is drawn
       -- above the desk's body, so it stands ON the desk; the TV stands
@@ -779,8 +798,7 @@ return {
       -- is absent.)  The near-black screen tiles must be pinned or the
       -- void rule flattens them.  What is NOT wall is the machines'
       -- two flanks -- see `prop` below.
-      wall = { 2, 3, 4, 5, 6, 16, 18, 19, 20, 21, 22, 40, 41,
-               76, 77, 92, 93, 94, 95 },
+      wall = { 2, 3, 4, 5, 6, 16, 18, 19, 20, 21, 22, 40, 41, 76, 77, 92, 93, 94, 95 },
       -- the counters, half a cell high: top band (8) with the nurse's
       -- tray (10), front face (24/25, the game's counterTiles), left end
       -- cap (56) and the Cable Club's light sections (90/91).  8px is
@@ -912,10 +930,8 @@ return {
       figures = {
         {
           w = 3,
-          tiles = { 36, 37, 57,
-                    52, 53, 60 },
-          under = { 52, 39,  1,
-                    52, 39, 26 },
+          tiles = { 36, 37, 52, 53, 57, 60 },
+          under = { 1, 26, 39, 52 },
           pixels = {
             "..........XXXXX.........",
             "........XXXXXXXX........",
@@ -1119,10 +1135,8 @@ return {
           depth = 12,
           thin = { rows = 4, depth = 2 },
           flat = { x = { 2, 8 }, rows = { 4, 11 } },
-          tiles = { 14, 15,
-                    30, 31 },
-          under = { 16, 41,
-                    16, 41 },
+          tiles = { 14, 15, 30, 31 },
+          under = { 16, 41 },
           pixels = {
             ".........XX.....",
             "........XXXX....",
@@ -1369,9 +1383,9 @@ return {
       --           note under `counter`.  The tileset places them in the
       --           two table blocks (29, 49) and nowhere else, so 16px
       --           costs nothing anywhere in the group.
-      wall = { 1, 2, 3, 6, 18, 19, 22, 33, 46, 47,
-               62, 63, 68, 70, 71, 72, 73, 75, 76, 77, 78, 79, 84,
-               88, 89, 91, 92, 93 },
+      wall = {
+        1, 2, 3, 6, 18, 19, 22, 33, 46, 47, 62, 63, 68, 70, 71, 72, 73,
+        75, 76, 77, 78, 79, 84, 88, 89, 91, 92, 93 },
       -- 3F's television sets ($0E/$0F/$1E/$1F): the one drawing in this
       -- tileset that is a deliberate object with a body -- a black-framed
       -- cabinet, a bezel and a lit screen, drawn face-on -- and the same
@@ -1444,8 +1458,7 @@ return {
       -- front of it, and the pedestal is meant to sit low.  16px is also
       -- the right height against the 8px `stool` chairs drawn around it
       -- -- a terrace table you sit at, not a footstool.
-      counter = { 9, 21, 25, 36, 37, 38, 39, 41, 48, 49, 52, 53, 54,
-                  57, 85, 86, 87 },
+      counter = { 9, 21, 25, 36, 37, 38, 39, 41, 48, 49, 52, 53, 54, 57, 85, 86, 87 },
       -- Free-standing merchandise racks and glass cases: TALL drawings,
       -- not deep ones.  The four-row rack (42-45 / 58-61 / 64-67 /
       -- 80-83) stands two racks abreast on floors 2F-5F and along the
@@ -1461,8 +1474,9 @@ return {
       -- (38/41) tops it on the roof, the Prize Room and the Game
       -- Corner.  50 is $32, a water-set id, so every one of these cases
       -- stood in a pond before it was pinned.
-      bookcase = { 34, 35, 42, 43, 44, 45, 50, 51, 58, 59, 60, 61,
-                   64, 65, 66, 67, 80, 81, 82, 83 },
+      bookcase = {
+        34, 35, 42, 43, 44, 45, 50, 51, 58, 59, 60, 61, 64, 65, 66, 67,
+        80, 81, 82, 83 },
       -- The stools: the diner's chairs, the roof terrace's, the six
       -- rows in front of the Game Corner's machine banks and the four
       -- on 1F.  Their cell's bottom-left tile is 23 ($17), which IS on
@@ -1537,9 +1551,10 @@ return {
       --   64-69/80-91 the space-shuttle vitrine on 2F, the same drawing
       --               shape three cells wide.
       -- 50/51 is $32/$33 -- the water-set id that sank all of them.
-      bookcase = { 7, 8, 9, 25, 34, 35, 39, 40, 44, 46, 48, 49, 50,
-                   51, 58, 60, 63, 64, 65, 66, 67, 68, 69, 70, 71,
-                   80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91 },
+      bookcase = {
+        7, 8, 9, 25, 34, 35, 39, 40, 44, 46, 48, 49, 50, 51, 58, 60,
+        63, 64, 65, 66, 67, 68, 69, 70, 71, 80, 81, 82, 83, 84, 85, 86,
+        87, 88, 89, 90, 91 },
       -- the visitors' benches on 1F: their cell's bottom-left tile is
       -- 18 ($12), which is on the walkable list, so they resolved to
       -- flat ground and disappeared.  Seat-height standees in their own
@@ -1603,8 +1618,9 @@ return {
       -- per-tile pin can make it 32px without either stubbing the Lab's
       -- wall panel or splitting the machine into columns of different
       -- heights.  One clean 16px console beats both.
-      wall = { 16, 17, 24, 25, 28, 29, 32, 33, 34, 35, 36, 37,
-               42, 43, 48, 49, 71, 87, 88, 89 },
+      wall = {
+        16, 17, 24, 25, 28, 29, 32, 33, 34, 35, 36, 37, 42, 43, 48, 49,
+        71, 87, 88, 89 },
       -- the equipment banks and the shelf racks: TALL drawings, not deep
       -- ones.  Each rank collapses onto a ONE-CELL-DEEP box at its full
       -- drawn height and its back rows become hidden floor -- the
@@ -1642,8 +1658,7 @@ return {
       -- room's two partitions used to hand this trim to the 16px band's
       -- TOP face -- the mesher gives a full-height course the authored
       -- UPRIGHT row above it -- and now top with their own band art.)
-      bookcase = { 10, 11, 26, 27, 40, 41, 59, 64, 65, 66, 69, 70,
-                   74, 75, 85, 86, 90, 91 },
+      bookcase = { 10, 11, 26, 27, 40, 41, 59, 64, 65, 66, 69, 70, 74, 75, 85, 86, 90, 91 },
       -- the lab furniture, at table height.  The benches in the fossil
       -- and metronome rooms (2/3 the specimen tray, 4/5 + 20/21 the
       -- microscope, 18/19 the tray's rack row) and the big lab tables
@@ -1659,8 +1674,7 @@ return {
       -- each table now wears its own drawn surface instead of the trim
       -- -- which is how the Warden's bench finally shows the monitor and
       -- the Pokeball the artist drew on it.
-      table = { 2, 3, 4, 5, 18, 19, 20, 21, 58, 72, 73,
-                80, 81, 82, 83, 84 },
+      table = { 2, 3, 4, 5, 18, 19, 20, 21, 58, 72, 73, 80, 81, 82, 83, 84 },
       -- seats, the 8px standee pool, all of them in WALKABLE cells and
       -- therefore flat floor until pinned: the four chairs round the
       -- trade room's table and the meeting room's spare (14/15/30/31,
@@ -1721,8 +1735,9 @@ return {
       -- it stays in the same band rather than dropping to `fence`: on an
       -- open roof a knee-high rail reads as a kerb.  48 and 6/7 are the
       -- rooftop shed's base course.
-      wall = { 6, 7, 15, 22, 23, 30, 31, 33, 42, 43, 48, 49, 72, 73,
-               74, 75, 76, 77, 78, 79, 80, 88, 89, 90, 91, 92, 93 },
+      wall = {
+        6, 7, 15, 22, 23, 30, 31, 33, 42, 43, 48, 49, 72, 73, 74, 75,
+        76, 77, 78, 79, 80, 88, 89, 90, 91, 92, 93 },
       -- the display cabinets along the north wall of 1F and the chief's
       -- house: TALL drawings, not deep ones, so each rank collapses onto
       -- a one-cell-deep box at its drawn height.  34/35 are the shelf
@@ -1737,8 +1752,7 @@ return {
       -- instead of the 48px tower the detector built.
       -- Six of these ids are water-fallback traps ($22/$23/$32/$33/$38
       -- /$57) -- the whole cabinet bank was a pond.
-      bookcase = { 21, 34, 35, 40, 45, 46, 47, 50, 51, 56, 61, 62, 63,
-                   87 },
+      bookcase = { 21, 34, 35, 40, 45, 46, 47, 50, 51, 56, 61, 62, 63, 87 },
       -- table height.  The long tables in 1F and the chief's house
       -- (38/39/41 top edge, 54/55/57 body, 60/58/59 the front rail with
       -- its two legs) and the writing desks on 2F and 3F (36/37/52/53
@@ -1752,8 +1766,7 @@ return {
       -- comes out a 12px block rather than a shed.  Nothing towers there
       -- any more -- the detector had its east columns at 48px -- and no
       -- per-tile pin can give one drawing two heights.
-      table = { 36, 37, 38, 39, 41, 52, 53, 54, 55, 57, 58, 59, 60,
-                64, 65, 66, 67 },
+      table = { 36, 37, 38, 39, 41, 52, 53, 54, 55, 57, 58, 59, 60, 64, 65, 66, 67 },
       -- the stool at the 2F/3F desk: a whole cell of drawing (2/3 over
       -- 18/19) sitting in a WALKABLE cell, so flat floor until pinned.
       -- The 8px standee pool, seat height, as in Red's rooms.
@@ -1816,8 +1829,9 @@ return {
       -- Bill's pipework belongs here too: the stubs either side of each
       -- drum (32/48, 37/53) and the run between them (38/54), all drawn
       -- 16px tall against the band.
-      wall = { 16, 19, 20, 32, 35, 36, 37, 38, 45, 46, 48, 49, 50, 51,
-               52, 53, 54, 68, 87, 88, 89, 90, 93, 94 },
+      wall = {
+        16, 19, 20, 32, 35, 36, 37, 38, 45, 46, 48, 49, 50, 51, 52, 53,
+        54, 68, 87, 88, 89, 90, 93, 94 },
       -- Bill's two transporter drums: a TALL drawing (four rows of
       -- cylinder plus a base course), not a deep one.  The bookcase
       -- collapse gives each drum one cell of depth at its full 32px
@@ -1825,8 +1839,7 @@ return {
       -- built, and its top face wears the drum's own lid.  7/8/9/10 is
       -- the lid, 23/24/25/26 and 39/40/41/42 the barrel, 55/56/57/58 the
       -- footing.
-      bookcase = { 7, 8, 9, 10, 23, 24, 25, 26, 39, 40, 41, 42,
-                   55, 56, 57, 58 },
+      bookcase = { 7, 8, 9, 10, 23, 24, 25, 26, 39, 40, 41, 42, 55, 56, 57, 58 },
       -- ...and the drums are the reason this tileset turns the shelf
       -- relief OFF: the collapse here is borrowed for a MACHINE, whose
       -- light regions are the barrel's own lit face and not panes
@@ -1974,8 +1987,7 @@ return {
       -- lit notice boards (63/68/68/69 over 66/67/67/70).
       -- The bicycles keep their `wall` pin as the degradation path, but
       -- `mounted` below lifts them off the panel -- see there.
-      wall = { 1, 2, 3, 6, 17, 18, 19, 48, 49, 50, 51, 52, 63, 66, 67,
-               68, 69, 70 },
+      wall = { 1, 2, 3, 6, 17, 18, 19, 48, 49, 50, 51, 52, 63, 66, 67, 68, 69, 70 },
       -- Counters, half a cell high -- the house rule for anything you
       -- lean on.  The Bike Shop's L: the till run's top (7/8, the
       -- tileset's own counterTiles) with its inside corner (54), east
@@ -2085,10 +2097,8 @@ return {
         {
           w = 3,
           depth = 2,
-          tiles = {  1,  2,  3,
-                    17, 18, 19 },
-          under = {  6,  6,  6,
-                     6,  6,  6 },
+          tiles = { 1, 2, 3, 17, 18, 19 },
+          under = { 6 },
           pixels = {
             ".........XXX............",
             "..XXXXX.XXXX............",
@@ -2168,9 +2178,9 @@ return {
       -- wall instead of a separate tower.  45/61 are the bow deck's
       -- rope rail and 46/47/62/63 its stepped bulwark: the same 16px
       -- course, so the open deck is fenced at one height.
-      wall = { 2, 3, 5, 6, 14, 15, 16, 17, 18, 19, 21, 22, 30, 31, 32,
-               33, 34, 37, 38, 45, 46, 47, 48, 49, 50, 51, 61, 62, 63,
-               84, 85 },
+      wall = {
+        2, 3, 5, 6, 14, 15, 16, 17, 18, 19, 21, 22, 30, 31, 32, 33, 34,
+        37, 38, 45, 46, 47, 48, 49, 50, 51, 61, 62, 63, 84, 85 },
       -- Every table in the group, at 12px: the kitchen's three banquet
       -- tables (twelve tile rows deep), the counter run along the
       -- kitchen's south wall, the captain's desk, and the writing table
@@ -2185,8 +2195,7 @@ return {
       -- cutouts.  59/60 doubles as the chest of drawers at the foot of
       -- every cabin bunk; 12px puts it a hand above the mattress, which
       -- is where a bedside chest belongs.
-      table = { 9, 10, 11, 12, 25, 26, 28, 44, 53, 59, 60, 64, 65, 68,
-                69, 80, 81 },
+      table = { 9, 10, 11, 12, 25, 26, 28, 44, 53, 59, 60, 64, 65, 68, 69, 80, 81 },
       -- The cabin bunk: a mattress drawn from above, so its art stays on
       -- the TOP face and it lies low.  70/71 the pillow, 86/87 the
       -- mattress.  (Its drawer end is in `table` above.)
@@ -2293,12 +2302,11 @@ return {
       -- superstructure (16-31), midships (32-47), waterline strake
       -- (48-53 and 61-63 in the stern), hull plating (64-69, 77-79) and
       -- the boot topping (81-85, 90-93).
-      roof = { 0, 2, 3, 4, 5, 6, 7, 9, 11, 12, 13, 14, 15,
-               16, 17, 18, 19, 21, 22, 23, 24, 25, 28, 29, 30, 31,
-               32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 44, 45, 46, 47,
-               48, 51, 52, 53, 54, 55, 56, 57, 61, 62,
-               64, 65, 66, 67, 68, 69, 77, 78, 79,
-               81, 82, 83, 85, 90, 91, 93 },
+      roof = {
+        0, 2, 3, 4, 5, 6, 7, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21,
+        22, 23, 24, 25, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+        40, 41, 44, 45, 46, 47, 48, 51, 52, 53, 54, 55, 56, 57, 61, 62,
+        64, 65, 66, 67, 68, 69, 77, 78, 79, 81, 82, 83, 85, 90, 91, 93 },
       -- The quayside crates, a 2x2-tile box each (86/87 lid, 1/80
       -- body), stacked two cells deep in all four corners of the dock,
       -- and the pallet stacks flanking the gangway head (49).  A crate
@@ -2370,9 +2378,9 @@ return {
       --     (field.cardKeyDoors' blocks $54/$5F/$2D).  They are in no
       --     map's block list, so nothing but this line covers them; the
       --     detector read them as an 8px stub lying in the doorway
-      wall = { 8, 9, 10, 24, 25, 26, 36, 37, 42, 43, 44, 45, 46,
-               58, 59, 60, 64, 65, 74, 75, 76, 77, 80, 81, 86,
-               87, 88, 89 },
+      wall = {
+        8, 9, 10, 24, 25, 26, 36, 37, 42, 43, 44, 45, 46, 58, 59, 60,
+        64, 65, 74, 75, 76, 77, 80, 81, 86, 87, 88, 89 },
 
       -- The tall display cabinet of the Mansion and Silph 3F/8F/9F: cap
       -- row 40/41 over two ranks of 56/57, one cell wide and drawn FOUR
@@ -2431,7 +2439,7 @@ return {
       -- the tileset -- read as a west rise it builds a ramp that leaves a
       -- gap against the east jamb, so east it is, which also makes one
       -- consistent story out of every up-stair in the group.
-      stair_e = { 3, 4, 19, 78, 52, 67, 90, 91 },
+      stair_e = { 3, 4, 19, 52, 67, 78, 90, 91 },
       -- The staircase DOWN (11/12/27/28): three treads in a black
       -- stairwell, shortening and darkening west to east, so the flight
       -- descends EAST into the dark.  One graphic again, for every
@@ -2496,9 +2504,7 @@ return {
       -- $19/$1A), the grey mass beyond it ($11) so the room reads as a
       -- chamber cut into solid stock rather than a fence standing on a
       -- plain, and Agatha's north band ($20 over $30).
-      wall = { 9, 10, 25, 26,
-               17,
-               32, 48 },
+      wall = { 9, 10, 17, 25, 26, 32, 48 },
       -- The reception counter of POKEMON_TOWER_1F -- the only counter in
       -- the group, and the ROM's own counterTiles for this tileset name
       -- $12 as exactly that.  It is an L that fences the receptionist
@@ -2550,7 +2556,7 @@ return {
       -- kept a 16px planter; a standee takes the whole drawing at its
       -- real height.  It backs onto the wall ring, and a separate pool
       -- keeps it from being absorbed into it.
-      prop = { 39, 47, 55, 63, 61, 62 },
+      prop = { 39, 47, 55, 61, 62, 63 },
       -- (Nothing else needs an entry.  The tower's floor ($01) and 5F's
       -- healing pad ($22) are walkable, so rule 3 lays them flat where
       -- they are drawn; the mass, ring, graves, stairs and palm above
@@ -2677,8 +2683,7 @@ return {
       -- facade, the walls flanking the avenue and every badge-check gate
       -- down ROUTE_23), and $2E/$2F the white pillar shaft with $20/$21 its
       -- cap.  These four groups are the enclosure.
-      cliff = { 3, 13,
-                32, 33, 46, 47 },
+      cliff = { 3, 13, 32, 33, 46, 47 },
       -- THE GATE WALLS, stacked rather than laid out in depth.  $0D/$0F/$0E
       -- (13/15/14 -- top band, face, base) draw the League's facade, the
       -- walls flanking the avenue and every badge-check gate down ROUTE_23,
@@ -2695,7 +2700,7 @@ return {
       -- is drawn only ever inside a pilaster, so it needs no rule.  Without
       -- this the pale columns stood 16px against a 32px brown wall and
       -- their top vertices sat a whole course below the wall's crown.
-      bookcase = { 14, 15, 5, 6 },
+      bookcase = { 5, 6, 14, 15 },
       -- Tile 13 is DUAL-USE and needs resolving per position.  It is the
       -- gate wall's TOP BAND (block $28's first row) and it is also the
       -- BASE COURSE under a column of rock face (blocks $18/$1A/$1B, last
@@ -2760,7 +2765,7 @@ return {
       -- The statues, and the same bird at the pillar feet.  Black-outline
       -- segmented: the outline and everything it encloses stay, the sky
       -- and the paving around them flood away.
-      prop = { 16, 18, 40, 41, 37, 38 },
+      prop = { 16, 18, 37, 38, 40, 41 },
       -- Round drawings, one voxel ball per 16x16 cell -- the treatment
       -- the overworld's canopies and Celadon's hedge take.
       --
@@ -2773,8 +2778,7 @@ return {
       -- middle terrace (blocks $02/$13/$16), one per cell and NOT
       -- walkable.  As boxes they sat flat enough to look painted onto
       -- the path; as balls they read as the obstacles they are.
-      cylinder = { 7, 8, 23, 24,
-                   29, 34, 42, 43 },
+      cylinder = { 7, 8, 23, 24, 29, 34, 42, 43 },
       -- The Route 23 sign, one cell, block $48's only placement.
       -- Unpinned it probed `09w00 0Aw00 / 19w08 1Aw08` -- an 8px stub
       -- with its board skipped.  Same thin plate on a stick every other
@@ -2823,6 +2827,259 @@ return {
       -- and $15/$16/$05/$06.  Buildings claim their tiles before any of
       -- the above can reach them -- probed `b` class over all 216 of
       -- them, unchanged by this entry.
+    },
+
+    -- =====================================================================
+    -- Gen 2  (Gold / Silver)
+    -- =====================================================================
+
+    gen2_TilesetJohto = {
+      cylinder = { 30, 31, 62, 63 },
+      fence = { 74 },
+      flower = { 3 },
+      ground = { 5, 6 },
+      heights = {
+        fence = 16,
+      },
+      ledge = { 76 },
+      planter = { 46, 47 },
+      planter_spray = false,
+      post = { 89, 90 },
+      rail_face = { 89, 90 },
+      signpost = { 78, 79, 94, 95 },
+      terrace = { 44, 60 },
+      water = { 20, 88 },
+      when_above = {
+        [76] = {
+          {
+            above = { 60, 75, 76, 77 },
+            class = "wall",
+          },
+        },
+      },
+      when_below = {
+        [30] = {
+          {
+            below = { 46 },
+            class = "planter",
+          },
+        },
+        [31] = {
+          {
+            below = { 47 },
+            class = "planter",
+          },
+        },
+      },
+    },
+
+    gen2_TilesetJohtoModern = {
+      cylinder = { 30, 31, 62, 63 },
+      flower = { 3 },
+      ground = { 5, 6 },
+      ledge = { 76 },
+      post = { 74, 89, 90 },
+      signpost = { 78, 79, 94, 95 },
+      terrace = { 44, 60 },
+      water = { 20, 88 },
+      when_above = {
+        [76] = {
+          {
+            above = { 60, 75, 76, 77 },
+            class = "wall",
+          },
+        },
+      },
+    },
+
+    gen2_TilesetCave = {
+      cliff = { 5, 7, 10, 11, 16, 21, 23, 26, 27, 37, 38, 39 },
+      cylinder = { 12, 13, 28, 29 },
+      ground = { 1 },
+      heights = {
+        cliff = 16,
+        terrace = 16,
+      },
+      hop_lips = true,
+      terrace = { 22, 36 },
+      water = { 20 },
+      waterfall = { 64 },
+      when_above = {
+        [54] = {
+          {
+            above = { 22, 36, 54 },
+            class = "terrace",
+          },
+        },
+        [55] = {
+          {
+            above = { 22, 36, 55 },
+            class = "terrace",
+          },
+        },
+      },
+    },
+
+    gen2_TilesetEliteFourRoom = {
+      billboard = { 32, 33, 34, 35, 48, 49, 50, 51 },
+      ground = { 1, 17 },
+      prop = { 85, 86, 87, 88 },
+      prop_bg = {
+        {
+          shades = { "none" },
+          tiles = { 32, 33, 34, 35, 48, 49, 50, 51 },
+        },
+      },
+      void = { 0 },
+    },
+
+    gen2_TilesetForest = {
+      canopy = { 12 },
+      cylinder = { 13, 14, 15, 28, 29, 30, 31, 44, 45, 46, 47, 60, 61, 62, 63 },
+      flower = { 3 },
+      ground = { 5 },
+      water = { 20 },
+    },
+
+    gen2_TilesetHouse = {
+      console = { 6, 7, 12, 13 },
+      heights = {
+        table = 6,
+      },
+      planter = { 8, 9, 10, 11, 24, 25, 26, 27 },
+      planter_spray = false,
+      table = { 5, 21, 38, 39, 41, 47, 54, 57, 58, 59, 60 },
+      when_above = {
+        [59] = {
+          {
+            above = { 14, 15 },
+            class = "bookcase",
+          },
+        },
+        [60] = {
+          {
+            above = { 14, 15 },
+            class = "bookcase",
+          },
+        },
+      },
+    },
+
+    gen2_TilesetKanto = {
+      cylinder = { 42, 43, 58, 59, 64, 65, 80, 81 },
+      flower = { 3, 4 },
+      ground = { 16, 35, 44, 48, 57 },
+      ledge = { 13, 52, 54, 55 },
+      post = { 14, 85 },
+      signpost = { 70, 71, 86, 87 },
+      terrace = { 17 },
+      water = { 20, 49, 51, 84 },
+      when_below = {
+        [57] = {
+          {
+            below = { 14 },
+            class = "terrace",
+          },
+          {
+            below = { 14 },
+            class = "terrace",
+            rows = 2,
+          },
+        },
+      },
+    },
+
+    gen2_TilesetLab = {
+      console = { 10, 11, 12, 13, 26, 27, 28, 29, 34, 35, 50, 51, 66, 67, 68, 69, 70, 71, 73, 82, 83, 84, 85, 86, 87, 88, 89 },
+      heights = {
+        table = 6,
+      },
+      table = { 5, 6, 7, 14, 15, 21, 22, 23, 30, 31 },
+    },
+
+    gen2_TilesetLighthouse = {
+      bed = { 70, 71, 86, 87, 99, 100, 101, 102 },
+      ground = { 4, 13, 29, 35, 46, 47 },
+      prop = { 72, 73, 88, 89 },
+      stool = { 7, 8, 23, 24 },
+      table = { 9, 10, 11, 12, 20, 25, 26, 28, 44, 53, 64, 65, 80, 81, 96, 97, 98 },
+    },
+
+    gen2_TilesetMart = {
+      bookcase = { 12, 13, 38, 39, 40, 41, 43, 54, 55, 56, 57, 64, 65, 66, 69, 80, 81, 82, 86, 87 },
+    },
+
+    gen2_TilesetPark = {
+      canopy = { 12 },
+      cylinder = { 13, 14, 15, 28, 29, 30, 31, 44, 45, 46, 47, 60, 61, 62, 63 },
+      grass = { 58, 59, 74, 75 },
+      ground = { 1 },
+      water = { 20, 21 },
+    },
+
+    gen2_TilesetPlayersHouse = {
+      bookcase = { 10, 11, 24, 25, 26, 27, 42, 43, 67, 69, 80, 81, 82, 83 },
+      heights = {
+        stool = 5,
+        table = 6,
+      },
+      stool = { 2, 3, 18, 19 },
+      table = { 21, 34, 35, 36, 37, 50, 51, 52, 53 },
+    },
+
+    gen2_TilesetPlayersRoom = {
+      bed = { 16, 17, 18, 32, 33, 34 },
+      billboard = { 59, 60, 75, 76, 91, 92 },
+      console = { 11, 12, 27, 28, 43, 44 },
+      prop = { 66, 67, 82, 83 },
+    },
+
+    gen2_TilesetPokecenter = {
+      bookcase = { 3, 4, 5, 10, 11, 15, 19, 20, 21, 26, 27, 28, 29, 30, 31, 32, 33, 37, 44, 45, 46, 47, 48, 49, 53, 60, 61, 62, 63, 64, 65, 70, 71, 76, 77, 78, 79 },
+      counter = { 12, 36, 52 },
+      ground = { 1, 17 },
+      heights = {
+        table = 6,
+      },
+      table = { 72, 73, 88, 89 },
+    },
+
+    gen2_TilesetRuinsOfAlph = {
+      billboard = { 14, 15, 30, 31, 46, 47, 62, 63 },
+      ground = { 2, 3 },
+    },
+
+    gen2_TilesetTower = {
+      billboard = { 18, 19, 34, 35, 50, 51, 54, 55, 74, 75, 76, 90, 91, 92 },
+      cliff = { 45, 46, 47, 60, 61, 62, 63, 77, 78, 79, 93, 94, 95 },
+      fence = { 32, 49, 64, 65 },
+      ground = { 2, 10, 11, 26, 27 },
+      heights = {
+        fence = 16,
+      },
+      post = { 17, 33 },
+      prop_bg = {
+        {
+          shades = { "none" },
+          tiles = { 18, 19, 34, 35, 50, 51, 54, 55, 74, 75, 76, 90, 91, 92 },
+        },
+      },
+      rail_face = { 17, 33 },
+      void = { 1 },
+    },
+
+    -- =====================================================================
+    -- Crystal
+    -- =====================================================================
+
+    gen2c_TilesetBattleTowerInside = {
+      console = { 8, 9, 24, 25, 40, 41, 56, 57 },
+      counter = { 6, 10, 12, 13, 22, 26, 27, 28, 29, 42, 43, 97 },
+      shell = { 44, 45, 46, 47, 58, 59, 60, 61, 62, 63, 64, 65 },
+    },
+
+    gen2c_TilesetBattleTowerOutside = {
+      ground = { 5, 6 },
     },
   },
 
@@ -2879,6 +3136,10 @@ return {
   -- the flood itself, which every model here depends on, for one scenery
   -- placement.
   buildings = {
+    -- =====================================================================
+    -- Gen 1  (Red / Blue / Yellow)
+    -- =====================================================================
+
     OVERWORLD = {
       -- assets/docs/buildings/B30: the POKEMON TOWER -- the one drawing
       -- in the catalogue that STRADDLES A MAP BOUNDARY.  Twelve of its
@@ -3624,7 +3885,7 @@ return {
           { 54, 55, 85, 95 },
           { 88, 89, 89, 90 },
         },
-        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0, 0 },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
         slab = 0, frontEave = 0, ledge = nil, depth = 2,
         desk = { fascia = { 16, 18 }, base = { 19, 21 } },
         parts = {
@@ -3672,7 +3933,7 @@ return {
           { 82, 86 },
           {  9, 88 },
         },
-        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0, 0 },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
         slab = 0, frontEave = 0, ledge = nil, depth = 2,
         desk = { fascia = { 20, 21 }, base = { 22, 23 }, lid = "white" },
         parts = {
@@ -3774,7 +4035,7 @@ return {
           { 72, 76, 77,  7 },
           { 72,  6, 22, 13 },
         },
-        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0, 0 },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
         slab = 0, frontEave = 0, ledge = nil, depth = 4,
         panes = false,
         wall = { h = 16, depthPx = 16, x = 0, cycle = { 0, 3 } },
@@ -3804,7 +4065,7 @@ return {
           { 72, 76, 77, 73 },
           { 72,  6, 22, 73 },
         },
-        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0, 0 },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
         slab = 0, frontEave = 0, ledge = nil, depth = 4,
         panes = false,
         wall = { h = 16, depthPx = 16, x = 0, cycle = { 0, 3 } },
@@ -3846,7 +4107,7 @@ return {
           { 82, 86 },
           {  9, 88 },
         },
-        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0, 0 },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
         slab = 0, frontEave = 0, ledge = nil, depth = 2,
         desk = { fascia = { 20, 21 }, base = { 22, 23 }, lid = "white" },
         parts = {
@@ -3870,7 +4131,7 @@ return {
           { 72, 76, 77,  7 },
           { 72,  6, 22, 13 },
         },
-        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0, 0 },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
         slab = 0, frontEave = 0, ledge = nil, depth = 4,
         panes = false,
         wall = { h = 16, depthPx = 16, x = 0, cycle = { 0, 3 } },
@@ -3900,7 +4161,7 @@ return {
           { 72, 76, 77, 73 },
           { 72,  6, 22, 73 },
         },
-        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0, 0 },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
         slab = 0, frontEave = 0, ledge = nil, depth = 4,
         panes = false,
         wall = { h = 16, depthPx = 16, x = 0, cycle = { 0, 3 } },
@@ -3942,7 +4203,7 @@ return {
           { 54, 55, 85, 95 },
           { 88, 89, 89, 90 },
         },
-        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0, 0 },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
         slab = 0, frontEave = 0, ledge = nil, depth = 2,
         desk = { fascia = { 16, 18 }, base = { 19, 21 } },
         parts = {
@@ -4003,12 +4264,12 @@ return {
           { 29, 13 },
           { 21, 22 },
         },
-        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0, 0 },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
         slab = 0, frontEave = 0, ledge = nil, depthPx = 14,
         tray = { top = { 4, 11 }, front = { 12, 15 }, x = { 2, 11 },
                  inner = { 3, 9 }, floor = 0 },
         parts = {
-          { kind = "upright", x = { 11, 14 }, top = { 0, 0 },
+          { kind = "upright", x = { 11, 14 }, top = { 0 },
             facade = { 0, 11 }, z = 0, depth = 14 },       -- the open lid
         },
       },
@@ -4208,7 +4469,7 @@ return {
           { 2, 3 },
           { 18, 19 },
         },
-        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0, 0 },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
         slab = 0, frontEave = 0, ledge = nil,
         panes = false,
         parts = {
@@ -4278,7 +4539,7 @@ return {
           { 2, 3 },
           { 18, 19 },
         },
-        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0, 0 },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
         slab = 0, frontEave = 0, ledge = nil,
         panes = false,
         parts = {
@@ -4331,7 +4592,7 @@ return {
           { 43, 44, 91, 92 },
           { 59, 60, 31, 31 },
         },
-        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0, 0 },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
         slab = 0, frontEave = 0, ledge = nil, depth = 4,
         -- the desk's own plot is its two cells; the grid runs on because
         -- its apron and the CHAIR share tiles 43/44
@@ -4350,7 +4611,7 @@ return {
           -- keyboard's top-right corner and the computer's left corner.
           -- Raised to the keyboard's own height so it reads as a cable
           -- spanning them rather than a scuff on the desk
-          { kind = "upright", x = { 16, 19 }, top = { 8, 8 },
+          { kind = "upright", x = { 16, 19 }, top = { 8 },
             facade = { 8, 9 }, z = 8, depth = 2 },
           -- the computer: drawn in 2:1 ISOMETRIC, turned 45 degrees to
           -- the map -- see the `iso` branch in buildParts.  `plan` = rx
@@ -4401,7 +4662,7 @@ return {
           { 61, 62 },
           { 59, 60 },
         },
-        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0, 0 },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
         slab = 0, frontEave = 0, ledge = nil,
         panes = false,
         parts = {
@@ -4411,5 +4672,1400 @@ return {
         },
       },
     },
+
+    -- =====================================================================
+    -- Gen 2  (Gold / Silver)
+    -- =====================================================================
+
+    gen2_TilesetJohto = {
+      {
+        frontEave = 4,
+        id = "gen2_lighthouse",
+        roofBack = 2,
+        roofCycle = { 2, 23 },
+        roofFront = 8,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 49, 54, 54, 54, 54, 54, 54, 52 },
+          { 65, 72, 72, 72, 72, 72, 72, 68 },
+          { 65, 72, 72, 72, 72, 72, 72, 68 },
+          { 81, 82, 82, 82, 82, 82, 82, 84 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 38, 38, 38, 38, 38, 38, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 38, 38, 7, 7, 38, 38, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 38, 38, 7, 7, 38, 38, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 38, 38, 7, 7, 38, 38, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 38, 38, 7, 7, 38, 38, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 38, 38, 28 },
+          { 26, 7, 55, 56, 7, 7, 7, 28 },
+          { 1, 2, 57, 58, 2, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2c_lighthouse",
+        roofBack = 2,
+        roofCycle = { 2, 23 },
+        roofFront = 8,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 49, 54, 54, 54, 54, 54, 54, 52 },
+          { 65, 72, 72, 72, 72, 72, 72, 68 },
+          { 65, 72, 72, 72, 72, 72, 72, 68 },
+          { 81, 82, 82, 82, 82, 82, 82, 84 },
+          { 96, 97, 97, 97, 97, 97, 97, 98 },
+          { 99, 100, 115, 101, 102, 115, 103, 104 },
+          { 105, 106, 107, 108, 109, 107, 110, 111 },
+          { 112, 113, 113, 113, 113, 113, 113, 114 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 38, 38, 7, 7, 38, 38, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 38, 38, 7, 7, 38, 38, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 38, 38, 7, 7, 38, 38, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 38, 38, 7, 7, 38, 38, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 38, 38, 28 },
+          { 26, 7, 55, 56, 7, 7, 7, 28 },
+          { 1, 2, 57, 58, 2, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_pagoda",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 49, 83, 83, 83, 83, 83, 83, 52 },
+          { 65, 83, 83, 83, 83, 83, 83, 68 },
+          { 65, 83, 83, 83, 83, 83, 83, 68 },
+          { 81, 82, 82, 82, 82, 82, 82, 84 },
+          { 34, 65, 27, 27, 27, 27, 68, 37 },
+          { 80, 81, 82, 82, 82, 82, 84, 85 },
+          { 34, 65, 27, 27, 27, 27, 68, 37 },
+          { 80, 81, 82, 82, 82, 82, 84, 85 },
+          { 59, 26, 39, 40, 27, 27, 28, 61 },
+          { 59, 1, 41, 42, 2, 2, 22, 61 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2c_pagoda",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 49, 83, 83, 83, 83, 83, 83, 52 },
+          { 65, 83, 83, 83, 83, 83, 83, 68 },
+          { 65, 83, 83, 83, 83, 83, 83, 68 },
+          { 81, 82, 82, 82, 82, 82, 82, 84 },
+          { 34, 65, 116, 117, 117, 118, 68, 37 },
+          { 80, 81, 82, 82, 82, 82, 84, 85 },
+          { 34, 65, 116, 117, 117, 118, 68, 37 },
+          { 80, 81, 82, 82, 82, 82, 84, 85 },
+          { 59, 26, 39, 40, 117, 118, 28, 61 },
+          { 59, 119, 41, 42, 120, 120, 121, 61 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_pagoda_tall",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 34, 65, 27, 27, 27, 27, 68, 37 },
+          { 80, 81, 82, 82, 82, 82, 84, 85 },
+          { 34, 65, 27, 27, 27, 27, 68, 37 },
+          { 80, 81, 82, 82, 82, 82, 84, 85 },
+          { 34, 65, 27, 27, 27, 27, 68, 37 },
+          { 80, 81, 82, 82, 82, 82, 84, 85 },
+          { 34, 65, 27, 27, 27, 27, 68, 37 },
+          { 80, 81, 82, 82, 82, 82, 84, 85 },
+          { 34, 65, 27, 27, 27, 27, 68, 37 },
+          { 80, 81, 82, 82, 82, 82, 84, 85 },
+          { 34, 65, 27, 27, 27, 27, 68, 37 },
+          { 80, 81, 82, 82, 82, 82, 84, 85 },
+          { 34, 65, 27, 27, 27, 27, 68, 37 },
+          { 80, 81, 82, 82, 82, 82, 84, 85 },
+          { 59, 26, 39, 40, 27, 27, 28, 61 },
+          { 59, 1, 41, 42, 2, 2, 22, 61 },
+        },
+        topRows = {
+          { 49, 83, 83, 83, 83, 83, 83, 52 },
+          { 65, 83, 83, 83, 83, 83, 83, 68 },
+          { 65, 83, 83, 83, 83, 83, 83, 68 },
+          { 81, 82, 82, 82, 82, 82, 82, 84 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2c_pagoda_tall",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 34, 65, 116, 117, 117, 118, 68, 37 },
+          { 80, 81, 82, 82, 82, 82, 84, 85 },
+          { 34, 65, 116, 117, 117, 118, 68, 37 },
+          { 80, 81, 82, 82, 82, 82, 84, 85 },
+          { 34, 65, 116, 117, 117, 118, 68, 37 },
+          { 80, 81, 82, 82, 82, 82, 84, 85 },
+          { 34, 65, 116, 117, 117, 118, 68, 37 },
+          { 80, 81, 82, 82, 82, 82, 84, 85 },
+          { 34, 65, 116, 117, 117, 118, 68, 37 },
+          { 80, 81, 82, 82, 82, 82, 84, 85 },
+          { 34, 65, 116, 117, 117, 118, 68, 37 },
+          { 80, 81, 82, 82, 82, 82, 84, 85 },
+          { 34, 65, 116, 117, 117, 118, 68, 37 },
+          { 80, 81, 82, 82, 82, 82, 84, 85 },
+          { 59, 26, 39, 40, 117, 118, 28, 61 },
+          { 59, 119, 41, 42, 120, 120, 121, 61 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_ecruteak_hall",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 49, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 52 },
+          { 65, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 68 },
+          { 65, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 68 },
+          { 81, 82, 82, 82, 82, 82, 82, 82, 82, 82, 82, 84 },
+          { 26, 27, 27, 27, 39, 40, 27, 27, 27, 27, 27, 28 },
+          { 1, 2, 2, 2, 41, 42, 2, 2, 2, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2c_ecruteak_hall",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 49, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 52 },
+          { 65, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 68 },
+          { 65, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 68 },
+          { 81, 82, 82, 82, 82, 82, 82, 82, 82, 82, 82, 84 },
+          { 26, 116, 117, 118, 39, 40, 116, 117, 117, 117, 118, 28 },
+          { 119, 120, 120, 120, 41, 42, 120, 120, 120, 120, 120, 121 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_ecruteak_wall",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 49, 83, 83, 83, 83, 83, 83, 52 },
+          { 65, 83, 83, 83, 83, 83, 83, 68 },
+          { 65, 83, 83, 83, 83, 83, 83, 68 },
+          { 81, 82, 82, 82, 82, 82, 82, 84 },
+          { 26, 27, 27, 27, 27, 27, 27, 28 },
+          { 1, 2, 2, 2, 2, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2c_ecruteak_wall",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 49, 83, 83, 83, 83, 83, 83, 52 },
+          { 65, 83, 83, 83, 83, 83, 83, 68 },
+          { 65, 83, 83, 83, 83, 83, 83, 68 },
+          { 81, 82, 82, 82, 82, 82, 82, 84 },
+          { 26, 116, 117, 118, 117, 117, 118, 28 },
+          { 119, 120, 120, 120, 120, 120, 120, 121 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_ecruteak_house",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 49, 83, 83, 83, 83, 83, 83, 52 },
+          { 65, 83, 83, 83, 83, 83, 83, 68 },
+          { 65, 83, 83, 83, 83, 83, 83, 68 },
+          { 81, 82, 82, 82, 82, 82, 82, 84 },
+          { 26, 27, 39, 40, 27, 27, 27, 28 },
+          { 1, 2, 41, 42, 2, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2c_ecruteak_house",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 49, 83, 83, 83, 83, 83, 83, 52 },
+          { 65, 83, 83, 83, 83, 83, 83, 68 },
+          { 65, 83, 83, 83, 83, 83, 83, 68 },
+          { 81, 82, 82, 82, 82, 82, 82, 84 },
+          { 26, 117, 39, 40, 117, 117, 118, 28 },
+          { 119, 120, 41, 42, 120, 120, 120, 121 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_ecruteak_gallery_block",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 49, 54, 54, 54, 54, 54, 54, 52 },
+          { 65, 72, 72, 72, 72, 72, 72, 68 },
+          { 65, 72, 72, 72, 72, 72, 72, 68 },
+          { 81, 82, 82, 82, 82, 82, 82, 84 },
+          { 26, 27, 27, 27, 27, 27, 27, 28 },
+          { 26, 38, 38, 27, 27, 38, 38, 28 },
+          { 26, 27, 27, 27, 27, 27, 27, 28 },
+          { 1, 2, 2, 2, 2, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_violet_hall",
+        roofBack = 2,
+        roofCycle = { 2, 43 },
+        roofFront = 4,
+        roofRows = 48,
+        slab = 4,
+        tiles = {
+          { 49, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 52 },
+          { 65, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 68 },
+          { 65, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 68 },
+          { 65, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 68 },
+          { 65, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 68 },
+          { 81, 82, 82, 82, 82, 82, 82, 82, 82, 82, 82, 84 },
+          { 26, 27, 27, 27, 39, 40, 27, 27, 27, 27, 27, 28 },
+          { 1, 2, 2, 2, 41, 42, 2, 2, 2, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2c_violet_hall",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 49, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 52 },
+          { 65, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 68 },
+          { 65, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 68 },
+          { 81, 82, 82, 82, 82, 82, 82, 82, 82, 82, 82, 84 },
+          { 26, 116, 117, 118, 39, 40, 116, 117, 117, 117, 118, 28 },
+          { 119, 120, 120, 120, 41, 42, 120, 120, 120, 120, 120, 121 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_gate",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 49, 54, 54, 54, 54, 54, 54, 52 },
+          { 65, 72, 72, 72, 72, 72, 72, 68 },
+          { 65, 72, 72, 72, 72, 72, 72, 68 },
+          { 81, 82, 82, 82, 82, 82, 82, 84 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 38, 38, 7, 7, 38, 38, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 1, 2, 2, 2, 2, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_gate_brick",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 16, 17, 17, 17, 17, 17, 17, 18 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 10, 11, 11, 11, 11, 11, 11, 12 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 38, 38, 7, 7, 38, 38, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 1, 2, 2, 2, 2, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_mart",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 16, 17, 17, 17, 17, 17, 17, 18 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 10, 11, 11, 11, 11, 11, 11, 12 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 55, 56, 24, 25, 7, 28 },
+          { 1, 2, 57, 58, 23, 23, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_pokecenter",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 16, 17, 17, 17, 17, 17, 17, 18 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 10, 11, 11, 11, 11, 11, 11, 12 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 55, 56, 8, 9, 7, 28 },
+          { 1, 2, 57, 58, 23, 23, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_house",
+        roofBack = 2,
+        roofCycle = { 2, 11 },
+        roofFront = 4,
+        roofRows = 16,
+        slab = 4,
+        tiles = {
+          { 16, 17, 17, 17, 17, 17, 17, 18 },
+          { 10, 11, 11, 11, 11, 11, 11, 12 },
+          { 26, 27, 55, 56, 27, 27, 27, 28 },
+          { 1, 2, 57, 58, 2, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_gym",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 16, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 18 },
+          { 13, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 15 },
+          { 13, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 15 },
+          { 10, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 12 },
+          { 26, 27, 27, 27, 35, 36, 27, 27, 27, 27, 27, 28 },
+          { 26, 38, 38, 27, 27, 27, 27, 27, 27, 38, 38, 28 },
+          { 26, 27, 27, 27, 55, 56, 27, 27, 27, 27, 27, 28 },
+          { 1, 2, 2, 2, 57, 58, 2, 2, 2, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_hall",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 16, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 18 },
+          { 13, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 15 },
+          { 13, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 15 },
+          { 10, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 12 },
+          { 26, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 28 },
+          { 26, 38, 38, 27, 27, 27, 27, 27, 27, 38, 38, 28 },
+          { 26, 27, 27, 27, 55, 56, 27, 27, 27, 27, 27, 28 },
+          { 1, 2, 2, 2, 57, 58, 2, 2, 2, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_block_brick",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 16, 17, 17, 17, 17, 17, 17, 18 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 10, 11, 11, 11, 11, 11, 11, 12 },
+          { 26, 27, 27, 27, 27, 27, 27, 28 },
+          { 26, 27, 27, 27, 27, 38, 38, 28 },
+          { 26, 27, 55, 56, 27, 27, 27, 28 },
+          { 1, 2, 57, 58, 2, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_block_plain",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 16, 17, 17, 17, 17, 17, 17, 18 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 10, 11, 11, 11, 11, 11, 11, 12 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 38, 38, 28 },
+          { 26, 7, 55, 56, 7, 7, 7, 28 },
+          { 1, 2, 57, 58, 2, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_house_4x2",
+        roofBack = 2,
+        roofCycle = { 2, 11 },
+        roofFront = 4,
+        roofRows = 16,
+        slab = 4,
+        tiles = {
+          { 16, 17, 17, 17, 17, 17, 17, 18 },
+          { 10, 11, 11, 11, 11, 11, 11, 12 },
+          { 26, 27, 27, 27, 27, 27, 27, 28 },
+          { 1, 2, 2, 2, 2, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_house_3x2",
+        roofBack = 2,
+        roofCycle = { 2, 11 },
+        roofFront = 4,
+        roofRows = 16,
+        slab = 4,
+        tiles = {
+          { 16, 17, 17, 17, 17, 18 },
+          { 10, 11, 11, 11, 11, 12 },
+          { 26, 27, 27, 27, 27, 28 },
+          { 1, 2, 2, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_house_2x2",
+        roofBack = 2,
+        roofCycle = { 2, 11 },
+        roofFront = 4,
+        roofRows = 16,
+        slab = 4,
+        tiles = {
+          { 16, 17, 17, 18 },
+          { 10, 11, 11, 12 },
+          { 26, 27, 27, 28 },
+          { 1, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_block_plain_clipped",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 38, 38, 28 },
+          { 26, 7, 55, 56, 7, 7, 7, 28 },
+          { 1, 2, 57, 58, 2, 2, 2, 22 },
+        },
+        topRows = {
+          { 16, 17, 17, 17, 17, 17, 17, 18 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 10, 11, 11, 11, 11, 11, 11, 12 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_block_brick_clipped",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 26, 27, 27, 27, 27, 27, 27, 28 },
+          { 26, 27, 27, 27, 27, 38, 38, 28 },
+          { 26, 27, 55, 56, 27, 27, 27, 28 },
+          { 1, 2, 57, 58, 2, 2, 2, 22 },
+        },
+        topRows = {
+          { 16, 17, 17, 17, 17, 17, 17, 18 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 10, 11, 11, 11, 11, 11, 11, 12 },
+        },
+      },
+    },
+
+    gen2_TilesetJohtoModern = {
+      {
+        frontEave = 0,
+        id = "gen2_goldenrod_radio_tower_west",
+        roofBack = 2,
+        roofCycle = { 2, 11 },
+        roofFront = 4,
+        roofRows = 16,
+        seal = "e",
+        slab = 4,
+        tiles = {
+          { 46, 86, 66, 67 },
+          { 80, 48, 51, 83 },
+          { 80, 33, 29, 83 },
+          { 80, 38, 38, 83 },
+          { 80, 33, 29, 83 },
+          { 80, 38, 38, 83 },
+          { 80, 33, 29, 83 },
+          { 80, 38, 38, 83 },
+          { 80, 33, 29, 83 },
+          { 80, 38, 38, 83 },
+          { 80, 33, 29, 83 },
+          { 80, 38, 38, 83 },
+          { 80, 33, 29, 83 },
+          { 80, 38, 38, 83 },
+          { 80, 33, 29, 33 },
+          { 80, 38, 38, 38 },
+          { 80, 33, 29, 33 },
+          { 80, 38, 38, 38 },
+          { 80, 33, 29, 33 },
+          { 80, 38, 38, 38 },
+          { 80, 33, 29, 33 },
+          { 80, 83, 53, 53 },
+          { 80, 83, 53, 53 },
+          { 32, 37, 6, 6 },
+        },
+      },
+      {
+        frontEave = 0,
+        id = "gen2_goldenrod_radio_tower_east",
+        roofBack = 2,
+        roofCycle = { 2, 11 },
+        roofFront = 4,
+        roofRows = 16,
+        seal = "w",
+        slab = 4,
+        tiles = {
+          { 46, 86, 66, 67 },
+          { 29, 48, 51, 83 },
+          { 29, 33, 29, 83 },
+          { 38, 38, 38, 83 },
+          { 29, 33, 29, 83 },
+          { 38, 38, 38, 83 },
+          { 29, 33, 29, 83 },
+          { 38, 38, 38, 83 },
+          { 29, 33, 29, 83 },
+          { 80, 33, 29, 83 },
+          { 80, 33, 29, 83 },
+          { 32, 33, 29, 37 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_goldenrod_dept_store",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 16, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 18 },
+          { 13, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 15 },
+          { 13, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 15 },
+          { 10, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 12 },
+          { 26, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 38, 38, 7, 7, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 55, 56, 7, 7, 24, 25, 7, 28 },
+          { 1, 2, 2, 2, 57, 58, 2, 2, 23, 23, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_goldenrod_hall_plain",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 16, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 18 },
+          { 13, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 15 },
+          { 13, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 15 },
+          { 10, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 12 },
+          { 26, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 38, 38, 7, 7, 7, 7, 7, 7, 38, 38, 28 },
+          { 26, 7, 7, 7, 55, 56, 7, 7, 7, 7, 7, 28 },
+          { 1, 2, 2, 2, 57, 58, 2, 2, 2, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_goldenrod_hall_plain_w",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 16, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 18 },
+          { 13, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 15 },
+          { 13, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 15 },
+          { 10, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 12 },
+          { 26, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 7, 7, 38, 38, 28 },
+          { 26, 7, 55, 56, 7, 7, 7, 7, 7, 7, 7, 28 },
+          { 1, 2, 57, 58, 2, 2, 2, 2, 2, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_goldenrod_block_plain_2bay",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 16, 17, 17, 17, 17, 17, 17, 18 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 10, 11, 11, 11, 11, 11, 11, 12 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 38, 38, 7, 7, 38, 38, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 1, 2, 2, 2, 2, 2, 2, 22 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_goldenrod_block_brick_2bay",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 16, 17, 17, 17, 17, 17, 17, 18 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 10, 11, 11, 11, 11, 11, 11, 12 },
+          { 26, 27, 27, 27, 27, 27, 27, 28 },
+          { 26, 38, 38, 27, 27, 38, 38, 28 },
+          { 26, 27, 27, 27, 27, 27, 27, 28 },
+          { 1, 2, 2, 2, 2, 2, 2, 22 },
+        },
+      },
+    },
+
+    gen2_TilesetKanto = {
+      {
+        frontEave = 4,
+        id = "gen2_kanto_museum",
+        roofBack = 2,
+        roofCycle = { 2, 51 },
+        roofFront = 4,
+        roofRows = 56,
+        slab = 4,
+        tiles = {
+          { 5, 6, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 8, 9 },
+          { 21, 56, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 56, 25 },
+          { 21, 56, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 56, 25 },
+          { 21, 22, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 24, 25 },
+          { 21, 56, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 56, 25 },
+          { 21, 56, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 56, 25 },
+          { 21, 22, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 24, 25 },
+          { 37, 38, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 40, 41 },
+          { 15, 50, 10, 10, 10, 50, 10, 10, 10, 50, 10, 10, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 29, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_gym_wide",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 5, 6, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 8, 9 },
+          { 21, 56, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 56, 25 },
+          { 21, 56, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 56, 25 },
+          { 21, 22, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 24, 25 },
+          { 37, 38, 10, 10, 34, 47, 63, 34, 34, 47, 63, 34, 10, 10, 40, 41 },
+          { 15, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 31 },
+          { 15, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 12, 10, 31 },
+          { 29, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 27, 28, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_silph",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 76, 78, 78, 78, 78, 78, 78, 78, 78, 78, 78, 78, 78, 78, 78, 77 },
+          { 90, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 90 },
+          { 90, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 90 },
+          { 92, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 93 },
+          { 15, 10, 50, 50, 50, 10, 50, 10, 50, 10, 50, 10, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 50, 10, 50, 10, 50, 50, 10, 10, 50, 50, 10, 10, 50, 10, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 10, 50, 50, 50, 10, 50, 10, 50, 10, 50, 10, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 50, 10, 50, 10, 50, 50, 10, 10, 50, 50, 10, 10, 50, 10, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 10, 50, 50, 50, 10, 50, 10, 50, 10, 50, 10, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 50, 10, 50, 10, 50, 50, 10, 10, 50, 50, 10, 10, 50, 10, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 10, 50, 50, 50, 10, 50, 10, 50, 10, 50, 10, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 50, 10, 50, 10, 50, 50, 10, 10, 50, 50, 10, 10, 50, 10, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 50, 10, 10, 50, 75, 75, 50, 10, 50, 10, 10, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 75, 75, 75, 11, 12, 10, 10, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 29, 26, 26, 26, 27, 28, 26, 26, 26, 26, 26, 26, 26, 26, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_dept_store",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 76, 78, 78, 78, 78, 78, 78, 78, 78, 78, 78, 77 },
+          { 90, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 90 },
+          { 90, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 90 },
+          { 92, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 93 },
+          { 15, 10, 50, 50, 50, 10, 50, 10, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 50, 10, 50, 10, 50, 50, 10, 10, 50, 10, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 10, 50, 50, 50, 10, 50, 10, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 50, 10, 50, 10, 50, 50, 10, 10, 50, 10, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 50, 10, 10, 50, 75, 75, 50, 10, 10, 10, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 75, 75, 75, 11, 12, 10, 10, 68, 69, 75, 31 },
+          { 29, 26, 26, 26, 27, 28, 26, 26, 74, 74, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_office_6x6",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 76, 78, 78, 78, 78, 78, 78, 78, 78, 78, 78, 77 },
+          { 90, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 90 },
+          { 90, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 90 },
+          { 92, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 93 },
+          { 15, 10, 50, 50, 50, 10, 50, 10, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 50, 10, 50, 10, 50, 50, 10, 10, 50, 10, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 50, 10, 10, 50, 75, 75, 50, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 75, 75, 75, 11, 12, 10, 10, 75, 75, 75, 31 },
+          { 29, 26, 26, 26, 27, 28, 26, 26, 26, 26, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_office_8x4",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 76, 78, 78, 78, 78, 78, 78, 78, 78, 78, 78, 78, 78, 78, 78, 77 },
+          { 90, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 90 },
+          { 90, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 90 },
+          { 92, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 93 },
+          { 15, 50, 10, 10, 10, 50, 10, 10, 50, 75, 75, 50, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 11, 12, 10, 10, 75, 75, 75, 31 },
+          { 29, 26, 26, 26, 26, 26, 26, 26, 27, 28, 26, 26, 26, 26, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_office_4x6",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 76, 78, 78, 78, 78, 78, 78, 77 },
+          { 90, 94, 94, 94, 94, 94, 94, 90 },
+          { 90, 94, 94, 94, 94, 94, 94, 90 },
+          { 92, 95, 95, 95, 95, 95, 95, 93 },
+          { 15, 10, 50, 50, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 50, 10, 50, 10, 50, 10, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 50, 10, 10, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 31 },
+          { 29, 26, 26, 26, 26, 26, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_office_4x4_door",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 76, 78, 78, 78, 78, 78, 78, 77 },
+          { 90, 94, 94, 94, 94, 94, 94, 90 },
+          { 90, 94, 94, 94, 94, 94, 94, 90 },
+          { 92, 95, 95, 95, 95, 95, 95, 93 },
+          { 15, 10, 50, 10, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 75, 11, 12, 75, 75, 75, 31 },
+          { 29, 26, 27, 28, 26, 26, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_office_4x4",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 76, 78, 78, 78, 78, 78, 78, 77 },
+          { 90, 94, 94, 94, 94, 94, 94, 90 },
+          { 90, 94, 94, 94, 94, 94, 94, 90 },
+          { 92, 95, 95, 95, 95, 95, 95, 93 },
+          { 15, 50, 10, 10, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 31 },
+          { 29, 26, 26, 26, 26, 26, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_lab",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 76, 78, 78, 78, 78, 78, 78, 78, 78, 78, 78, 77 },
+          { 90, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 90 },
+          { 90, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 90 },
+          { 92, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 93 },
+          { 15, 50, 10, 10, 50, 75, 75, 50, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 75, 75, 75, 11, 12, 10, 10, 75, 75, 75, 31 },
+          { 29, 26, 26, 26, 27, 28, 26, 26, 26, 26, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_civic",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 76, 78, 78, 78, 78, 78, 78, 78, 78, 78, 78, 77 },
+          { 90, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 90 },
+          { 90, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 90 },
+          { 92, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 93 },
+          { 15, 10, 50, 10, 10, 50, 10, 10, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 75, 11, 12, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 29, 26, 27, 28, 26, 26, 26, 26, 26, 26, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_civic_blank",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 76, 78, 78, 78, 78, 78, 78, 78, 78, 78, 78, 77 },
+          { 90, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 90 },
+          { 90, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 90 },
+          { 92, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 93 },
+          { 15, 50, 10, 10, 10, 50, 10, 10, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 29, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_gym",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 5, 6, 83, 83, 83, 83, 83, 83, 83, 83, 8, 9 },
+          { 21, 56, 18, 18, 18, 18, 18, 18, 18, 18, 56, 25 },
+          { 21, 56, 18, 18, 18, 18, 18, 18, 18, 18, 56, 25 },
+          { 21, 22, 23, 23, 23, 23, 23, 23, 23, 23, 24, 25 },
+          { 37, 38, 10, 10, 34, 47, 63, 34, 10, 10, 40, 41 },
+          { 15, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 31 },
+          { 15, 10, 10, 10, 10, 10, 10, 10, 11, 12, 10, 31 },
+          { 29, 26, 26, 26, 26, 26, 26, 26, 27, 28, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_gym_small",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 5, 6, 83, 83, 83, 83, 8, 9 },
+          { 21, 56, 18, 18, 18, 18, 56, 25 },
+          { 21, 56, 18, 18, 18, 18, 56, 25 },
+          { 21, 22, 23, 23, 23, 23, 24, 25 },
+          { 37, 38, 10, 10, 10, 10, 40, 41 },
+          { 15, 34, 34, 34, 34, 34, 34, 31 },
+          { 15, 10, 10, 10, 11, 12, 10, 31 },
+          { 29, 26, 26, 26, 27, 28, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_gym_small_shutter",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 5, 6, 83, 83, 83, 83, 8, 9 },
+          { 21, 56, 18, 18, 18, 18, 56, 25 },
+          { 21, 56, 18, 18, 18, 18, 56, 25 },
+          { 21, 22, 23, 23, 23, 23, 24, 25 },
+          { 37, 38, 10, 10, 50, 10, 40, 41 },
+          { 15, 34, 34, 34, 34, 34, 34, 31 },
+          { 15, 10, 10, 10, 11, 12, 50, 31 },
+          { 29, 26, 26, 26, 27, 28, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_mart",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 76, 78, 78, 78, 78, 78, 78, 77 },
+          { 90, 94, 94, 94, 94, 94, 94, 90 },
+          { 90, 94, 94, 94, 94, 94, 94, 90 },
+          { 92, 95, 95, 95, 95, 95, 95, 93 },
+          { 15, 10, 50, 10, 10, 10, 10, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 75, 11, 12, 68, 69, 75, 31 },
+          { 29, 26, 27, 28, 74, 74, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_center",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 76, 78, 78, 78, 78, 78, 78, 77 },
+          { 90, 94, 94, 94, 94, 94, 94, 90 },
+          { 90, 94, 94, 94, 94, 94, 94, 90 },
+          { 92, 95, 95, 95, 95, 95, 95, 93 },
+          { 15, 10, 50, 10, 10, 10, 10, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 75, 11, 12, 66, 67, 75, 31 },
+          { 29, 26, 27, 28, 74, 74, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_house",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 5, 6, 7, 7, 7, 7, 8, 9 },
+          { 21, 22, 23, 23, 23, 23, 24, 25 },
+          { 37, 38, 50, 34, 50, 50, 40, 41 },
+          { 92, 23, 23, 23, 23, 23, 23, 93 },
+          { 15, 34, 11, 12, 10, 10, 34, 31 },
+          { 29, 26, 27, 28, 26, 26, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_row_8x2_door",
+        roofBack = 2,
+        roofCycle = { 2, 11 },
+        roofFront = 4,
+        roofRows = 16,
+        slab = 4,
+        tiles = {
+          { 5, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 8, 9 },
+          { 21, 22, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 24, 25 },
+          { 37, 38, 11, 12, 35, 50, 10, 35, 35, 50, 10, 35, 10, 10, 40, 41 },
+          { 29, 26, 27, 28, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_row_6x2_door",
+        roofBack = 2,
+        roofCycle = { 2, 11 },
+        roofFront = 4,
+        roofRows = 16,
+        slab = 4,
+        tiles = {
+          { 5, 6, 7, 7, 7, 7, 7, 7, 7, 7, 8, 9 },
+          { 21, 22, 23, 23, 23, 23, 23, 23, 23, 23, 24, 25 },
+          { 37, 38, 11, 12, 35, 50, 10, 35, 10, 10, 40, 41 },
+          { 29, 26, 27, 28, 26, 26, 26, 26, 26, 26, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_row_6x2_window",
+        roofBack = 2,
+        roofCycle = { 2, 11 },
+        roofFront = 4,
+        roofRows = 16,
+        slab = 4,
+        tiles = {
+          { 5, 6, 7, 7, 7, 7, 7, 7, 7, 7, 8, 9 },
+          { 21, 22, 23, 23, 23, 23, 23, 23, 23, 23, 24, 25 },
+          { 37, 38, 10, 34, 35, 50, 10, 35, 10, 10, 40, 41 },
+          { 29, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_cottage_door",
+        roofBack = 2,
+        roofCycle = { 2, 11 },
+        roofFront = 4,
+        roofRows = 16,
+        slab = 4,
+        tiles = {
+          { 5, 6, 7, 7, 7, 7, 8, 9 },
+          { 21, 22, 23, 23, 23, 23, 24, 25 },
+          { 37, 38, 11, 12, 10, 10, 40, 41 },
+          { 29, 26, 27, 28, 26, 26, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_cottage_window",
+        roofBack = 2,
+        roofCycle = { 2, 11 },
+        roofFront = 4,
+        roofRows = 16,
+        slab = 4,
+        tiles = {
+          { 5, 6, 7, 7, 7, 7, 8, 9 },
+          { 21, 22, 23, 23, 23, 23, 24, 25 },
+          { 37, 38, 10, 34, 10, 10, 40, 41 },
+          { 29, 26, 26, 26, 26, 26, 26, 60 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_tower_clipped",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 15, 10, 50, 50, 50, 10, 50, 10, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 50, 10, 50, 10, 50, 50, 10, 10, 50, 10, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 10, 50, 50, 50, 10, 50, 10, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 50, 10, 50, 10, 50, 50, 10, 10, 50, 10, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 50, 10, 10, 50, 75, 75, 50, 50, 10, 50, 31 },
+          { 15, 75, 75, 75, 75, 75, 75, 75, 75, 75, 75, 31 },
+          { 15, 75, 75, 75, 11, 12, 10, 10, 75, 75, 75, 31 },
+          { 29, 26, 26, 26, 27, 28, 26, 26, 26, 26, 26, 60 },
+        },
+        topRows = {
+          { 76, 78, 78, 78, 78, 78, 78, 78, 78, 78, 78, 77 },
+          { 90, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 90 },
+          { 90, 94, 94, 94, 94, 94, 94, 94, 94, 94, 94, 90 },
+          { 92, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 93 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2_kanto_office_2x4_clipped_e",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 76, 78, 78, 78 },
+          { 90, 94, 94, 94 },
+          { 90, 94, 94, 94 },
+          { 92, 95, 95, 95 },
+          { 15, 50, 10, 10 },
+          { 15, 75, 75, 75 },
+          { 15, 75, 75, 75 },
+          { 29, 26, 26, 26 },
+        },
+      },
+    },
+
+    -- =====================================================================
+    -- Crystal
+    -- =====================================================================
+
+    gen2c_TilesetBattleTowerOutside = {
+      {
+        frontEave = 4,
+        id = "gen2c_battle_tower",
+        roofBack = 2,
+        roofCycle = { 2, 23 },
+        roofFront = 8,
+        roofRows = 32,
+        seal = "n",
+        slab = 4,
+        tiles = {
+          { 160, 161, 161, 161, 161, 161, 162, 99, 100, 101, 102, 100, 107, 165, 161, 161, 161, 161, 161, 166 },
+          { 167, 168, 0, 0, 0, 0, 169, 115, 116, 117, 118, 116, 124, 170, 0, 0, 0, 0, 171, 172 },
+          { 126, 142, 164, 164, 164, 164, 174, 99, 100, 101, 102, 100, 107, 175, 163, 163, 163, 163, 143, 125 },
+          { 96, 126, 173, 173, 173, 173, 173, 115, 116, 117, 118, 116, 124, 173, 173, 173, 173, 173, 125, 108 },
+          { 126, 96, 97, 109, 109, 109, 98, 99, 100, 101, 102, 100, 107, 97, 109, 109, 109, 98, 108, 125 },
+          { 96, 126, 112, 113, 113, 113, 114, 115, 116, 117, 118, 116, 124, 112, 113, 113, 113, 114, 125, 108 },
+          { 126, 96, 97, 109, 109, 109, 98, 99, 100, 101, 102, 100, 107, 97, 109, 109, 109, 98, 108, 125 },
+          { 96, 126, 112, 113, 113, 113, 114, 115, 116, 117, 118, 116, 124, 112, 113, 113, 113, 114, 125, 108 },
+          { 126, 96, 97, 109, 109, 109, 98, 99, 100, 101, 102, 100, 107, 97, 109, 109, 109, 98, 108, 125 },
+          { 96, 126, 112, 113, 113, 113, 114, 115, 116, 117, 118, 116, 124, 112, 113, 113, 113, 114, 125, 108 },
+          { 126, 96, 97, 109, 109, 109, 98, 99, 100, 101, 102, 100, 107, 97, 109, 109, 109, 98, 108, 125 },
+          { 96, 126, 112, 113, 113, 113, 114, 115, 116, 117, 118, 116, 124, 112, 113, 113, 113, 114, 125, 108 },
+          { 126, 96, 97, 109, 109, 109, 98, 99, 100, 101, 102, 100, 107, 97, 109, 109, 109, 98, 108, 125 },
+          { 96, 126, 112, 113, 113, 113, 114, 115, 116, 117, 118, 116, 124, 112, 113, 113, 113, 114, 125, 108 },
+          { 126, 96, 97, 109, 109, 109, 98, 99, 100, 101, 102, 100, 107, 97, 109, 109, 109, 98, 108, 125 },
+          { 96, 126, 112, 113, 113, 113, 114, 115, 116, 117, 118, 116, 124, 112, 113, 113, 113, 114, 125, 108 },
+          { 96, 96, 97, 109, 135, 128, 0, 129, 130, 131, 132, 130, 133, 0, 134, 136, 109, 111, 108, 108 },
+          { 155, 96, 97, 109, 137, 144, 145, 146, 146, 146, 146, 146, 146, 147, 148, 138, 110, 111, 108, 159 },
+          { 6, 155, 156, 157, 139, 127, 176, 153, 149, 150, 149, 150, 153, 179, 141, 140, 157, 158, 159, 6 },
+          { 6, 6, 6, 6, 6, 6, 177, 154, 151, 152, 151, 152, 154, 178, 6, 6, 6, 6, 6, 6 },
+        },
+      },
+      {
+        frontEave = 4,
+        id = "gen2c_battle_tower_gate",
+        roofBack = 2,
+        roofCycle = { 2, 27 },
+        roofFront = 4,
+        roofRows = 32,
+        slab = 4,
+        tiles = {
+          { 16, 17, 17, 17, 17, 17, 17, 18 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 10, 11, 11, 11, 11, 11, 11, 12 },
+          { 26, 27, 27, 27, 27, 27, 27, 28 },
+          { 26, 27, 27, 27, 27, 38, 38, 28 },
+          { 26, 27, 55, 56, 27, 27, 27, 28 },
+          { 1, 2, 57, 58, 2, 2, 2, 22 },
+        },
+      },
+    },
   },
 }
+
+-- Johto Modern reuses every Johto building template, plus Goldenrod-only ones.
+do
+  local extra = profile.buildings.gen2_TilesetJohtoModern
+  local shared = profile.buildings.gen2_TilesetJohto
+  local merged = {}
+  for i = 1, #extra do merged[#merged + 1] = extra[i] end
+  for i = 1, #shared do merged[#merged + 1] = shared[i] end
+  profile.buildings.gen2_TilesetJohtoModern = merged
+end
+
+-- Engine tileset ids (TILESET_* / Tileset*) resolve onto the gen-prefixed keys.
+local tilesets = profile.tilesets
+local buildings = profile.buildings
+
+-- Gen 2 Gold / Silver
+tilesets.gen2_TilesetDarkCave = tilesets.gen2_TilesetCave
+tilesets.Tilesetgen2_ = tilesets.gen2_TilesetJohto
+tilesets.Tilesetgen2_Modern = tilesets.gen2_TilesetJohtoModern
+tilesets.TILESET_CAVE = tilesets.gen2_TilesetCave
+tilesets.TILESET_DARK_CAVE = tilesets.gen2_TilesetCave
+tilesets.TILESET_ELITE_FOUR_ROOM = tilesets.gen2_TilesetEliteFourRoom
+tilesets.TILESET_FOREST = tilesets.gen2_TilesetForest
+tilesets.TILESET_HOUSE = tilesets.gen2_TilesetHouse
+tilesets.TILESET_JOHTO = tilesets.gen2_TilesetJohto
+tilesets.TILESET_JOHTO_MODERN = tilesets.gen2_TilesetJohtoModern
+tilesets.TILESET_KANTO = tilesets.gen2_TilesetKanto
+tilesets.TILESET_LAB = tilesets.gen2_TilesetLab
+tilesets.TILESET_LIGHTHOUSE = tilesets.gen2_TilesetLighthouse
+tilesets.TILESET_MART = tilesets.gen2_TilesetMart
+tilesets.TILESET_PARK = tilesets.gen2_TilesetPark
+tilesets.TILESET_PLAYERS_HOUSE = tilesets.gen2_TilesetPlayersHouse
+tilesets.TILESET_PLAYERS_ROOM = tilesets.gen2_TilesetPlayersRoom
+tilesets.TILESET_POKECENTER = tilesets.gen2_TilesetPokecenter
+tilesets.TILESET_RUINS_OF_ALPH = tilesets.gen2_TilesetRuinsOfAlph
+tilesets.TILESET_TOWER = tilesets.gen2_TilesetTower
+tilesets.TilesetCave = tilesets.gen2_TilesetCave
+tilesets.TilesetDarkCave = tilesets.gen2_TilesetCave
+tilesets.TilesetEliteFourRoom = tilesets.gen2_TilesetEliteFourRoom
+tilesets.TilesetForest = tilesets.gen2_TilesetForest
+tilesets.TilesetHouse = tilesets.gen2_TilesetHouse
+tilesets.TilesetJohto = tilesets.gen2_TilesetJohto
+tilesets.TilesetJohtoModern = tilesets.gen2_TilesetJohtoModern
+tilesets.TilesetKanto = tilesets.gen2_TilesetKanto
+tilesets.TilesetLab = tilesets.gen2_TilesetLab
+tilesets.TilesetLighthouse = tilesets.gen2_TilesetLighthouse
+tilesets.TilesetMart = tilesets.gen2_TilesetMart
+tilesets.TilesetPark = tilesets.gen2_TilesetPark
+tilesets.TilesetPlayersHouse = tilesets.gen2_TilesetPlayersHouse
+tilesets.TilesetPlayersRoom = tilesets.gen2_TilesetPlayersRoom
+tilesets.TilesetPokecenter = tilesets.gen2_TilesetPokecenter
+tilesets.TilesetRuinsOfAlph = tilesets.gen2_TilesetRuinsOfAlph
+tilesets.TilesetTower = tilesets.gen2_TilesetTower
+buildings.Tilesetgen2_ = buildings.gen2_TilesetJohto
+buildings.Tilesetgen2_Modern = buildings.gen2_TilesetJohtoModern
+buildings.TILESET_JOHTO = buildings.gen2_TilesetJohto
+buildings.TILESET_JOHTO_MODERN = buildings.gen2_TilesetJohtoModern
+buildings.TILESET_KANTO = buildings.gen2_TilesetKanto
+buildings.TilesetJohto = buildings.gen2_TilesetJohto
+buildings.TilesetJohtoModern = buildings.gen2_TilesetJohtoModern
+buildings.TilesetKanto = buildings.gen2_TilesetKanto
+
+-- Crystal
+tilesets.TILESET_BATTLE_TOWER_INSIDE = tilesets.gen2c_TilesetBattleTowerInside
+tilesets.TILESET_BATTLE_TOWER_OUTSIDE = tilesets.gen2c_TilesetBattleTowerOutside
+tilesets.TilesetBattleTowerInside = tilesets.gen2c_TilesetBattleTowerInside
+tilesets.TilesetBattleTowerOutside = tilesets.gen2c_TilesetBattleTowerOutside
+buildings.TILESET_BATTLE_TOWER_OUTSIDE = buildings.gen2c_TilesetBattleTowerOutside
+buildings.TilesetBattleTowerOutside = buildings.gen2c_TilesetBattleTowerOutside
+
+return profile

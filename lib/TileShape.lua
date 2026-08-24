@@ -60,6 +60,10 @@ local FALLBACK_HEIGHTS = {
   -- room's wall.  Same fold as `wall`, twice the height -- and its own
   -- class because `wall` is 16px for every interior in the game.
   cliff = 32,
+  terrace = 16,
+  waterfall = 32,
+  shell = 32,
+  column = 32,
   roof = 28,
   cylinder = 16,
   -- big round scenery: a 2x2-CELL drawing carved as ONE 32px voxel hull
@@ -137,9 +141,12 @@ local ART = {
   water = "flat",
   void = "flat",
   ledge = "top",
+  terrace = "top",
   roof = "top",
   wall = "upright",
   cliff = "upright",
+  waterfall = "upright",
+  shell = "upright",
   tree = "upright",
   fence = "upright",
   sign = "upright",
@@ -154,6 +161,7 @@ local ART = {
   -- 10px standee body reads as a chunk of furniture outdoors
   signpost = "billboard",
   post = "post",
+  column = "post",
   grass = "grass",
   -- animated flowers: flat synthesized ground PLUS a standing cutout of
   -- the drawing's darkest tones, one voxel deep (see Structures'
@@ -209,6 +217,7 @@ local ART = {
 }
 
 local spec = nil          -- the loaded data file, or false when absent
+local workbench = nil     -- optional local browser-workbench tile overrides
 local cache = {}          -- tileset id -> resolved shape list
 local figCache = {}       -- tileset id -> parsed figure masks, or false
 local mntCache = {}       -- tileset id -> parsed mounted masks, or false
@@ -228,6 +237,18 @@ local function load()
   return spec or nil
 end
 
+local function workbenchPins(tilesetId)
+  if workbench == nil then
+    local body = V.mod and V.mod.read and V.mod:read("data/workbench_overrides.json")
+    local ok, Json = pcall(V.require, "WorkbenchJson")
+    local parsed = (ok and body and Json.decode) and Json.decode(body)
+    workbench = (type(parsed) == "table" and parsed) or false
+  end
+  local sets = workbench and workbench.tilesets
+  local entry = sets and sets[tilesetId]
+  return entry and entry.pins or nil
+end
+
 function TileShape.heights()
   local s = load()
   local out = {}
@@ -245,10 +266,18 @@ local function authoredGroups(tilesetId, heights)
   local s = load()
   local entry = s and s.tilesets and s.tilesets[tilesetId]
   local out = {}
-  if not entry then return out end
-  for class, tiles in pairs(entry) do
-    if heights[class] and type(tiles) == "table" then
-      for _, t in ipairs(tiles) do out[t] = class end
+  if entry then
+    for class, tiles in pairs(entry) do
+      if heights[class] and type(tiles) == "table" then
+        for _, t in ipairs(tiles) do out[t] = class end
+      end
+    end
+  end
+  for tile, class in pairs(workbenchPins(tilesetId) or {}) do
+    local t = tonumber(tile)
+    if t and t >= 0 and t == math.floor(t) then
+      if class == "auto" then out[t] = nil
+      elseif type(class) == "string" and heights[class] then out[t] = class end
     end
   end
   return out
@@ -391,19 +420,43 @@ function TileShape.forMap(map)
       end
     end
   end
+  if tileset.collision then
+    local s = load()
+    local classes = (s and s.collision) or {}
+    for class, name in pairs(classes) do
+      if type(class) == "number" and heights[name] then
+        shapes.coll = shapes.coll or {}
+        shapes.coll[class] = shapeFor(name, heights, true)
+      end
+    end
+    local grassy = {}
+    if type(tileset.grassTiles) == "table" then
+      for _, class in ipairs(tileset.grassTiles) do grassy[#grassy + 1] = class end
+    end
+    if tileset.grassTile ~= nil then grassy[#grassy + 1] = tileset.grassTile end
+    for _, class in ipairs(grassy) do
+      if type(class) == "number" then
+        shapes.coll = shapes.coll or {}
+        if not shapes.coll[class] then
+          shapes.coll[class] = shapeFor("grass", heights, true)
+        end
+      end
+    end
+  end
+  local perTile = not tileset.collision
   for t = 0, count - 1 do
     local class = authored[t]
     if class then
       shapes[t] = shapeFor(class, heights, true)
-    elseif t == tileset.grassTile then
+    elseif perTile and t == tileset.grassTile then
       -- derived pin: every tileset already names its tall-grass tile, so
       -- the standing-tuft treatment needs no profile entry anywhere
       shapes[t] = shapeFor("grass", heights, true)
-    elseif flowerTiles[t] then
+    elseif perTile and flowerTiles[t] then
       shapes[t] = shapeFor("flower", heights, true)
-    elseif map.waterTiles and map.waterTiles[t] then
+    elseif perTile and map.waterTiles and map.waterTiles[t] then
       shapes[t] = shapes.classes.water
-    elseif map.walkable and map.walkable[t] then
+    elseif perTile and map.walkable and map.walkable[t] then
       shapes[t] = shapes.classes.ground
     else
       shapes[t] = shapes.classes.wall
@@ -441,9 +494,14 @@ function TileShape.at(map, shapes, tile, tx, ty)
       end
     end
   end
-  if not s or s.authored then return s end
+  if not s then return s end
   local cx = math.floor(tx / 2)
   local cy = math.floor(ty / 2)
+  if s.authored then return s end
+  if shapes.coll then
+    local cs = shapes.coll[map:cellTile(cx, cy)]
+    if cs then return cs end
+  end
   if map:isWaterCell(cx, cy) then return shapes.classes.water end
   if map:isWalkableCell(cx, cy) then return shapes.classes.ground end
   return s
@@ -705,6 +763,7 @@ end
 -- record needs the next lookup to re-resolve (hot reload, mod toggle).
 function TileShape.invalidate()
   spec = nil
+  workbench = nil
   cache = {}
   figCache = {}
   mntCache = {}

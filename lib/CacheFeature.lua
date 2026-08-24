@@ -62,8 +62,12 @@ function CacheFeature.new(ctx)
     local states = stack and stack.states
     if type(states) ~= "table" then return false end
     for _, state in ipairs(states) do
-      if type(state) == "table" and state.screenId == "TitleState" then
-        return true
+      if type(state) == "table" then
+        local id = state.screenId
+        if id == "TitleState" or id == "Gen2TitleState"
+           or id == "Gen2MainMenu" then
+          return true
+        end
       end
     end
     return false
@@ -97,7 +101,25 @@ function CacheFeature.new(ctx)
   end
 
   function feature.installLifecycle()
-    local Game = require("src.core.Game")
+    local Game = RuntimeHooks.gameOwner()
+    if type(Game.continueGame) == "function" then
+      RuntimeHooks.wrapOnce(Game, "continueGame", "dramaticShapeCacheGateContinueHook",
+        function(inner)
+          return function(self, ...)
+            inner(self, ...)
+            feature.gate(self)
+          end
+        end)
+    end
+    if type(Game.newGame) == "function" then
+      RuntimeHooks.wrapOnce(Game, "newGame", "dramaticShapeCacheGateNewGameHook",
+        function(inner)
+          return function(self, ...)
+            inner(self, ...)
+            feature.gate(self)
+          end
+        end)
+    end
     RuntimeHooks.wrapOnce(Game, "restoreSave", "dramaticShapeCacheGateHook",
       function(restoreSave)
         RuntimeHooks.wrapOnce(Game, "makeTitleState",

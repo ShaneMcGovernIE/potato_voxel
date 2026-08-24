@@ -40,7 +40,7 @@ function InputFeature.new(ctx)
 
   -- One step of the VOXEL angle ladder: everything an "8" press does,
   -- named so VR view control can make exactly the same step. The gate is
-  -- the registry's own; the tilt/GBC FX clearing is engine work delegated
+  -- the registry's own; the tilt/Shader FX clearing is engine work delegated
   -- to the same path as the original wrapper.
   local function cycleVoxel(game)
     local Pipelines = require("src.render.Pipelines")
@@ -52,8 +52,11 @@ function InputFeature.new(ctx)
       Pipelines.level("voxel")))
     Pipelines.syncOptions(game.save.options)
     game.save.options.tilt = 0
-    game.save.options.gbcfx = 0
-    require("src.render.GBCFX").setLevel(0)
+    local ShaderFX = require("src.render.ShaderFX")
+    for _, slot in ipairs(ShaderFX.SLOTS) do
+      game.save.options[ShaderFX.OPTION_KEY[slot]] = nil
+    end
+    ShaderFX.deactivate()
     require("src.render.Tilt").setLevel(game.save.options.tilt or 0)
     game:writeOptions()
     DebugOverlay.trace("voxel level -> %s",
@@ -72,7 +75,7 @@ function InputFeature.new(ctx)
   VR.cycleVoxel = cycleVoxel
 
   function feature.install()
-    local Game = require("src.core.Game")
+    local Game = RuntimeHooks.gameOwner()
     local Pipelines = require("src.render.Pipelines")
     RuntimeHooks.wrapOnce(Game, "keypressed",
       "dramaticShapeKeypressedHook", function(inner)
