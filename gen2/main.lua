@@ -395,6 +395,16 @@ do
     "potatoVoxelGoldDeferHook", function(inner)
       return function(self, dt)
         inner(self, dt)
+        -- Gen 1 drives the prebuilder from main.lua's own update tick, but
+        -- main.lua hands off to this bridge and returns before installing it,
+        -- so nothing advanced the pump on Gold: PREBUILD CACHE enumerated its
+        -- jobs, reported 0/N and sat there for the rest of the session.
+        local okPrebuild, Prebuild = pcall(V.require, "CachePrebuild")
+        if okPrebuild and Prebuild then
+          local covered = false
+          pcall(Prebuild.update, covered)
+          pcall(Prebuild.pump, covered)
+        end
         if #deferredWork == 0 then return end
         local batch = deferredWork
         deferredWork = {}
@@ -461,6 +471,23 @@ do
       local game = payload and payload.game
       if not game then return end
       CachePrebuild.bootstrap(game)
+      -- The prebuilder must build maps the way the live path does:
+      -- Map.new() then attachAtlas() for the tileset, renderer data and
+      -- doorTiles. That needs the world, which only this bridge holds.
+      if type(CachePrebuild.setMapLoader) == "function" then
+        CachePrebuild.setMapLoader(function(id)
+          local world = game and game.world
+          local Map = mapModule()
+          local maps = world and world.maps
+          local tilesets = world and world.tilesets
+          local def = maps and maps[id]
+          local tileset = def and tilesets and tilesets[def.tileset]
+          if not (Map and def and tileset) then return nil end
+          local map = attachAtlas(world, Map.new(def, tileset))
+          if not map then return nil end
+          return map
+        end)
+      end
       local Pipelines = require("src.render.Pipelines")
       local opts = (game.save and game.save.options) or game.options
       local stored = opts and opts.pipelines and opts.pipelines.voxel

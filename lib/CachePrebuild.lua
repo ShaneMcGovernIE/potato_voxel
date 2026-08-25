@@ -103,6 +103,14 @@ local function masksFor(maps, id)
   return out
 end
 
+-- Gen 2 carries its map table on game.data under a generation-scoped key
+-- (src/core/Game2.lua: self.data.gen2Maps) -- the same rename the engine
+-- applies in src/mods/Gen2Compat.lua's DATA_RENAMES (maps -> gen2Maps).
+-- Reading only `maps` enumerates nothing on Gold/Silver/Crystal.
+local function mapsOf(data)
+  return data and (data.maps or data.gen2Maps)
+end
+
 Prebuild.enumerate = function(maps)
   local ids = sortedIds(maps)
   local jobs = {}
@@ -130,6 +138,36 @@ function Prebuild.pendingJobs(jobs, completed)
   return pending
 end
 
+-- A generation bridge may supply its own map loader. src.world.MapLoader
+-- builds GEN 1 maps only (it reads data.maps/data.tilesets and attaches a Gen 1
+-- TileRenderer), and a Gold map additionally needs the bridge's voxelMap proxy
+-- (Gold's cellTile answers a COLL_* byte, not a Gen 1 tile id) and its
+-- attachAtlas (tileset, renderer image/data, doorTiles). Only the bridge holds
+-- the world handle those need, so it injects the loader here.
+local injectedLoader = nil
+function Prebuild.setMapLoader(fn)
+  injectedLoader = (type(fn) == "function") and fn or nil
+end
+
+local function loadMapById(data, id)
+  if injectedLoader then
+    local ok, map = pcall(injectedLoader, id)
+    return (ok and map) or nil
+  end
+  return require("src.world.MapLoader").load(data, id)
+end
+
+-- verifyJob needs the map a just-finished job meshed. Gen 1 reaches it through
+-- MapLoader.cached; an injected loader answers from its own cache.
+local function cachedMapById(id)
+  if injectedLoader then
+    local ok, map = pcall(injectedLoader, id)
+    return (ok and map) or nil
+  end
+  local okLoader, MapLoader = pcall(require, "src.world.MapLoader")
+  return (okLoader and MapLoader and MapLoader.cached(id)) or nil
+end
+
 function Prebuild.available()
   return MeshCache.available()
 end
@@ -139,7 +177,7 @@ function Prebuild.bootstrap(game)
   pumpPause = 0
   local data = game and game.data
   MeshCache.configure(data)
-  local jobs = Prebuild.enumerate(data and data.maps)
+  local jobs = Prebuild.enumerate(mapsOf(data))
   local ready, done = MeshCache.ready(jobs)
   -- Not READY is no longer "start from zero": a build interrupted
   -- mid-session (F3) left complete atomic payloads behind, and a rescan
@@ -340,7 +378,7 @@ function Prebuild.start(game)
   -- clears them.
   local sessionDeclined, sessionGateRan = state.declined, state.gateRan
   local data = game and game.data
-  local jobs = Prebuild.enumerate(data and data.maps)
+  local jobs = Prebuild.enumerate(mapsOf(data))
   if #jobs == 0 or not MeshCache.available() then return false end
   MeshCache.begin()
   -- RESUME (F3): jobs the boot scan found complete are skipped, so a
@@ -419,7 +457,7 @@ end
 function Prebuild.wipe(game)
   if state.running then return false end
   local data = game and game.data
-  local jobs = Prebuild.enumerate(data and data.maps)
+  local jobs = Prebuild.enumerate(mapsOf(data))
   local ok = MeshCache.wipe(jobs)
   if ok then
     ChunkMesher.invalidate()
@@ -457,7 +495,7 @@ function Prebuild.refresh(game)
   state.gateRan = true
   if state.running then return end
   local data = game and game.data
-  local jobs = Prebuild.enumerate(data and data.maps)
+  local jobs = Prebuild.enumerate(mapsOf(data))
   if #jobs ~= state.total then
     -- the dataset changed under us (hot reload): full re-bootstrap
     return Prebuild.bootstrap(game)
@@ -652,10 +690,9 @@ local function startCpuTask()
     phase = "load",
   }
   task.co = coroutine.create(function()
-    local MapLoader = require("src.world.MapLoader")
     local data = state.game and state.game.data
     local started = now()
-    task.map = MapLoader.load(data, job.id)
+    task.map = loadMapById(data, job.id)
     local loadedAt = now()
     if started and loadedAt then
       local loadMs = (loadedAt - started) * 1000
@@ -889,11 +926,10 @@ local function dispatchThreaded(covered)
      and not state.completed[tostring(job.id) .. "/ring"] then
     pair = nextJob
   end
-  local MapLoader = require("src.world.MapLoader")
   local data = state.game and state.game.data
   local t0 = love and love.timer and love.timer.getTime
             and love.timer.getTime() or 0
-  local map = MapLoader.load(data, job.id)
+  local map = loadMapById(data, job.id)
   local loadMs = (love and love.timer and love.timer.getTime
                  and (love.timer.getTime() - t0) * 1000) or 0
   metrics.mainThreadMapLoadMs = metrics.mainThreadMapLoadMs + loadMs
@@ -1106,12 +1142,11 @@ function Prebuild.update(covered)
     -- slice overshoot instead of freezing the frame unaccounted, and the
     -- completed job is still reachable through MapLoader.cached for the
     -- verification below.
-    local MapLoader = require("src.world.MapLoader")
     local data = state.game and state.game.data
     state.slot = true
     ChunkMesher.requestMapId(job.id, job.slot, job.masks,
                              false, true, function()
-      return MapLoader.load(data, job.id)
+      return loadMapById(data, job.id)
     end)
   end
   -- Prebuild runs alongside normal gameplay; the covered flag (menus,
@@ -1131,8 +1166,7 @@ function Prebuild.update(covered)
   end
   local jobStatus = ChunkMesher.jobStatus(job.id, job.slot)
   if jobStatus == "pending" then return end
-  local okLoader, MapLoader = pcall(require, "src.world.MapLoader")
-  local slotMap = okLoader and MapLoader and MapLoader.cached(job.id)
+  local slotMap = cachedMapById(job.id)
   if jobStatus ~= "complete" or not slotMap
      or not MeshCache.verifyJob(slotMap, job.slot) then
     -- A single bad job must not abort the whole build: record it, release

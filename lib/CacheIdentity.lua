@@ -46,7 +46,8 @@ function CacheIdentity.new(ctx)
     local hash = 17
     hash = hashString(hash, data and data.profileRevision)
     hash = hashString(hash, data and data.voxelProfileRevision)
-    local maps = data and data.maps or {}
+    -- see CachePrebuild.mapsOf: Gen 2 names this gen2Maps
+    local maps = (data and (data.maps or data.gen2Maps)) or {}
     for _, id in ipairs(sortedKeys(maps)) do
       local def = maps[id]
       hash = hashString(hash, id)
