@@ -1,19 +1,33 @@
 #!/usr/bin/env luajit
--- Inspect extracted Gen 2 tileset identifiers, tile/block layouts, and
--- collision quads. This is deliberately independent of the game so it can
--- be used while choosing a voxel replacement from the source artwork.
+-- Standalone tileset inspector for the potato_voxel mod. Self-contained:
+-- run from anywhere, it asks where the potato_voxel mod folder lives, then
+-- finds the extracted Gen 2 tileset data inside it (data/generated/,
+-- data/, generated/ or the folder root) and inspects identifiers, tile and
+-- block layouts, and collision quads.
 --
 -- Examples:
---   luajit tools/inspect_tilesets.lua --list
---   luajit tools/inspect_tilesets.lua --tileset TILESET_JOHTO --block 0x5b
---   luajit tools/inspect_tilesets.lua --tileset TILESET_JOHTO --collision 0x12
---   luajit tools/inspect_tilesets.lua --tileset TILESET_JOHTO --tile 19
---   luajit tools/inspect_tilesets.lua --tileset TILESET_JOHTO \
---       --html /tmp/johto-tileset.html
+--   luajit inspect_tilesets.lua --list
+--   luajit inspect_tilesets.lua --tileset TILESET_JOHTO --block 0x5b
+--   luajit inspect_tilesets.lua --tileset TILESET_JOHTO --collision 0x12
+--   luajit inspect_tilesets.lua --tileset TILESET_JOHTO --tile 19
+--   luajit inspect_tilesets.lua --tileset TILESET_JOHTO --html report.html
+--   luajit inspect_tilesets.lua --html all-tilesets.html
+--   luajit inspect_tilesets.lua --mod ~/mods/potato_voxel --list
 
 local function fail(message)
   io.stderr:write("inspect_tilesets: " .. message .. "\n")
   os.exit(2)
+end
+
+local function exists(path)
+  local f = io.open(path, "rb")
+  if f then f:close(); return true end
+  return false
+end
+
+local function isTty()
+  local _, _, code = os.execute("test -t 0")
+  return code == 0
 end
 
 local function parseNumber(value)
@@ -65,6 +79,8 @@ local function usage()
                        [--collision ID] [--html FILE]
 
 Options:
+  --mod FOLDER      potato_voxel mod folder (skips the interactive prompt;
+                    also read from POTATO_VOXEL_MOD_DIR)
   --data FILE       generated tilesets.lua (also checks POKEPORT_DATA_DIR)
   --list            list tileset identifiers and dimensions
   --tileset ID      select a tileset, for example TILESET_JOHTO
@@ -72,11 +88,12 @@ Options:
   --tile ID         print atlas coordinates and every block occurrence
   --collision ID    list blocks containing a collision byte; --cut uses 0x12
   --html FILE       write a labeled atlas/block report for the selected set
+                    (omit --tileset to write every tileset to one page)
   --cut             shorthand for --collision 0x12
   --help            show this help]])
 end
 
-local options = { data = nil, list = false, cut = false }
+local options = { data = nil, list = false, cut = false, mod = nil }
 local i = 1
 while i <= #arg do
   local key = arg[i]
@@ -89,12 +106,14 @@ while i <= #arg do
     options.cut = true
     options.collision = 0x12
   elseif key == "--data" or key == "--tileset" or key == "--block"
-      or key == "--tile" or key == "--collision" or key == "--html" then
+      or key == "--tile" or key == "--collision" or key == "--html"
+      or key == "--mod" then
     i = i + 1
     if not arg[i] then fail(key .. " needs a value") end
     if key == "--data" then options.data = arg[i]
     elseif key == "--tileset" then options.tileset = arg[i]
     elseif key == "--html" then options.html = arg[i]
+    elseif key == "--mod" then options.mod = arg[i]
     else
       local value = parseNumber(arg[i])
       if value == nil then fail("invalid number for " .. key .. ": " .. arg[i]) end
@@ -106,14 +125,27 @@ while i <= #arg do
   i = i + 1
 end
 
-local function exists(path)
-  local f = io.open(path, "rb")
-  if f then f:close(); return true end
-  return false
-end
-
 local function dirname(path)
   return path:match("^(.*)/[^/]*$") or "."
+end
+
+local modFolder = options.mod or os.getenv("POTATO_VOXEL_MOD_DIR")
+if not modFolder then
+  local known = "/Users/shanemcgovern/Library/Application Support/"
+    .. "pokemon-love2d/mods/potato_voxel"
+  modFolder = exists(known) and known or ""
+end
+
+if isTty() and not options.mod and not os.getenv("POTATO_VOXEL_MOD_DIR") then
+  io.write("Potato Voxel mod folder [" .. modFolder .. "]: ")
+  io.flush()
+  local line = io.read("l")
+  if line then line = line:match("^%s*(.-)%s*$") end
+  if line and line ~= "" then modFolder = line end
+end
+
+if modFolder ~= "" then
+  print("Using mod folder: " .. modFolder)
 end
 
 local dataCandidates = {}
@@ -122,6 +154,13 @@ local function candidate(path)
 end
 candidate(options.data)
 if not options.data then
+  if modFolder ~= "" then
+    local base = modFolder:gsub("/+$", "")
+    candidate(base .. "/data/generated/tilesets.lua")
+    candidate(base .. "/data/tilesets.lua")
+    candidate(base .. "/generated/tilesets.lua")
+    candidate(base .. "/tilesets.lua")
+  end
   local dataRoot = os.getenv("POKEPORT_DATA_DIR")
   candidate(dataRoot and (dataRoot .. "/generated/tilesets.lua"))
   candidate(dataRoot and (dataRoot .. "/tilesets.lua"))
@@ -263,7 +302,44 @@ local function fileUri(path)
   return "file://" .. uri
 end
 
-local function writeHtml(tilesetId, tileset, output)
+local htmlStyle = [[body{font:14px system-ui,sans-serif;background:#202124;color:#eee;padding:20px}
+h1{font-size:20px}h2{font-size:16px;margin:20px 0 6px}
+.zoombar{margin:6px 0 14px}.zoombar button{cursor:pointer;padding:2px 10px;margin-right:4px}
+.atlas{position:relative;display:inline-block;background:#000;border:1px solid #777;zoom:4}
+.atlas img{display:block;image-rendering:pixelated}.tile{position:absolute;width:8px;height:8px;
+display:none;box-sizing:border-box;background:rgba(0,0,0,.45);font:4px monospace;color:#fff;
+text-shadow:0 0 2px #000,0 0 2px #000;text-align:center;line-height:8px;overflow:hidden}
+.showNums .tile{display:block}
+details{margin:8px 0;background:#2b2c2f;padding:6px}table{border-collapse:collapse}
+td,th{border:1px solid #555;padding:3px 5px;font-family:monospace}code{color:#9cdcfe}
+]]
+
+local htmlScript = [[<script>
+function setZoom(z){var a=document.querySelectorAll('.atlas');
+for(var i=0;i<a.length;i++)a[i].style.zoom=z}
+var sel=document.getElementById('setSelect');
+if(sel){sel.addEventListener('change',function(){
+  var v=sel.value, sets=document.querySelectorAll('.set');
+  for(var i=0;i<sets.length;i++)
+    sets[i].style.display=(v==='__all__'||sets[i].getAttribute('data-id')===v)?'':'none';
+  if(v!=='__all__'){var t=document.getElementById('set-'+v);
+    if(t)t.scrollIntoView({block:'start'})}
+})}
+var nt=document.getElementById('numToggle');
+if(nt){nt.addEventListener('change',function(){
+  document.body.classList.toggle('showNums',nt.checked)})}
+</script>]]
+
+local function writeZoomBar(f)
+  f:write("<p class='zoombar'>zoom: ")
+  for _, z in ipairs({1, 2, 4, 8, 16}) do
+    f:write("<button onclick='setZoom(", z, ")'>", z, "x</button>")
+  end
+  f:write(" <label style='margin-left:12px'><input type='checkbox' id='numToggle'>",
+    " show tile numbers</label></p>")
+end
+
+local function writeTilesetSection(f, tilesetId, tileset)
   local sourceDir = dirname(dirname(dirname(dataPath)))
   local image = tileset.image
   local imagePath = image
@@ -271,23 +347,15 @@ local function writeHtml(tilesetId, tileset, output)
   local width = tonumber(tileset.imageWidth) or 128
   local height = tonumber(tileset.imageHeight) or 48
   local perRow = math.floor(width / 8)
-  local f = assert(io.open(output, "wb"))
-  f:write("<!doctype html><meta charset='utf-8'><title>Tileset ",
-    htmlEscape(tilesetId), "</title><style>")
-  f:write([[body{font:14px system-ui,sans-serif;background:#202124;color:#eee;padding:20px}
-h1{font-size:20px}.atlas{position:relative;display:inline-block;background:#000;border:1px solid #777}
-.atlas img{display:block;width:]], tostring(width), [[px;height:]], tostring(height),
-    [[px;image-rendering:pixelated}.tile{position:absolute;width:8px;height:8px;
-box-sizing:border-box;border:1px solid rgba(255,255,255,.12);font:5px monospace;color:#fff;
-text-shadow:0 0 2px #000,0 0 2px #000;text-align:center;line-height:8px}
-details{margin:8px 0;background:#2b2c2f;padding:6px}table{border-collapse:collapse}
-td,th{border:1px solid #555;padding:3px 5px;font-family:monospace}code{color:#9cdcfe}
-]] )
-  f:write("</style><h1>", htmlEscape(tilesetId), "</h1><p>Source: <code>",
-    htmlEscape(dataPath), "</code><br>Atlas: <code>",
-    htmlEscape(imagePath or "missing"), "</code></p><div class='atlas'>")
+  f:write("<section class='set' data-id='", htmlEscape(tilesetId),
+    "' id='set-", htmlEscape(tilesetId), "'><h2>", htmlEscape(tilesetId), "</h2>")
+  if imagePath then
+    f:write("<p>Atlas: <code>", htmlEscape(imagePath), "</code></p>")
+  end
+  f:write("<div class='atlas'>")
   if imagePath and exists(imagePath) then
-    f:write("<img src='", htmlEscape(fileUri(imagePath)), "'>")
+    f:write("<img src='", htmlEscape(fileUri(imagePath)),
+      "' style='width:", width, "px;height:", height, "px'>")
   else
     f:write("<div style='width:", width, "px;height:", height,
       "px;color:#f88;padding:8px'>Atlas image not found</div>")
@@ -320,13 +388,54 @@ td,th{border:1px solid #555;padding:3px 5px;font-family:monospace}code{color:#9c
       f:write("</details>")
     end
   end
+  f:write("</section>")
+end
+
+local function writeHtml(tilesetId, tileset, output)
+  local f = assert(io.open(output, "wb"))
+  f:write("<!doctype html><meta charset='utf-8'><title>Tileset ",
+    htmlEscape(tilesetId), "</title><style>", htmlStyle, "</style>")
+  f:write("<h1>", htmlEscape(tilesetId), "</h1><p>Source: <code>",
+    htmlEscape(dataPath), "</code></p>")
+  writeZoomBar(f)
+  writeTilesetSection(f, tilesetId, tileset)
+  f:write(htmlScript)
+  f:close()
+  print("Wrote " .. output)
+end
+
+local function writeHtmlAll(output)
+  local f = assert(io.open(output, "wb"))
+  f:write("<!doctype html><meta charset='utf-8'><title>Tileset atlas</title><style>",
+    htmlStyle, "</style>")
+  f:write("<h1>All tilesets</h1><p>Source: <code>", htmlEscape(dataPath), "</code></p>")
+  writeZoomBar(f)
+  f:write("<p><select id='setSelect' style='padding:4px;font-size:14px'>")
+  f:write("<option value='__all__'>All tilesets</option>")
+  for _, id in ipairs(sortedKeys(tilesets)) do
+    local t = tilesets[id]
+    if type(t) == "table" and t.image and t.image ~= "-" then
+      f:write("<option value='", htmlEscape(id), "'>", htmlEscape(id), "</option>")
+    end
+  end
+  f:write("</select></p>")
+  for _, id in ipairs(sortedKeys(tilesets)) do
+    local t = tilesets[id]
+    if type(t) == "table" and t.image and t.image ~= "-" then
+      writeTilesetSection(f, id, t)
+    end
+  end
+  f:write(htmlScript)
   f:close()
   print("Wrote " .. output)
 end
 
 if options.list or not options.tileset then
   printList()
-  if not options.tileset then os.exit(0) end
+  if not options.tileset then
+    if options.html then writeHtmlAll(options.html) end
+    os.exit(0)
+  end
 end
 
 local tileset = tilesets[options.tileset]
