@@ -605,7 +605,12 @@ local function deskSetModel(sp, pr, t)
           end
         end
       else
-        local tr0, tr1 = p.top[1], p.top[2]
+        -- A single-row top band is naturally authored as `top = { n }`.
+        -- Without this, top[2] is nil and the math.min below throws
+        -- "bad argument #2 to 'min'", which fails the whole map's mesh
+        -- job -- and a job failure is tolerated, so the map is silently
+        -- absent from the finished cache.
+        local tr0, tr1 = p.top[1], p.top[2] or p.top[1]
         local fr0, fr1 = p.facade[1], p.facade[2]
         local pd = p.depth
         -- `rise` lifts a part off the desk's top plane and `z` names its

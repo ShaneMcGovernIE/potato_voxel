@@ -4269,7 +4269,7 @@ local profile = {
         tray = { top = { 4, 11 }, front = { 12, 15 }, x = { 2, 11 },
                  inner = { 3, 9 }, floor = 0 },
         parts = {
-          { kind = "upright", x = { 11, 14 }, top = { 0 },
+          { kind = "upright", x = { 11, 14 }, top = { 0, 0 },
             facade = { 0, 11 }, z = 0, depth = 14 },       -- the open lid
         },
       },
@@ -4611,7 +4611,7 @@ local profile = {
           -- keyboard's top-right corner and the computer's left corner.
           -- Raised to the keyboard's own height so it reads as a cable
           -- spanning them rather than a scuff on the desk
-          { kind = "upright", x = { 16, 19 }, top = { 8 },
+          { kind = "upright", x = { 16, 19 }, top = { 8, 8 },
             facade = { 8, 9 }, z = 8, depth = 2 },
           -- the computer: drawn in 2:1 ISOMETRIC, turned 45 degrees to
           -- the map -- see the `iso` branch in buildParts.  `plan` = rx
