@@ -293,12 +293,22 @@ local function renderFrame(world, ctx)
   return canvas
 end
 
+-- LOVE 12 on iOS/Metal presents this 3D canvas Y-flipped. Gen 1 undoes that
+-- when Renderer blits worldOverride (src/render/Renderer.lua); Gold presents
+-- through render.compose instead, so the same bottom-origin negative-Y draw
+-- belongs here.
 local function drawFull(canvas, ctx)
   local width, height = tonumber(ctx.ww), tonumber(ctx.wh)
   if not (width and height) then width, height = love.graphics.getDimensions() end
   local cw, ch = canvas:getDimensions()
+  local sx, sy = width / cw, height / ch
   love.graphics.setColor(1, 1, 1, 1)
-  love.graphics.draw(canvas, 0, 0, 0, width / cw, height / ch)
+  local loveMajor = love.getVersion()
+  if love.system and love.system.getOS and love.system.getOS() == "iOS" and loveMajor >= 12 then
+    love.graphics.draw(canvas, 0, height, 0, sx, -sy)
+  else
+    love.graphics.draw(canvas, 0, 0, 0, sx, sy)
+  end
   return true
 end
 
