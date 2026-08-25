@@ -38,6 +38,10 @@ local Diagnostics = V.require("DiagnosticsBridge")
 
 local Voxel3D = {}
 
+Voxel3D.depthNear = nil
+Voxel3D.depthFar = nil
+Voxel3D.depthFocus = nil
+
 -- Vertex format shared by terrain chunks and character models: a position,
 -- the map-canvas / sprite-sheet pixel it samples, and a per-vertex darken
 -- factor that gives a face its angle to the sun without a normal or a
@@ -662,6 +666,7 @@ function Voxel3D.viewProjection(cx, cy, vw, vh)
     -- reason as every other branch here
     if cam.view and cam.proj then
       Voxel3D.fovY = cam.fov
+      Voxel3D.depthNear, Voxel3D.depthFar, Voxel3D.depthFocus = nil, nil, nil
       -- the VR eyes bring their fan with them (VRRig.eyeCamera)
       Voxel3D.skyRayLive = cam.skyRay
       return Mat4.mul(Mat4.mul(Mat4.scale(1, -1, 1), cam.proj), cam.view)
@@ -674,8 +679,10 @@ function Voxel3D.viewProjection(cx, cy, vw, vh)
     -- than a position: the water's reflected sun is sized in radians, and
     -- radians per canvas pixel is exactly this over the frame height
     Voxel3D.fovY = cam.fov
-    local proj = Mat4.perspective(cam.fov, vw / vh,
-                                  math.max(1, dist * 0.05), dist * 4 + 4096)
+    local near = math.max(1, dist * 0.05)
+    local far = dist * 4 + 4096
+    Voxel3D.depthNear, Voxel3D.depthFar, Voxel3D.depthFocus = near, far, dist
+    local proj = Mat4.perspective(cam.fov, vw / vh, near, far)
     if cam.projectionShift then proj[3] = cam.projectionShift end
     -- the same clip-space Y flip the orbit needs, for the same reason: we
     -- bypass LOVE's transform_projection and canvas coordinates run Y down
@@ -740,8 +747,10 @@ function Voxel3D.viewProjection(cx, cy, vw, vh)
   -- parallel to the view direction, so there is no degenerate a = 0 case.
   local up = { 0, math.sin(a), -math.cos(a) }
 
-  local proj = Mat4.perspectiveInPlace(mainCamProj, fov, vw / vh,
-                                       math.max(1, dist * 0.05), dist * 4 + 4096)
+  local near = math.max(1, dist * 0.05)
+  local far = dist * 4 + 4096
+  Voxel3D.depthNear, Voxel3D.depthFar, Voxel3D.depthFocus = near, far, dist
+  local proj = Mat4.perspectiveInPlace(mainCamProj, fov, vw / vh, near, far)
   -- Flip clip-space Y. Mat4.perspective emits textbook GL clip space with
   -- +Y up, but we bypass LOVE's own transform_projection, and LOVE's canvas
   -- coordinates run Y DOWN -- so without this the entire scene composites
@@ -1634,6 +1643,14 @@ function Voxel3D.canvas()
   return canvas
 end
 
+function Voxel3D.depthTexture()
+  return held and held.depth or nil
+end
+
+function Voxel3D.depthRange()
+  return Voxel3D.depthNear, Voxel3D.depthFar, Voxel3D.depthFocus
+end
+
 -- The bound canvas's pixel size, for a pass that has to work in screen
 -- coordinates (the water's reflection marches in them).
 function Voxel3D.size()
@@ -1648,6 +1665,7 @@ function Voxel3D.invalidate()
   end
   canvas, canvasW, canvasH = nil, 0, 0
   held = nil
+  Voxel3D.depthNear, Voxel3D.depthFar, Voxel3D.depthFocus = nil, nil, nil
   shaders[false], shaders[true] = nil, nil
   shaderErrors[false], shaderErrors[true] = nil, nil
   shaderPrecision[false], shaderPrecision[true] = nil, nil

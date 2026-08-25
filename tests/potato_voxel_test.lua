@@ -37,9 +37,32 @@ T.check(type(cacheProbe.installLifecycle) == "function",
 local SettingsFeature = exports.lib.require("SettingsFeature")
 local Stereoscopic3D = exports.lib.require("Stereoscopic3D")
 T.check(type(Stereoscopic3D.buildEyes) == "function"
-        and type(Stereoscopic3D.composite) == "function",
-        "stereoscopic renderer exposes eye and composite boundaries")
+        and type(Stereoscopic3D.composite) == "function"
+        and type(Stereoscopic3D.chromadepth) == "function",
+        "stereoscopic renderer exposes eye, depth, and composite boundaries")
+local nearColor = Stereoscopic3D.chromaColor(0)
+local farColor = Stereoscopic3D.chromaColor(1)
+T.eq(nearColor[1], 1, "chromadepth starts at red")
+T.eq(nearColor[3], 0, "chromadepth red has no blue")
+T.eq(farColor[1], 0, "chromadepth ends without red")
+T.eq(farColor[3], 1, "chromadepth ends at blue")
+T.check(Stereoscopic3D.linearDepth(0.9, 1, 100)
+        > Stereoscopic3D.linearDepth(0.2, 1, 100),
+        "chromadepth linearizes increasing depth")
+T.eq(Stereoscopic3D.modeSetting.values[6], "chromadepth",
+     "3D mode includes a dedicated chromadepth profile")
+T.check(Stereoscopic3D.CHROMA_RANGE.low
+        > Stereoscopic3D.CHROMA_RANGE.medium
+        and Stereoscopic3D.CHROMA_RANGE.medium
+           > Stereoscopic3D.CHROMA_RANGE.high,
+        "chromadepth strength orders its hue ranges")
 do
+  local modeGet = Stereoscopic3D.modeSetting.get
+  Stereoscopic3D.modeSetting.get = function() return "chromadepth" end
+  T.check(Stereoscopic3D.chromadepthEnabled()
+          and not Stereoscopic3D.anaglyphEnabled(),
+          "chromadepth uses a single depth-colored presentation path")
+  Stereoscopic3D.modeSetting.get = modeGet
   local base = {
     eye = { 0, 10, 0 }, focus = { 0, 0, 0 },
     up = { 0, 0, -1 }, fov = math.rad(53),

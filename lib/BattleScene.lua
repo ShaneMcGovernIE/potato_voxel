@@ -944,7 +944,8 @@ function BattleScene.render(state, arena, textures, token, battle)
     local sceneW = math.max(1, math.floor(pw * renderScale + 0.5))
     local sceneH = math.max(1, math.floor(ph * renderScale + 0.5))
     local rw, rh = AntiAlias.expand(sceneW, sceneH)
-    local stereo = Stereoscopic3D.enabled()
+    local stereo = Stereoscopic3D.anaglyphEnabled()
+    local chromadepth = Stereoscopic3D.chromadepthEnabled()
     local eyeRecords = stereo
       and Stereoscopic3D.buildEyes(cam, rw, rh, "battle")
       or { { camera = cam, w = rw, h = rh, slot = "battle" } }
@@ -1042,8 +1043,15 @@ function BattleScene.render(state, arena, textures, token, battle)
                      ShadowMap.snug(Mat4.translate(nb.ox, 0, nb.oy)))
       end
     end
+      local sceneCanvas = Voxel3D.endScene()
+      if chromadepth then
+        local near, far, focus = Voxel3D.depthRange()
+        sceneCanvas = Stereoscopic3D.chromadepth(
+          sceneCanvas, Voxel3D.depthTexture(), rw, rh, near, far, focus)
+          or sceneCanvas
+      end
       local eyeCanvas = AntiAlias.resolve(
-        Voxel3D.endScene(), sceneW, sceneH,
+        sceneCanvas, sceneW, sceneH,
         stereo and ("stereo-battle-" .. eyeIndex) or "battle")
       if renderScale < 1 then
         eyeCanvas = Upscale.apply(

@@ -191,7 +191,8 @@ function WorldFeature.render(ctx, worldDiag, stallSkip)
     Weather.update(ctx.state.map, wcam.x + ctx.vw / 2,
                    wcam.y + ctx.vh / 2, ctx.vw, ctx.vh)
   end
-  local stereo = Stereoscopic3D.enabled()
+  local stereo = Stereoscopic3D.anaglyphEnabled()
+  local chromadepth = Stereoscopic3D.chromadepthEnabled()
   local eyeSpec
   if stereo then
     eyeSpec = Stereoscopic3D.spec("world")
@@ -249,6 +250,18 @@ function WorldFeature.render(ctx, worldDiag, stallSkip)
                  ctx.scale * AntiAlias.factor() * rs)
       Weather.draw(ctx.scale * AntiAlias.factor() * rs, Voxel3D.project)
       Voxel3D.endOverlay()
+    end
+    if chromadepth then
+      local near, far, focus = Voxel3D.depthRange()
+      local encoded = Stereoscopic3D.chromadepth(
+        canvas, Voxel3D.depthTexture(), crw, crh, near, far, focus)
+      if encoded then
+        canvas = encoded
+      else
+        local stereoDiag = Stereoscopic3D.diagnostics()
+        Diagnostics.note("chromadepth fallback: %s",
+                         tostring(stereoDiag.reason or "unavailable"))
+      end
     end
     if rs < 1 then
       canvas = Upscale.apply(canvas, sw, sh, "world")

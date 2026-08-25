@@ -7,8 +7,8 @@ local Stereoscopic3D = {}
 
 Stereoscopic3D.modeSetting = ModSetting.new(
   "stereo3d", "3D MODE",
-  { "off", "colorcode", "redblue", "redcyan", "mono" },
-  { "OFF", "COLORCODE", "RED-BLUE", "RED-CYAN", "MONO" })
+  { "off", "colorcode", "redblue", "redcyan", "mono", "chromadepth" },
+  { "OFF", "COLORCODE", "RED-BLUE", "RED-CYAN", "MONO", "CHROMADEPTH" })
 
 Stereoscopic3D.depthSetting = ModSetting.new(
   "stereoDepth", "3D DEPTH",
@@ -72,6 +72,12 @@ Stereoscopic3D.DEPTH = {
   high = 5,
 }
 
+Stereoscopic3D.CHROMA_RANGE = {
+  low = 1.5,
+  medium = 1.0,
+  high = 0.7,
+}
+
 local COMPOSITE_SHADER = [[
   uniform Image leftEye;
   uniform Image rightEye;
@@ -93,10 +99,55 @@ local COMPOSITE_SHADER = [[
   }
 ]]
 
+local CHROMADEPTH_SHADER = [[
+  uniform Image scene;
+  uniform LOVE_HIGHP_OR_MEDIUMP Image depthTex;
+  uniform vec4 depthInfo;
+  uniform float depthRange;
+
+  vec3 chromaRamp(float t) {
+    if (t < 0.25) return mix(vec3(1.0, 0.0, 0.0),
+                             vec3(1.0, 1.0, 0.0), t * 4.0);
+    if (t < 0.5) return mix(vec3(1.0, 1.0, 0.0),
+                            vec3(0.0, 1.0, 0.0), (t - 0.25) * 4.0);
+    if (t < 0.75) return mix(vec3(0.0, 1.0, 0.0),
+                            vec3(0.0, 1.0, 1.0), (t - 0.5) * 4.0);
+    return mix(vec3(0.0, 1.0, 1.0),
+               vec3(0.0, 0.0, 1.0), (t - 0.75) * 4.0);
+  }
+
+  float linearDepth(float z) {
+    float n = depthInfo.x;
+    float f = depthInfo.y;
+    float clip = z * 2.0 - 1.0;
+    return (2.0 * n * f) / (f + n - clip * (f - n));
+  }
+
+  vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
+    vec4 source = Texel(scene, tc);
+    if (source.a <= 0.0) return source * color;
+    float rawDepth = Texel(depthTex, tc).r;
+    if (rawDepth >= 0.9999 || rawDepth != rawDepth) {
+      return source * color;
+    }
+    float distance = linearDepth(rawDepth);
+    float focus = depthInfo.z;
+    float span = max(0.001, focus * depthRange);
+    float t = clamp(0.5 + (distance - focus) / span, 0.0, 1.0);
+    float luminance = dot(source.rgb, vec3(0.299, 0.587, 0.114));
+    vec3 encoded = chromaRamp(t) * max(luminance, 0.035);
+    return vec4(clamp(encoded, 0.0, 1.0), source.a) * color;
+  }
+]]
+
 local compositeShader
 local compositeError
 local compositeTarget
 local lastFailure
+local chromaShader
+local chromaError
+local chromaTarget
+local lastChromaFailure
 
 local function copyVector(v)
   return { v[1], v[2], v[3] }
@@ -150,6 +201,39 @@ function Stereoscopic3D.enabled()
   if Stereoscopic3D.mode() == "off" then return false end
   local ok, VR = pcall(V.require, "VR")
   return not (ok and VR and VR.active and VR.active())
+end
+
+function Stereoscopic3D.anaglyphEnabled()
+  return Stereoscopic3D.enabled() and Stereoscopic3D.mode() ~= "chromadepth"
+end
+
+function Stereoscopic3D.chromadepthEnabled()
+  return Stereoscopic3D.enabled() and Stereoscopic3D.mode() == "chromadepth"
+end
+
+function Stereoscopic3D.chromaColor(t)
+  t = math.max(0, math.min(1, tonumber(t) or 0))
+  if t < 0.25 then
+    local p = t * 4
+    return { 1, p, 0 }
+  end
+  if t < 0.5 then
+    local p = (t - 0.25) * 4
+    return { 1 - p, 1, 0 }
+  end
+  if t < 0.75 then
+    local p = (t - 0.5) * 4
+    return { 0, 1, p }
+  end
+  local p = (t - 0.75) * 4
+  return { 0, 1 - p, 1 }
+end
+
+function Stereoscopic3D.linearDepth(z, near, far)
+  near = tonumber(near) or 1
+  far = math.max(near + 1, tonumber(far) or near + 1)
+  local clip = (tonumber(z) or 1) * 2 - 1
+  return (2 * near * far) / (far + near - clip * (far - near))
 end
 
 function Stereoscopic3D.depthSeparation()
@@ -242,6 +326,35 @@ local function getTarget(w, h)
   return canvas, nil
 end
 
+local function getChromaShader()
+  if chromaShader == nil then
+    local ok, shader = pcall(love.graphics.newShader, CHROMADEPTH_SHADER)
+    if ok and shader then
+      chromaShader = shader
+    else
+      chromaShader = false
+      chromaError = tostring(shader)
+    end
+  end
+  return chromaShader or nil
+end
+
+local function getChromaTarget(w, h)
+  if chromaTarget and chromaTarget.w == w and chromaTarget.h == h then
+    return chromaTarget.canvas, nil
+  end
+  local ok, canvas = pcall(love.graphics.newCanvas, w, h)
+  if not (ok and canvas) then
+    return nil, ok and "newCanvas returned nil" or tostring(canvas)
+  end
+  pcall(canvas.setFilter, canvas, "nearest", "nearest")
+  if chromaTarget and chromaTarget.canvas and chromaTarget.canvas.release then
+    pcall(chromaTarget.canvas.release, chromaTarget.canvas)
+  end
+  chromaTarget = { canvas = canvas, w = w, h = h }
+  return canvas, nil
+end
+
 local function sendProfile(shader, profile)
   local left, right = profile.left, profile.right
   pcall(shader.send, shader, "leftR", left[1])
@@ -296,15 +409,73 @@ function Stereoscopic3D.composite(left, right, w, h)
   return ok and target or nil
 end
 
+function Stereoscopic3D.chromadepth(canvas, depthCanvas, w, h,
+                                     near, far, focus)
+  if not (canvas and depthCanvas and w and h) then
+    lastChromaFailure = "scene or depth canvas unavailable"
+    return nil
+  end
+  local shader = getChromaShader()
+  local target, targetError = shader and getChromaTarget(w, h) or nil
+  if not shader then
+    lastChromaFailure = chromaError or "chromadepth shader unavailable"
+    return nil
+  end
+  if not target then
+    lastChromaFailure = targetError or "chromadepth canvas unavailable"
+    return nil
+  end
+  near = tonumber(near) or 1
+  far = math.max(near + 1, tonumber(far) or near + 1)
+  focus = math.max(near, math.min(far, tonumber(focus) or (near + far) * 0.5))
+  local range = Stereoscopic3D.CHROMA_RANGE[Stereoscopic3D.depth()]
+                or Stereoscopic3D.CHROMA_RANGE.medium
+  local previousCanvas = love.graphics.getCanvas()
+  local previousShader = love.graphics.getShader()
+  local previousBlend, previousAlpha = love.graphics.getBlendMode()
+  local ok = pcall(function()
+    canvas:setFilter("nearest", "nearest")
+    pcall(depthCanvas.setFilter, depthCanvas, "nearest", "nearest")
+    love.graphics.setCanvas(target)
+    love.graphics.clear(0, 0, 0, 0)
+    love.graphics.setBlendMode("replace", "premultiplied")
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.setShader(shader)
+    pcall(shader.send, shader, "scene", canvas)
+    pcall(shader.send, shader, "depthTex", depthCanvas)
+    pcall(shader.send, shader, "depthInfo", { near, far, focus, 0 })
+    pcall(shader.send, shader, "depthRange", range)
+    love.graphics.draw(canvas)
+  end)
+  if previousCanvas then
+    love.graphics.setCanvas(previousCanvas)
+  else
+    love.graphics.setCanvas()
+  end
+  love.graphics.setShader(previousShader)
+  love.graphics.setBlendMode(previousBlend or "alpha", previousAlpha)
+  if not ok then lastChromaFailure = "chromadepth draw failed" end
+  return ok and target or nil
+end
+
 function Stereoscopic3D.diagnostics()
   local available = love and love.graphics and love.graphics.newCanvas
                      and love.graphics.newShader and true or false
+  local compositorReason = lastFailure or compositeError
+  local chromadepthReason = lastChromaFailure or chromaError
   return {
     available = available,
     mode = Stereoscopic3D.mode(),
     depth = Stereoscopic3D.depth(),
     shader = compositeShader and compositeShader ~= false or nil,
-    reason = available and (lastFailure or compositeError) or
+    chromadepthShader = chromaShader and chromaShader ~= false or nil,
+    chromadepthEnabled = Stereoscopic3D.chromadepthEnabled(),
+    depthReadable = Voxel3D.depthTexture and Voxel3D.depthTexture() ~= nil
+                    or false,
+    compositorReason = compositorReason,
+    chromadepthReason = chromadepthReason,
+    reason = available and (Stereoscopic3D.chromadepthEnabled()
+                            and chromadepthReason or compositorReason) or
              "graphics canvas or shader unavailable",
   }
 end
@@ -318,6 +489,13 @@ function Stereoscopic3D.invalidate()
   compositeShader = nil
   compositeError = nil
   lastFailure = nil
+  if chromaTarget and chromaTarget.canvas and chromaTarget.canvas.release then
+    pcall(chromaTarget.canvas.release, chromaTarget.canvas)
+  end
+  chromaTarget = nil
+  chromaShader = nil
+  chromaError = nil
+  lastChromaFailure = nil
 end
 
 return Stereoscopic3D
