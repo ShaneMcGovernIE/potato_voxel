@@ -2,8 +2,12 @@
 local V = ...
 
 local Assets = require("src.render.Assets")
-local GbcPalette = require("src.render.GbcPalette")
-local Palettes = require("src.world.gen2.Palettes")
+-- The atlas bake is an optimization, not a prerequisite for geometry. A
+-- Crystal lineage may expose its palette resolver under a different private
+-- module path; keep the native atlas and raw pixels when these helpers are
+-- absent instead of making the whole Gen 2 bridge fail at load time.
+local okGbc, GbcPalette = pcall(require, "src.render.GbcPalette")
+local okPal, Palettes = pcall(require, "src.world.gen2.Palettes")
 
 local GoldAtlas = {}
 local cache = {}
@@ -58,7 +62,8 @@ end
 
 function GoldAtlas.forMap(world, map, rawAtlas)
   if not (world and map and map.tileset and rawAtlas
-      and love.image and love.image.newImageData and love.graphics) then
+      and okGbc and okPal and GbcPalette and Palettes
+      and love and love.image and love.image.newImageData and love.graphics) then
     return rawAtlas, false, nil
   end
   local key, daytime = keyFor(world, map)

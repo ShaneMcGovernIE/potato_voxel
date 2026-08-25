@@ -55,6 +55,7 @@ function GeometrySnapshot.fromMap(map, masks, voidFill, options)
       height = field(def, "height", state),
       tileset = field(def, "tileset", state),
       outdoor = field(def, "outdoor", state),
+      environment = field(def, "environment", state),
       borderBlock = field(def, "borderBlock", state),
       blocks = field(def, "blocks", state),
       connections = field(def, "connections", state),
@@ -73,6 +74,7 @@ function GeometrySnapshot.fromMap(map, masks, voidFill, options)
       doorTiles = field(tileset, "doorTiles", state),
       warpTiles = field(tileset, "warpTiles", state),
       grassTile = field(tileset, "grassTile", state),
+      tilePalettes = field(tileset, "tilePalettes", state),
       profileRevision = field(tileset, "profileRevision", state),
     },
     walkable = field(map, "walkable", state),
@@ -81,6 +83,10 @@ function GeometrySnapshot.fromMap(map, masks, voidFill, options)
     doorTiles = field(map, "doorTiles", state),
     warpTiles = field(map, "warpTiles", state),
     grassTile = field(map, "grassTile", state),
+    renderer = type(map.renderer) == "table" and {
+      gbcAtlas = map.renderer.gbcAtlas == true,
+      trueColor = map.renderer.trueColor == true,
+    } or nil,
     masks = copy(masks or {}, 0, state),
     voidFill = tostring(voidFill or "trees"),
     authoredProfileRevision = field(map, "profileRevision", state)

@@ -68,11 +68,81 @@ local metrics = {
 -- BUG-1 pre-warm latch: the first map's body mesh primes from the cache
 -- exactly once per session (see Prebuild.primeFirst).
 local primed = false
+local gen2MapCache = {}
+
+local function populated(value)
+  return type(value) == "table" and next(value) ~= nil
+end
+
+local function firstPopulated(primary, fallback)
+  if populated(primary) then return primary end
+  if populated(fallback) then return fallback end
+  return primary or fallback or {}
+end
+
+local function resolveMaps(game, data)
+  local world = game and (game.world or game.overworld)
+  if world and populated(world.maps) then return world.maps end
+  -- Gen 2 owns its imported tables under gen2Maps. Keep maps as a fallback
+  -- for older API-2 engines and headless fixtures, but prefer the namespaced
+  -- table so a Gen 2 boot never accidentally consumes a Gen 1 table.
+  if data and populated(data.gen2Maps) then return data.gen2Maps end
+  if data and populated(data.maps) then return data.maps end
+  local okR, RuntimeHooks = pcall(function() return V.require("RuntimeHooks") end)
+  if okR and RuntimeHooks and RuntimeHooks.liveGame then
+    local okG, Game = pcall(RuntimeHooks.liveGame)
+    if okG and Game then
+      local gWorld = Game.world or Game.overworld
+      if gWorld and populated(gWorld.maps) then return gWorld.maps end
+      if Game.data and populated(Game.data.gen2Maps) then
+        return Game.data.gen2Maps
+      end
+      if Game.data and populated(Game.data.maps) then return Game.data.maps end
+    end
+  end
+  return firstPopulated(data and data.gen2Maps, data and data.maps)
+end
+
+local function resolveTilesets(game, data)
+  local world = game and (game.world or game.overworld)
+  if world and populated(world.tilesets) then return world.tilesets end
+  if data and populated(data.gen2Tilesets) then return data.gen2Tilesets end
+  if data and populated(data.tilesets) then return data.tilesets end
+  local okR, RuntimeHooks = pcall(function() return V.require("RuntimeHooks") end)
+  if okR and RuntimeHooks and RuntimeHooks.liveGame then
+    local okG, Game = pcall(RuntimeHooks.liveGame)
+    if okG and Game then
+      local gWorld = Game.world or Game.overworld
+      if gWorld and populated(gWorld.tilesets) then return gWorld.tilesets end
+      if Game.data and populated(Game.data.gen2Tilesets) then
+        return Game.data.gen2Tilesets
+      end
+      if Game.data and populated(Game.data.tilesets) then
+        return Game.data.tilesets
+      end
+    end
+  end
+  return firstPopulated(data and data.gen2Tilesets, data and data.tilesets)
+end
+
+local function resolveData(game)
+  local data = game and game.data
+  local maps = resolveMaps(game, data)
+  local tilesets = resolveTilesets(game, data)
+  return {
+    maps = maps,
+    tilesets = tilesets,
+    profileRevision = data and data.profileRevision,
+    voxelProfileRevision = data and data.voxelProfileRevision,
+    gen2Palettes = data and data.gen2Palettes,
+    gen2Roofs = data and data.gen2Roofs,
+  }
+end
 
 local function sortedIds(maps)
   local ids = {}
   for id, def in pairs(maps or {}) do
-    if type(def) == "table" and def.width and def.height then
+    if type(def) == "table" and (def.width or def.w or def.blocks or def.environment or def.tileset) then
       ids[#ids + 1] = id
     end
   end
@@ -86,14 +156,20 @@ end
 local function masksFor(maps, id)
   local out = {}
   local ok, neighbours = pcall(OverworldState.computeNeighbors, maps, id, 2)
-  if not ok then neighbours = {} end
+  if not ok or not neighbours or #neighbours == 0 then
+    local okWorld, World = pcall(require, "src.world.gen2.World")
+    if okWorld and World and type(World.computeNeighbors) == "function" then
+      local okN, n = pcall(World.computeNeighbors, maps, id, 2)
+      if okN and n then neighbours = n end
+    end
+  end
   for _, neighbour in ipairs(neighbours or {}) do
     local other = maps[neighbour.id]
     if other then
       out[#out + 1] = {
         neighbour.ox, neighbour.oy,
-        neighbour.ox + other.width * 32,
-        neighbour.oy + other.height * 32,
+        neighbour.ox + (other.width or 0) * 32,
+        neighbour.oy + (other.height or 0) * 32,
       }
     end
   end
@@ -137,7 +213,8 @@ end
 function Prebuild.bootstrap(game)
   primed = false
   pumpPause = 0
-  local data = game and game.data
+  gen2MapCache = {}
+  local data = resolveData(game)
   MeshCache.configure(data)
   local jobs = Prebuild.enumerate(data and data.maps)
   local ready, done = MeshCache.ready(jobs)
@@ -216,13 +293,107 @@ function Prebuild.bootstrap(game)
   return ready
 end
 
+local function isGen2()
+  local okVersion, GameVersion = pcall(require, "src.core.GameVersion")
+  return okVersion and GameVersion and type(GameVersion.generation) == "function"
+         and tonumber(GameVersion.generation()) == 2
+end
+
+local function gen2MapOwner(game)
+  local world = game and (game.world or game.overworld)
+  local liveMap = world and world.map
+  local owner = liveMap and getmetatable(liveMap)
+  if type(owner) == "table" and type(owner.new) == "function" then
+    return owner
+  end
+  local okR, RuntimeHooks = pcall(function() return V.require("RuntimeHooks") end)
+  if okR and RuntimeHooks and RuntimeHooks.liveGame then
+    local okG, live = pcall(RuntimeHooks.liveGame)
+    local liveWorld = okG and live and (live.world or live.overworld)
+    local liveOwner = liveWorld and liveWorld.map
+                       and getmetatable(liveWorld.map)
+    if type(liveOwner) == "table" and type(liveOwner.new) == "function" then
+      return liveOwner
+    end
+  end
+  -- Current GS engines expose this alias. It is a fallback only; Crystal
+  -- runtimes can supply their own map class through the live world above.
+  local okMap, Gen2Map = pcall(require, "src.world.gen2.Map")
+  if okMap and type(Gen2Map) == "table"
+     and type(Gen2Map.new) == "function" then
+    return Gen2Map
+  end
+  return nil
+end
+
+local function loadPrebuildMap(data, id, game)
+  if not id then return nil end
+  data = resolveData(game or state.game)
+  if isGen2() then
+    if gen2MapCache[id] then return gen2MapCache[id] end
+    local Gen2Map = gen2MapOwner(game or state.game)
+    if Gen2Map then
+      local def = data.maps and data.maps[id]
+      local tileset = def and data.tilesets and data.tilesets[def.tileset]
+      if def and tileset then
+        local map = Gen2Map.new(def, tileset)
+        local world = (game and game.world) or (state.game and state.game.world)
+        if not world then
+          local okR, RuntimeHooks = pcall(function() return V.require("RuntimeHooks") end)
+          local okG, Game = okR and RuntimeHooks and RuntimeHooks.liveGame
+                              and pcall(RuntimeHooks.liveGame)
+          world = okG and Game and (Game.world or Game.overworld) or nil
+        end
+        if world and type(world.atlasFor) == "function" then
+          local okA, atlas, ts = pcall(world.atlasFor, world, def)
+          if okA and atlas then
+            map.tileset = ts or map.tileset
+            map.renderer = map.renderer or {}
+            local okGA, GoldAtlas = pcall(function() return V.require("GoldAtlas") end)
+            if okGA and GoldAtlas and GoldAtlas.forMap then
+              local colored, isColored, atlasData = GoldAtlas.forMap(world, map, atlas)
+              map.renderer.image = colored
+              map.renderer.gbcAtlas = isColored
+              map.renderer.data = data
+              map.renderer.atlasData = atlasData
+            end
+          end
+        end
+        if not (map.renderer and map.renderer.atlasData) then
+          local okAssets, Assets = pcall(require, "src.render.Assets")
+          local okPix, pix = okAssets and Assets and pcall(Assets.imageData, tileset.image)
+          if okPix and pix and pix.getPixel then
+            map.renderer = map.renderer or {}
+            map.renderer.atlasData = pix
+            map.renderer.data = data
+          end
+        end
+        gen2MapCache[id] = map
+        return map
+      end
+    end
+  end
+
+  local okLoader, MapLoader = pcall(require, "src.world.MapLoader")
+  if okLoader and MapLoader and type(MapLoader.load) == "function" then
+    return MapLoader.load(data, id)
+  end
+  return nil
+end
+
+local function cachedPrebuildMap(id)
+  if gen2MapCache[id] then return gen2MapCache[id] end
+  local okLoader, MapLoader = pcall(require, "src.world.MapLoader")
+  return (okLoader and MapLoader and MapLoader.cached) and MapLoader.cached(id) or nil
+end
+
 -- Never tear down an instance the overworld can still draw.  The options
 -- action may outlive the menu that started it (and the player can move while
 -- it runs), so the live set has to be checked at the moment a job completes,
 -- not only when prebuild starts.
 local function liveMaps(game)
   local live = {}
-  local overworld = game and (game.overworld or game)
+  local overworld = game and (game.world or game.overworld or game)
   local current = overworld and overworld.map
   if current and current.id then live[current.id] = true end
   for _, neighbour in ipairs((overworld and overworld.neighbors) or {}) do
@@ -235,6 +406,7 @@ end
 local function releaseMap(id, game)
   if liveMaps(game)[id] then return false end
   if ChunkMesher.release then ChunkMesher.release(id) end
+  gen2MapCache[id] = nil
   -- the module table is gone (sandbox): the loader is reached the
   -- supported way.
   local okLoader, MapLoader = pcall(require, "src.world.MapLoader")
@@ -324,7 +496,7 @@ end
 -- The old android() OS probe is gone with the sandbox: the one use was
 -- a shortened progress label, which now reads the same everywhere.
 
-Prebuild.isAndroid = android
+Prebuild.isAndroid = function() return false end
 
 function Prebuild.start(game)
   if state.running then
@@ -339,7 +511,8 @@ function Prebuild.start(game)
   -- silently re-arm the auto-start). Only bootstrap -- a fresh boot --
   -- clears them.
   local sessionDeclined, sessionGateRan = state.declined, state.gateRan
-  local data = game and game.data
+  local data = resolveData(game or state.game)
+  MeshCache.configure(data)
   local jobs = Prebuild.enumerate(data and data.maps)
   if #jobs == 0 or not MeshCache.available() then return false end
   MeshCache.begin()
@@ -418,11 +591,13 @@ end
 
 function Prebuild.wipe(game)
   if state.running then return false end
-  local data = game and game.data
+  local data = resolveData(game or state.game)
+  MeshCache.configure(data)
   local jobs = Prebuild.enumerate(data and data.maps)
   local ok = MeshCache.wipe(jobs)
   if ok then
     ChunkMesher.invalidate()
+    gen2MapCache = {}
     state.ready, state.cancelled, state.failed = false, false, false
     -- A decline stays sticky through a wipe: the player answered NO to
     -- the prompt this session, and wiping must not silently override
@@ -456,7 +631,8 @@ end
 function Prebuild.refresh(game)
   state.gateRan = true
   if state.running then return end
-  local data = game and game.data
+  local data = resolveData(game or state.game)
+  MeshCache.configure(data)
   local jobs = Prebuild.enumerate(data and data.maps)
   if #jobs ~= state.total then
     -- the dataset changed under us (hot reload): full re-bootstrap
@@ -652,10 +828,9 @@ local function startCpuTask()
     phase = "load",
   }
   task.co = coroutine.create(function()
-    local MapLoader = require("src.world.MapLoader")
     local data = state.game and state.game.data
     local started = now()
-    task.map = MapLoader.load(data, job.id)
+    task.map = loadPrebuildMap(data, job.id, state.game)
     local loadedAt = now()
     if started and loadedAt then
       local loadMs = (loadedAt - started) * 1000
@@ -889,11 +1064,10 @@ local function dispatchThreaded(covered)
      and not state.completed[tostring(job.id) .. "/ring"] then
     pair = nextJob
   end
-  local MapLoader = require("src.world.MapLoader")
   local data = state.game and state.game.data
   local t0 = love and love.timer and love.timer.getTime
             and love.timer.getTime() or 0
-  local map = MapLoader.load(data, job.id)
+  local map = loadPrebuildMap(data, job.id, state.game)
   local loadMs = (love and love.timer and love.timer.getTime
                  and (love.timer.getTime() - t0) * 1000) or 0
   metrics.mainThreadMapLoadMs = metrics.mainThreadMapLoadMs + loadMs
@@ -1106,12 +1280,11 @@ function Prebuild.update(covered)
     -- slice overshoot instead of freezing the frame unaccounted, and the
     -- completed job is still reachable through MapLoader.cached for the
     -- verification below.
-    local MapLoader = require("src.world.MapLoader")
     local data = state.game and state.game.data
     state.slot = true
     ChunkMesher.requestMapId(job.id, job.slot, job.masks,
                              false, true, function()
-      return MapLoader.load(data, job.id)
+      return loadPrebuildMap(data, job.id, state.game)
     end)
   end
   -- Prebuild runs alongside normal gameplay; the covered flag (menus,
@@ -1131,8 +1304,7 @@ function Prebuild.update(covered)
   end
   local jobStatus = ChunkMesher.jobStatus(job.id, job.slot)
   if jobStatus == "pending" then return end
-  local okLoader, MapLoader = pcall(require, "src.world.MapLoader")
-  local slotMap = okLoader and MapLoader and MapLoader.cached(job.id)
+  local slotMap = cachedPrebuildMap(job.id)
   if jobStatus ~= "complete" or not slotMap
      or not MeshCache.verifyJob(slotMap, job.slot) then
     -- A single bad job must not abort the whole build: record it, release

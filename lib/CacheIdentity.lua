@@ -42,11 +42,28 @@ function CacheIdentity.new(ctx)
     return hash
   end
 
+  local function hashAny(hash, value, depth)
+    depth = depth or 0
+    if type(value) ~= "table" then return hashString(hash, value) end
+    if depth > 8 then return hashString(hash, "<depth>") end
+    for _, key in ipairs(sortedKeys(value)) do
+      hash = hashAny(hash, key, depth + 1)
+      hash = hashAny(hash, value[key], depth + 1)
+    end
+    return hash
+  end
+
+  local function dataTable(data, primary, fallback)
+    local value = data and data[primary]
+    if type(value) == "table" and next(value) ~= nil then return value end
+    return (data and data[fallback]) or {}
+  end
+
   local function datasetRevision(data)
     local hash = 17
     hash = hashString(hash, data and data.profileRevision)
     hash = hashString(hash, data and data.voxelProfileRevision)
-    local maps = data and data.maps or {}
+    local maps = dataTable(data, "gen2Maps", "maps")
     for _, id in ipairs(sortedKeys(maps)) do
       local def = maps[id]
       hash = hashString(hash, id)
@@ -54,6 +71,9 @@ function CacheIdentity.new(ctx)
       hash = hashString(hash, def.height)
       hash = hashString(hash, def.tileset)
       hash = hashString(hash, def.outdoor)
+      hash = hashString(hash, def.environment)
+      hash = hashString(hash, def.palette)
+      hash = hashString(hash, def.group)
       hash = hashString(hash, def.borderBlock)
       hash = hashValues(hash, def.blocks)
       local connections = def.connections or {}
@@ -61,6 +81,7 @@ function CacheIdentity.new(ctx)
         local connection = connections[direction]
         hash = hashString(hash, direction)
         hash = hashString(hash, connection.map)
+        hash = hashString(hash, connection.mapId)
         hash = hashString(hash, connection.offset)
         hash = hashString(hash, connection.walkable)
       end
@@ -71,7 +92,7 @@ function CacheIdentity.new(ctx)
         hash = hashString(hash, VA.revision())
       end
     end
-    local tilesets = data and data.tilesets or {}
+    local tilesets = dataTable(data, "gen2Tilesets", "tilesets")
     for _, id in ipairs(sortedKeys(tilesets)) do
       local tileset = tilesets[id]
       hash = hashString(hash, id)
@@ -87,7 +108,11 @@ function CacheIdentity.new(ctx)
       hash = hashValues(hash, tileset.doorTiles)
       hash = hashValues(hash, tileset.warpTiles)
       hash = hashString(hash, tileset.grassTile)
+      hash = hashAny(hash, tileset.tilePalettes)
+      hash = hashAny(hash, tileset.collision)
     end
+    hash = hashAny(hash, data and data.gen2Palettes)
+    hash = hashAny(hash, data and data.gen2Roofs)
     return tostring(hash)
   end
 

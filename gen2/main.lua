@@ -1,4 +1,4 @@
--- Gold-specific PotatoVoxel entry point.
+-- Gen 2 PotatoVoxel entry point (Gold, Silver, and Crystal).
 
 local mod = ...
 
@@ -86,8 +86,14 @@ local function warnOnce(key, message)
   if mod.log and mod.log.warn then mod.log:warn("PotatoVoxel Gold: %s", message) end
 end
 
-local function mapModule()
+local function mapModule(world)
   if mapModules.Map then return mapModules.Map end
+  local liveMap = world and world.map
+  local owner = liveMap and getmetatable(liveMap)
+  if type(owner) == "table" and type(owner.new) == "function" then
+    mapModules.Map = owner
+    return owner
+  end
   local ok, Map = pcall(require, "src.world.gen2.Map")
   if ok and type(Map) == "table" and type(Map.new) == "function" then
     mapModules.Map = Map
@@ -96,10 +102,15 @@ local function mapModule()
   return nil
 end
 
-local function ensurePlayerPose()
+local function ensurePlayerPose(world)
+  local player = world and world.player
+  if player and type(player.pose) == "function" then return true end
   local ok, Player = pcall(require, "src.world.gen2.Player")
   if not (ok and type(Player) == "table") then
-    return nil, "Gold Player class is unavailable: " .. tostring(Player)
+    Player = player and getmetatable(player)
+  end
+  if not (type(Player) == "table") then
+    return nil, "Gen 2 Player class is unavailable: " .. tostring(Player)
   end
   if type(Player.pose) ~= "function" then
     function Player:pose()
@@ -113,7 +124,7 @@ end
 
 local function attachAtlas(world, map)
   if not (world and map and map.def and type(world.atlasFor) == "function") then
-    return nil, "Gold map or World:atlasFor is unavailable"
+    return nil, "Gen 2 map or World:atlasFor is unavailable"
   end
   local ok, atlas, tileset = pcall(world.atlasFor, world, map.def)
   if not ok then return nil, "World:atlasFor failed: " .. tostring(atlas) end
@@ -140,7 +151,7 @@ end
 -- dropped anything visible on a long connection.
 local function directNeighbors(world)
   local maps, tilesets = world and world.maps, world and world.tilesets
-  local Map = mapModule()
+  local Map = mapModule(world)
   if not (maps and tilesets and Map) then return {} end
 
   local out, seen = {}, {}
@@ -168,7 +179,7 @@ local function stateFor(world)
   if not (world and world.map and world.player and world.camera) then
     return nil, "Gold world is not ready"
   end
-  local posed, poseErr = ensurePlayerPose()
+  local posed, poseErr = ensurePlayerPose(world)
   if not posed then return nil, poseErr end
   local map, err = attachAtlas(world, world.map)
   if not map then return nil, err end
@@ -360,6 +371,12 @@ mod.hooks:wrap("render.compose", function(next, game, ctx)
   if targetLevel(game.world) < 1 then
     return next(game, ctx)
   end
+  if game.world and game.world.map then
+    local CachePrebuild = V.require("CachePrebuild")
+    if CachePrebuild and CachePrebuild.primeFirst then
+      CachePrebuild.primeFirst(game.world.map)
+    end
+  end
   Bridge.frames = Bridge.frames + 1
   local ok, canvas, err = pcall(renderFrame, game.world, ctx)
   if not ok then err, canvas = canvas, nil end
@@ -402,22 +419,6 @@ do
       end
     end)
 
-  mod.content.render_pipelines:register("voxel", {
-    label = "VOXEL",
-    levels = Voxel.ANGLE_LABELS,
-    hotkey = "8",
-    priority = 20,
-    available = function()
-      return Voxel3D.available()
-    end,
-    worldPresent = function(canvas) return canvas end,
-    update = function(dt, level)
-      Voxel.setLevel(level)
-      QualityMode.onLevel(level)
-      QualityMode.enforce(level)
-    end,
-  })
-
   local Settings = SettingsFeature.new({
     mod = mod,
     Voxel = Voxel,
@@ -446,6 +447,30 @@ do
     DebugOverlay = DebugOverlay,
     PlayerId = PlayerId,
     settingsEntries = Settings.entries,
+  })
+
+  mod.content.render_pipelines:register("voxel", {
+    label = "VOXEL",
+    levels = Voxel.ANGLE_LABELS,
+    hotkey = "8",
+    priority = 20,
+    available = function()
+      return Voxel3D.available()
+    end,
+    worldPresent = function(canvas) return canvas end,
+    update = function(dt, level)
+      Voxel.setLevel(level)
+      QualityMode.onLevel(level)
+      QualityMode.enforce(level)
+      local Game = RuntimeHooks.liveGame()
+      local world = Game and (Game.world or Game.overworld)
+      local covered = Game and Game.stack and Game.stack:top() ~= world
+      if not Cache.isGatePending() then
+        CachePrebuild.autoStart(Game)
+      end
+      CachePrebuild.update(covered)
+      CachePrebuild.pump(covered or Voxel.loading)
+    end,
   })
   Settings.defineSchema()
   PlayerId.ensure()

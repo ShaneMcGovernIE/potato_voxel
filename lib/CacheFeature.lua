@@ -58,19 +58,33 @@ function CacheFeature.new(ctx)
   end
 
   local function atTitle(game)
-    local stack = game and game.stack
-    local states = stack and stack.states
-    if type(states) ~= "table" then return false end
-    for _, state in ipairs(states) do
-      if type(state) == "table" then
-        local id = state.screenId
+    if not game then return true end
+    -- When the world/overworld is active (Gen 1 or Gen 2), we are in-game
+    if (game.world and game.world.map) or (game.overworld and game.overworld.map) then
+      return false
+    end
+    local stack = game.stack
+    if not stack then return true end
+    local top = stack.top and stack:top()
+    if top and type(top) == "table" then
+      local id = top.screenId
+      if id == "TitleState" or id == "Gen2TitleState"
+         or id == "Gen2MainMenu" or id == "MainMenuState" then
+        return true
+      end
+    end
+    local states = stack.states
+    if type(states) == "table" and #states > 0 then
+      local topState = states[#states]
+      if topState and type(topState) == "table" then
+        local id = topState.screenId
         if id == "TitleState" or id == "Gen2TitleState"
-           or id == "Gen2MainMenu" then
+           or id == "Gen2MainMenu" or id == "MainMenuState" then
           return true
         end
       end
     end
-    return false
+    return not (game.world or game.overworld or (game.save and game.save.player))
   end
 
   function feature.isGatePending()
@@ -79,6 +93,12 @@ function CacheFeature.new(ctx)
 
   function feature.gate(game)
     ctx.CachePrebuild.refresh(game)
+    -- NEW GAME enters the Gen 2 intro before the world/map instance exists.
+    -- Defer the gate until the live world is standing so Crystal can provide
+    -- its own map class through the active map rather than a Gold private
+    -- require. The per-frame auto-start will pick it up after world creation.
+    local world = game and (game.world or game.overworld)
+    if not (world and world.map) then return end
     if ctx.CachePrebuild.isReady() or not ctx.CachePrebuild.available() then
       return
     end
@@ -162,14 +182,24 @@ function CacheFeature.new(ctx)
           local status = ctx.CachePrebuild.status()
           local _, _, running = ctx.CachePrebuild.progress()
           local decision = ctx.CachePrebuild.activationDecision(status, running)
-          if decision == "cancel" then ctx.CachePrebuild.cancel()
-          elseif decision == "start" then ctx.CachePrebuild.start(g)
+          if decision == "cancel" then
+            ctx.CachePrebuild.cancel()
+          elseif decision == "start" then
+            if ctx.CachePrebuild.start(g) then
+              local Progress = V.require("CachePrebuildScreen")
+              g.stack:push(Progress.new(g))
+            end
           elseif decision == "confirm_rebuild" then
             local TextBox = require("src.render.TextBox")
             local ChoiceBox = require("src.ui.ChoiceBox")
             g.stack:push(TextBox.new(g, "REBUILD CACHE?", function()
               g.stack:push(ChoiceBox.new(g, function(yes)
-                if yes then ctx.CachePrebuild.rebuild(g) end
+                if yes then
+                  if ctx.CachePrebuild.rebuild(g) then
+                    local Progress = V.require("CachePrebuildScreen")
+                    g.stack:push(Progress.new(g))
+                  end
+                end
               end, { defaultNo = true }))
             end))
           end
