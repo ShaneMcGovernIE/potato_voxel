@@ -14,6 +14,7 @@ local V = ...
 
 local Mat4 = V.require("Mat4")
 local Voxel3D = V.require("Voxel3D")
+local Stereoscopic3D = V.require("Stereoscopic3D")
 local ShadowMap = V.require("ShadowMap")
 local ShadowCast = V.require("ShadowCast")
 -- a session logs its shadow failure once, naming the gate that shut the
@@ -1141,11 +1142,25 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   --
   -- A VR frame skips all of it: the caller brought its own cameras, and
   -- its own idea of the scene centre with them.
-  if not eyes then
+  local eyeSpec = type(eyes) == "table" and eyes.build and eyes or nil
+  local stereoCamera
+  if not eyes or eyeSpec then
+    if eyeSpec then Voxel3D.camera = nil end
     local fpRig, fpCx, fpCy = FirstPerson.frame(me, cx, cy, vw, vh)
     if fpRig then cx, cy = fpCx, fpCy end
+    if eyeSpec then
+      stereoCamera = Voxel3D.camera
+        or Stereoscopic3D.orbitCamera(cx, cy, vh)
+      Voxel3D.camera = stereoCamera
+    end
   elseif eyes.cx then
     cx, cy = eyes.cx, eyes.cy
+  end
+  if eyeSpec then
+    eyes = eyeSpec.build(stereoCamera,
+                         cx, cy, vw, vh, w, h)
+    if not eyes then return nil end
+    eyes.cx, eyes.cy = cx, cy
   end
 
   -- A staged fight, seen by the VR eyes: the flat screen draws the battle
@@ -1422,11 +1437,14 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
     if eye.adopt then FirstPerson.adoptVReye(eye.camera) end
     if not Voxel3D.beginScene(eye.w, eye.h, cx, cy, vw, vh,
                               skyFor(state.map), eye.slot) then
+      if eyeSpec then Voxel3D.camera = stereoCamera end
       return nil
     end
     drawScene()
+    if eyeSpec and eyeSpec.overlay then eyeSpec.overlay(i, eye) end
     out[i] = Voxel3D.endScene()
   end
+  if eyeSpec then Voxel3D.camera = stereoCamera end
   return out
 end
 

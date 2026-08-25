@@ -676,6 +676,7 @@ function Voxel3D.viewProjection(cx, cy, vw, vh)
     Voxel3D.fovY = cam.fov
     local proj = Mat4.perspective(cam.fov, vw / vh,
                                   math.max(1, dist * 0.05), dist * 4 + 4096)
+    if cam.projectionShift then proj[3] = cam.projectionShift end
     -- the same clip-space Y flip the orbit needs, for the same reason: we
     -- bypass LOVE's transform_projection and canvas coordinates run Y down
     proj = Mat4.mul(Mat4.scale(1, -1, 1), proj)
@@ -1613,9 +1614,9 @@ function Voxel3D.beginOverlay()
 end
 
 -- Close the overlay begun by beginOverlay.
-function Voxel3D.endOverlay()
+function Voxel3D.endOverlay(keepActive)
   love.graphics.setCanvas()
-  active, activeShader = false, nil
+  if not keepActive then active, activeShader = false, nil end
 end
 
 -- End the pass and hand back the rendered canvas.

@@ -7,6 +7,7 @@
 local V = ...
 
 local Voxel3D = V.require("Voxel3D")
+local Stereoscopic3D = V.require("Stereoscopic3D")
 local VoxelState = V.require("VoxelState")
 local VR = V.require("VR")
 local VoxelScene = V.require("VoxelScene")
@@ -185,41 +186,75 @@ function WorldFeature.render(ctx, worldDiag, stallSkip)
   local rs = BrickProfile.renderScale()
   local crw = math.max(1, math.floor(rw * rs + 0.5))
   local crh = math.max(1, math.floor(rh * rs + 0.5))
-  local t0 = love and love.timer and love.timer.getTime
-            and love.timer.getTime() or 0
-  local canvas = VoxelScene.render(ctx.state, crw, crh,
-                                   ctx.vw, ctx.vh, ctx.paletteFor)
-  local renderMs = nil
-  if love and love.timer and love.timer.getTime then
-    renderMs = (love.timer.getTime() - t0) * 1000
-  end
-  if not canvas then
-    local reason = Voxel3D.beginFailure or "scene returned no canvas"
-    Diagnostics.pipelinePath("fallback", { reason = reason })
-    Diagnostics.error("drawWorld: scene returned no canvas (2D fallback): %s",
-                      reason)
-  end
-  if not worldDiag.firstRender and canvas then
-    worldDiag.firstRender = true
-    Diagnostics.note("drawWorld: first scene render (%.0fms)", renderMs or 0)
-  end
-  if not canvas then return nil end
-
   local wcam = ctx.state and ctx.state.camera
   if wcam then
     Weather.update(ctx.state.map, wcam.x + ctx.vw / 2,
                    wcam.y + ctx.vh / 2, ctx.vw, ctx.vh)
   end
-  if Voxel3D.beginOverlay() then
-    ctx.drawFx(function(wx, wy) return Voxel3D.project(wx, 0, wy) end,
-               ctx.scale * AntiAlias.factor() * rs)
-    Weather.draw(ctx.scale * AntiAlias.factor() * rs, Voxel3D.project)
-    Voxel3D.endOverlay()
+  local stereo = Stereoscopic3D.enabled()
+  local eyeSpec
+  if stereo then
+    eyeSpec = Stereoscopic3D.spec("world")
+    eyeSpec.overlay = function()
+      if Voxel3D.beginOverlay(true) then
+        ctx.drawFx(function(wx, wy) return Voxel3D.project(wx, 0, wy) end,
+                   ctx.scale * AntiAlias.factor() * rs)
+        Weather.draw(ctx.scale * AntiAlias.factor() * rs, Voxel3D.project)
+        Voxel3D.endOverlay(true)
+      end
+    end
   end
-  if rs < 1 then
-    canvas = Upscale.apply(canvas, sw, sh, "world")
+  local t0 = love and love.timer and love.timer.getTime
+            and love.timer.getTime() or 0
+  local rendered = VoxelScene.render(ctx.state, crw, crh,
+                                     ctx.vw, ctx.vh, ctx.paletteFor,
+                                     eyeSpec)
+  local renderMs = nil
+  if love and love.timer and love.timer.getTime then
+    renderMs = (love.timer.getTime() - t0) * 1000
+  end
+  if not rendered then
+    local reason = Voxel3D.beginFailure or "scene returned no canvas"
+    Diagnostics.pipelinePath("fallback", { reason = reason })
+    Diagnostics.error("drawWorld: scene returned no canvas (2D fallback): %s",
+                      reason)
+  end
+  if not worldDiag.firstRender and rendered then
+    worldDiag.firstRender = true
+    Diagnostics.note("drawWorld: first scene render (%.0fms)", renderMs or 0)
+  end
+  if not rendered then return nil end
+
+  local canvas
+  if stereo and type(rendered) == "table" and rendered[1] and rendered[2] then
+    local left, right = rendered[1], rendered[2]
+    if rs < 1 then
+      left = Upscale.apply(left, sw, sh, "stereo-world-left")
+      right = Upscale.apply(right, sw, sh, "stereo-world-right")
+    else
+      left = AntiAlias.resolve(left, sw, sh, "stereo-world-left")
+      right = AntiAlias.resolve(right, sw, sh, "stereo-world-right")
+    end
+    canvas = Stereoscopic3D.composite(left, right, sw, sh)
+    if not canvas then
+      local stereoDiag = Stereoscopic3D.diagnostics()
+      Diagnostics.note("stereo compositor fallback: %s",
+                       tostring(stereoDiag.reason or "unavailable"))
+      canvas = left
+    end
   else
-    canvas = AntiAlias.resolve(canvas, sw, sh, "world")
+    canvas = rendered
+    if Voxel3D.beginOverlay() then
+      ctx.drawFx(function(wx, wy) return Voxel3D.project(wx, 0, wy) end,
+                 ctx.scale * AntiAlias.factor() * rs)
+      Weather.draw(ctx.scale * AntiAlias.factor() * rs, Voxel3D.project)
+      Voxel3D.endOverlay()
+    end
+    if rs < 1 then
+      canvas = Upscale.apply(canvas, sw, sh, "world")
+    else
+      canvas = AntiAlias.resolve(canvas, sw, sh, "world")
+    end
   end
   Diagnostics.pipelinePath("rendered", {
     width = crw, height = crh, renderMs = renderMs,

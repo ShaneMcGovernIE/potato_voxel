@@ -12,6 +12,8 @@ trees and grey bollards.
 - A 3D voxel overworld with terrain depth, billboard characters, and shadows.
 - Quality presets from **HIGH** to **POTATO**, so you can trade visual detail
   for smoother performance.
+- Stereoscopic anaglyph output for COLORCODE amber/blue, RED-BLUE, RED-CYAN,
+  and luminance MONO glasses.
 - A persistent terrain cache so maps do not need to be rebuilt every time they
   are visited.
 - Safer cache recovery when a build is interrupted or a device runs low on
@@ -106,9 +108,28 @@ Changing an individual quality setting changes the mode to **CUSTOM**. The
 biggest performance control is **RENDER SCALE**. Lower it if the game still
 struggles after the cache has been built.
 
+## Stereoscopic 3D
+
+Open **OPTIONS → VOXEL SETTINGS** and choose **3D MODE**. **COLORCODE** sends
+the left eye to amber and the right eye to blue. **RED-BLUE** and **RED-CYAN**
+use their matching left/right filters. **MONO** converts each eye to
+luminance before sending the left eye to red and the right eye to cyan.
+Hold the glasses with the amber or red lens over your left eye and the blue or
+cyan lens over your right eye; swapping them is not exposed as a setting.
+
+**3D DEPTH** controls the eye separation. **MEDIUM** is the default; use
+**LOW** for a more relaxed image or **HIGH** for stronger parallax. Stereo
+renders the overworld and staged 3D battles twice, so lower **RENDER SCALE**
+if the frame rate drops. Menus, dialogue, HUDs, and battle text stay in one
+readable mono layer. VR takes presentation priority when it is available.
+
+If the graphics driver cannot create the second eye canvas or the compositor
+shader, PotatoVoxel records the reason and shows the normal mono voxel frame.
+
 ## What is not included
 
-- **VR** and first-/third-person modes.
+- VR presentation and first-/third-person controls remain engine-owned; VR
+  takes priority over anaglyph output while active.
 - The unused **Horde** minigame.
 - Pokémon Stadium ROM importing or bundled Stadium ROM assets.
 - Other high-cost features removed for performance and

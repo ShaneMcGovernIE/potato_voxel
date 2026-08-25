@@ -35,6 +35,51 @@ local cacheProbe = CacheFeature.new({})
 T.check(type(cacheProbe.installLifecycle) == "function",
         "cache feature owns its lifecycle wrappers")
 local SettingsFeature = exports.lib.require("SettingsFeature")
+local Stereoscopic3D = exports.lib.require("Stereoscopic3D")
+T.check(type(Stereoscopic3D.buildEyes) == "function"
+        and type(Stereoscopic3D.composite) == "function",
+        "stereoscopic renderer exposes eye and composite boundaries")
+do
+  local base = {
+    eye = { 0, 10, 0 }, focus = { 0, 0, 0 },
+    up = { 0, 0, -1 }, fov = math.rad(53),
+  }
+  local depthGet = Stereoscopic3D.depthSetting.get
+  local function eyesFor(depth)
+    Stereoscopic3D.depthSetting.get = function() return depth end
+    return Stereoscopic3D.buildEyes(base, 160, 144, "test")
+  end
+  local lowEyes = eyesFor("low")
+  local mediumEyes = eyesFor("medium")
+  local highEyes = eyesFor("high")
+  Stereoscopic3D.depthSetting.get = depthGet
+  local lowGap = math.abs(lowEyes[1].camera.eye[1] - lowEyes[2].camera.eye[1])
+  local mediumGap = math.abs(mediumEyes[1].camera.eye[1]
+                              - mediumEyes[2].camera.eye[1])
+  local highGap = math.abs(highEyes[1].camera.eye[1]
+                            - highEyes[2].camera.eye[1])
+  T.check(lowEyes and mediumEyes and highEyes
+          and lowEyes[1].slot == "test_left"
+          and lowEyes[2].slot == "test_right"
+          and lowGap < mediumGap and mediumGap < highGap
+          and lowEyes[1].camera.projectionShift
+          and lowEyes[1].camera.projectionShift
+             == -lowEyes[2].camera.projectionShift,
+          "stereo eyes use paired slots, depth ordering, and opposite shifts")
+  T.eq(lowEyes[1].camera.focus[1] + lowEyes[2].camera.focus[1],
+       base.focus[1] * 2,
+       "stereo eyes keep a shared convergence plane")
+  local colorcode = Stereoscopic3D.PROFILES.colorcode
+  local redblue = Stereoscopic3D.PROFILES.redblue
+  local redcyan = Stereoscopic3D.PROFILES.redcyan
+  local mono = Stereoscopic3D.PROFILES.mono
+  T.eq(colorcode.left[1][1], 1, "colorcode left eye keeps red")
+  T.eq(colorcode.left[2][1], 0.55, "colorcode left eye adds amber green")
+  T.eq(redblue.right[3][3], 1, "red-blue right eye keeps blue")
+  T.eq(redcyan.right[2][2], 1, "red-cyan right eye keeps green")
+  T.eq(mono.left[1][2], 0.587, "mono left eye uses luminance")
+  T.eq(mono.right[3][3], 0.114, "mono right eye uses luminance")
+end
 local function settingStub()
   return { schema = function() end, read = function() return 1 end,
            allows = function() return true end, key = "stub",
@@ -50,6 +95,10 @@ local settingsProbe = SettingsFeature.new({
   MapAtmos = { setting = settingStub() },
   Weather = { setting = settingStub() },
   AntiAlias = { setting = settingStub() },
+  Stereoscopic3D = { modeSetting = settingStub(),
+                     depthSetting = settingStub(),
+                     supported = function() return true end,
+                     mode = function() return "off" end },
   VR = { setting = settingStub(), smoothTurn = settingStub(),
          supported = function() return false end,
          enabled = function() return false end },
