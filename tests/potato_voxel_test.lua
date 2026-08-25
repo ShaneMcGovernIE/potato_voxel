@@ -1781,7 +1781,7 @@ end
             for j = hdr, pi do
               if lines[j]:match("^%s*for%s") and
                  (lines[j]:match("for%s+[^=]-%f[%w_]" .. name
-                                  .. "%f[^%w_][^%n=]-in")
+                                  .. "%f[^%w_][^=]-in")
                   or lines[j]:match("for%s+[%w_%s,]*%f[%w_]" .. name
                                     .. "%f[^%w_]%s*=")) then
                 return true
