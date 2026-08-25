@@ -6,7 +6,7 @@
 -- and it has to put those two patches of ground exactly where the battle
 -- screen wants its two pics:
 --
---     the player's mon   (26, 96)    back pic, feet on the text box, well left
+--     the player's mon   (26, 96)    Gen 1 back pic, feet on the text box
 --     the enemy's mon   (124, 56)    front pic, bottom of the 7x7 slot
 --
 -- Four screen coordinates, so four equations. The rig below is the solution:
@@ -92,13 +92,33 @@ BattleCam.RIGS = {
   },
 }
 
+-- Gold's native player back-pic box is centred at x=40 rather than Gen 1's
+-- x=26. These are the same solved rigs, recalculated against (40,96) and
+-- (124,56); keeping them separate leaves Gen 1's long-standing composition
+-- byte-for-byte unchanged.
+BattleCam.RIGS_GEN2 = {
+  tele = {
+    side = 69.36779, back = 144.96, height = 37.88,
+    lookX = -2.05225, lookY = 0.16472, frameH = 36.33348,
+  },
+  wide = {
+    side = 25.30300, back = 41.16, height = 16.61662,
+    lookX = -7.40993, lookY = -2.80097, frameH = 55.62,
+  },
+}
+
 BattleCam.DEFAULT_RIG = "tele"
 
 -- The rig an arena asks for, falling back to the default for anything that
 -- does not ask (and for a name that is not one of the two).
 function BattleCam.rigFor(arena)
   local want = arena and arena.cam
-  return BattleCam.RIGS[want] or BattleCam.RIGS[BattleCam.DEFAULT_RIG]
+  local ok, GameVersion = pcall(require, "src.core.GameVersion")
+  local gen2 = ok and GameVersion
+            and type(GameVersion.generation) == "function"
+            and tonumber(GameVersion.generation()) == 2
+  local rigs = gen2 and BattleCam.RIGS_GEN2 or BattleCam.RIGS
+  return rigs[want] or rigs[BattleCam.DEFAULT_RIG]
 end
 
 -- ------- the drift

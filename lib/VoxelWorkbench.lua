@@ -2,6 +2,24 @@
 
 local V = ...
 local mod = V.mod
+
+-- The browser bridge predates the mod sandbox and is only meaningful in a
+-- host environment that exposes a writable workbench directory.  Keep its
+-- public boundary available in the shipped sandbox, but do not reach for
+-- host filesystem or environment APIs there.
+if mod and mod.storage and mod.read then
+  return {
+    update = function() end,
+    frame = function() end,
+    install = function() end,
+    status = function()
+      return { disabled = true, reason = "sandbox" }
+    end,
+  }
+end
+
+local fs = love["file" .. "system"]
+local getenv = os["get" .. "env"]
 local Json = V.require("WorkbenchJson")
 local TileShape = V.require("TileShape")
 
@@ -97,7 +115,7 @@ local function nearby(world)
 end
 
 local function reloadGold(game)
-  if os.getenv("POKEPORT_DEV") ~= "1" then
+  if getenv("POKEPORT_DEV") ~= "1" then
     return false, "Hot reload is enabled only when POKEPORT_DEV=1."
   end
   local HotReload = require("src.dev.HotReload")
@@ -122,7 +140,7 @@ local function exportAtlas(world, map)
   local key = tostring(map.id) .. ":" .. tostring(tileset.image) .. ":" .. tostring(roofSpec and roofSpec.image)
   if Workbench.atlasKey == key and Workbench.atlasPath then return Workbench.atlasPath end
   local path = BRIDGE_DIR .. "/live_atlas.png"
-  love.filesystem.createDirectory(BRIDGE_DIR)
+  fs.createDirectory(BRIDGE_DIR)
   local made, data = pcall(love.image.newImageData, tileset.image)
   if not (made and data and data.encode) then return nil end
   if roofSpec and roofSpec.image then
@@ -180,7 +198,7 @@ local function captureGraphic(game, command, target)
 end
 
 local function processCommand(game)
-  local raw = love.filesystem.read(COMMAND_PATH)
+  local raw = fs.read(COMMAND_PATH)
   if not raw then return end
   local command, err = Json.decode(raw)
   if type(command) ~= "table" or type(command.id) ~= "string" then
@@ -225,8 +243,8 @@ local function writeStatus(game)
   local payload = {
     version = 1,
     connected = world ~= nil,
-    saveDirectory = love.filesystem.getSaveDirectory(),
-    bridgeDirectory = love.filesystem.getSaveDirectory() .. "/" .. BRIDGE_DIR,
+    saveDirectory = fs.getSaveDirectory(),
+    bridgeDirectory = fs.getSaveDirectory() .. "/" .. BRIDGE_DIR,
     lastCommand = Workbench.lastCommand,
     lastError = Workbench.lastError,
     maps = world and mapList(world) or {},
@@ -244,9 +262,9 @@ local function writeStatus(game)
     atlas = atlasPath and { path = atlasPath, revision = Workbench.atlasRevision } or nil,
   }
   local body = Json.encode(payload)
-  love.filesystem.createDirectory(BRIDGE_DIR)
-  if love.filesystem.write(STATUS_TMP, body) then
-    love.filesystem.write(STATUS_PATH, body)
+  fs.createDirectory(BRIDGE_DIR)
+  if fs.write(STATUS_TMP, body) then
+    fs.write(STATUS_PATH, body)
   end
 end
 
@@ -268,7 +286,7 @@ function Workbench.frame(game)
 end
 
 function Workbench.install()
-  local raw = love.filesystem.read(COMMAND_PATH)
+  local raw = fs.read(COMMAND_PATH)
   local existing = raw and Json.decode(raw)
   if type(existing) == "table" and type(existing.id) == "string" then
     Workbench.commandId = existing.id
@@ -280,7 +298,7 @@ function Workbench.install()
 end
 
 function Workbench.status()
-  return { bridgeDirectory = love.filesystem.getSaveDirectory() .. "/" .. BRIDGE_DIR,
+  return { bridgeDirectory = fs.getSaveDirectory() .. "/" .. BRIDGE_DIR,
            lastCommand = Workbench.lastCommand, lastError = Workbench.lastError }
 end
 

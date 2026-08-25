@@ -401,6 +401,345 @@ do
         and profile.tilesets.GYM.can_well == 5
         and profile.tilesets.GYM.can_taper == 4,
         "grey gym bollard must retain its authored can profile")
+
+  local kantoMap = mapFor("TILESET_KANTO")
+  function kantoMap:tileAt(tx, ty)
+    return (tx == 0 and ty == 1) and 14 or 57
+  end
+  local kanto = TileShape.forMap(kantoMap)
+  local ledge = TileShape.at(kantoMap, kanto, 57, 0, 0)
+  check(ledge.class == "terrace" and ledge.art == "top"
+        and ledge.h == 32 and ledge.rows == 2,
+        "Kanto jumping ledge must resolve as a 2-row terrace")
+  for _, tile in ipairs({ 45, 46, 61, 62 }) do
+    check(kanto[tile].class == "prop" and kanto[tile].art == "billboard",
+          "Kanto Cut tree tile must resolve to transparent prop geometry: "
+            .. tile)
+  end
+
+  local johtoMap = mapFor("gen2_TilesetJohto")
+  johtoMap.tileset.imageHeight = 128
+  function johtoMap:tileAt(tx, ty)
+    if ty == 0 then return 30 end
+    if ty == 1 then return 46 end
+    if ty == 10 then return 30 end
+    if ty == 11 then return 62 end
+    return 5
+  end
+  local johto = TileShape.forMap(johtoMap)
+  check(johto[30].class == "cylinder" and johto[30].art == "cylinder",
+        "Johto short-tree top stays a one-cell cylinder")
+  check(johto[46].class == "cylinder" and johto[46].art == "cylinder",
+        "Johto tall-pine mid-canopy is cylinder, not an unclaimed planter box")
+  check(johto[62].class == "cylinder" and johto[62].art == "cylinder",
+        "Johto tree trunk stays a cylinder")
+  check(johto[78].class == "signpost" and johto[78].art == "billboard",
+        "Johto town sign is a thin plate, not a 16px box")
+  local tallTop = TileShape.at(johtoMap, johto, 30, 0, 0)
+  check(tallTop.class == "cylinder" and tallTop.art == "cylinder",
+        "Johto tall pine top stays cylinder so the 16x32 stack can claim it")
+  local shortTop = TileShape.at(johtoMap, johto, 30, 0, 10)
+  check(shortTop.class == "cylinder" and shortTop.art == "cylinder",
+        "Johto short tree over its trunk stays a cylinder")
+  check(profile.tilesets.gen2_TilesetJohto.planter == nil,
+        "Johto outdoor pines must not use the planter class")
+  function johtoMap:tileAt(tx, ty)
+    if tx == 0 and ty == 1 then return 76 end
+    if tx == 0 and ty == 2 then return 20 end
+    if tx == 0 and ty == 5 then return 76 end
+    return 5
+  end
+  local shore = TileShape.at(johtoMap, johto, 76, 0, 1)
+  check(shore.class == "water" and shore.flat,
+        "Johto dirt bank next to water recesses into the water sheet")
+  local hop = TileShape.at(johtoMap, johto, 76, 0, 5)
+  check(hop.class == "ledge" and hop.art == "top",
+        "Johto hop lip away from water stays a 6px ledge")
+  local signBg = TileShape.propBg("gen2_TilesetJohto")
+  check(signBg and signBg[78] and signBg[78].white and not signBg[78].dark,
+        "Johto sign keeps its dark board; only grass-white is background")
+  local modernBg = TileShape.propBg("gen2_TilesetJohtoModern")
+  check(modernBg and modernBg[78] and modernBg[78].white
+        and not modernBg[78].dark,
+        "JohtoModern sign uses the same white-only background")
+
+  local center = TileShape.forMap(mapFor("gen2_TilesetPokecenter"))
+  check(center[2].class == "wall" and center[2].authored,
+        "Crystal Center wall panel is an authored 16px wall")
+  check(center[61].class == "bookcase",
+        "Crystal Center PC screen stays a bookcase tile in the body")
+  check(center[72].class == "bed" and center[72].art == "top",
+        "Crystal Center recovery bed is a bed, not a 6px table")
+  check(center[68].class == "prop" and center[68].art == "billboard",
+        "Crystal Center magazine rack is a thin prop")
+  check(center[80].class == "ground" and center[80].flat,
+        "Crystal Center doormat stays on the floor")
+  check(center[12].class == "counter",
+        "Crystal Center nurse counter stays a half-cell counter")
+
+  local playersHouse = TileShape.forMap(mapFor("gen2_TilesetPlayersHouse"))
+  check(playersHouse[35].class == "table",
+        "Elm house tabletop stays a table pin (template claims the drawing)")
+  check(playersHouse[2].class == "stool" and playersHouse[2].art == "billboard",
+        "Elm house stool stays a stool pin")
+  local phBuildings = profile.buildings.gen2_TilesetPlayersHouse
+  check(phBuildings and #phBuildings == 2,
+        "Elm house templates are table + stool only (wall PCs stay in the wall)")
+  local ids = {}
+  for _, t in ipairs(phBuildings or {}) do ids[t.id] = true end
+  check(ids.gen2_players_house_table and ids.gen2_players_house_stool,
+        "Elm house templates cover the table and stools")
+  local tableTpl
+  for _, t in ipairs(phBuildings or {}) do
+    if t.id == "gen2_players_house_table" then tableTpl = t break end
+  end
+  check(tableTpl and not tableTpl.desk and tableTpl.parts
+        and #tableTpl.parts == 5,
+        "Elm house table is a raised lid plus four corner posts")
+
+  check(type(profile.vox) == "table",
+        "profile exposes a MagicaVoxel replacement table")
+  check(profile.vox.gen2_tree_tall == "crystal_pine_tall"
+        and profile.vox.gen2_tree_short == "crystal_pine_short",
+        "Johto ordinary trees keep their Crystal pine assets")
+  local johtoB = profile.buildings.gen2_TilesetJohto
+  local tallIndex, shortIndex
+  for index, t in ipairs(johtoB or {}) do
+    if t.id == "gen2_tree_tall" then tallIndex = index end
+    if t.id == "gen2_tree_short" then shortIndex = index end
+  end
+  check(tallIndex and shortIndex and tallIndex < shortIndex
+        and johtoB[tallIndex].vox == "crystal_pine_tall"
+        and johtoB[shortIndex].vox == "crystal_pine_short",
+        "tall pine template claims before the short tree")
+  local kantoB = profile.buildings.gen2_TilesetKanto
+  local cutTreeTemplate
+  for _, t in ipairs(kantoB or {}) do
+    if t.id == "gen2_cut_tree" then cutTreeTemplate = t break end
+  end
+  check(profile.vox.gen2_cut_tree == "crystal_cut_tree"
+        and cutTreeTemplate and cutTreeTemplate.vox == "crystal_cut_tree"
+        and cutTreeTemplate.tiles
+        and cutTreeTemplate.tiles[1][1] == 45
+        and cutTreeTemplate.tiles[1][2] == 46
+        and cutTreeTemplate.tiles[2][1] == 61
+        and cutTreeTemplate.tiles[2][2] == 62,
+        "Kanto CUT trees use the supplied MagicaVoxel model")
+
+  local johtoCut = {}
+  for _, t in ipairs(johtoB or {}) do
+    if t.id and t.id:match("^gen2_cut_tree_") then
+      johtoCut[t.id] = t
+    end
+  end
+  check(johtoCut.gen2_cut_tree_5b and johtoCut.gen2_cut_tree_5f
+        and johtoCut.gen2_cut_tree_63 and johtoCut.gen2_cut_tree_67,
+        "Johto CUT trees cover all four Gen 2 cut-block orientations")
+  check(johtoCut.gen2_cut_tree_5b
+        and johtoCut.gen2_cut_tree_5b.blockIds[0x5b]
+        and johtoCut.gen2_cut_tree_5b.blockOffset[1] == 2
+        and johtoCut.gen2_cut_tree_5b.blockOffset[2] == 0
+        and johtoCut.gen2_cut_tree_5b.tiles[1][1] == 19
+        and johtoCut.gen2_cut_tree_5b.tiles[1][2] == 21
+        and johtoCut.gen2_cut_tree_5b.tiles[2][1] == 69
+        and johtoCut.gen2_cut_tree_5b.tiles[2][2] == 29
+        and johtoCut.gen2_cut_tree_5f
+        and johtoCut.gen2_cut_tree_5f.blockIds[0x5f]
+        and johtoCut.gen2_cut_tree_5f.blockOffset[1] == 2
+        and johtoCut.gen2_cut_tree_5f.blockOffset[2] == 2
+        and johtoCut.gen2_cut_tree_63
+        and johtoCut.gen2_cut_tree_63.blockIds[0x63]
+        and johtoCut.gen2_cut_tree_63.blockOffset[1] == 0
+        and johtoCut.gen2_cut_tree_63.blockOffset[2] == 2
+        and johtoCut.gen2_cut_tree_67
+        and johtoCut.gen2_cut_tree_67.blockIds[0x67]
+        and johtoCut.gen2_cut_tree_67.blockOffset[1] == 0
+        and johtoCut.gen2_cut_tree_67.blockOffset[2] == 0,
+        "Johto CUT templates guard on their live pre-CUT block and quadrant")
+  local modernCut = false
+  for _, t in ipairs(profile.buildings.gen2_TilesetJohtoModern or {}) do
+    if t.id and t.id:match("^gen2_cut_tree_") then modernCut = true end
+  end
+  check(not modernCut,
+        "JohtoModern must not inherit Johto's obsolete tree CUT blocks")
+
+  -- Violet City's two wooden exteriors are full 8x8 tile drawings. They
+  -- share their drawing with the generic Mart/Center templates, but their
+  -- roofs are pitched. Exercise the map-scoped guard that lets the normal
+  -- Gen 2 detector build them instead of the flat template path.
+  local BuildBudget = assert(loadfile("lib/BuildBudget.lua"))()
+  local GridKey = assert(loadfile("lib/GridKey.lua"))()
+  local Buildings = assert(loadfile("lib/Buildings.lua"))({
+    data = function(name)
+      return name == "voxel_heights" and profile or nil
+    end,
+    require = function(name)
+      if name == "BuildBudget" then return BuildBudget end
+      if name == "GridKey" then return GridKey end
+      if name == "VoxAssets" then
+        return { preloadProfile = function() end,
+                 quads = function() return nil end }
+      end
+      error("unexpected module: " .. tostring(name))
+    end,
+  })
+  local cutQuad = {
+    { { 0, 0, 0 }, { 1, 0, 0 }, { 1, 1, 0 }, { 0, 1, 0 },
+      uv = {}, shade = 1 },
+  }
+  local CutBuildings = assert(loadfile("lib/Buildings.lua"))({
+    data = function(name)
+      return name == "voxel_heights" and profile or nil
+    end,
+    require = function(name)
+      if name == "BuildBudget" then return BuildBudget end
+      if name == "GridKey" then return GridKey end
+      if name == "VoxAssets" then
+        return {
+          preloadProfile = function() end,
+          quads = function(name)
+            return name == "crystal_cut_tree" and cutQuad or nil
+          end,
+          place = function(quads) return quads end,
+        }
+      end
+      error("unexpected module: " .. tostring(name))
+    end,
+  })
+  local function cutFixture(block, ox, oy, cutGraphic)
+    local state = {
+      tileAt = {}, shapeAt = {}, skip = {}, ground = {},
+      objectQuads = {}, voxQuads = {},
+    }
+    for y = 0, 3 do
+      for x = 0, 3 do
+        local tile = 5
+        if x == ox and y == oy then tile = cutGraphic and 19 or 30
+        elseif x == ox + 1 and y == oy then tile = cutGraphic and 21 or 31
+        elseif x == ox and y == oy + 1 then tile = cutGraphic and 69 or 62
+        elseif x == ox + 1 and y == oy + 1 then tile = cutGraphic and 29 or 63 end
+        state.tileAt[GridKey.of(x, y)] = tile
+      end
+    end
+    local map = {
+      tileset = { id = "gen2_TilesetJohto", imageWidth = 128,
+                  imageHeight = 128, tilesPerRow = 16 },
+      def = { id = "CUT_TEST", width = 1, height = 1 },
+      blockAt = function() return block end,
+    }
+    return state, map
+  end
+  for _, spec in ipairs({
+    { 0x5b, 2, 0 }, { 0x5f, 2, 2 },
+    { 0x63, 0, 2 }, { 0x67, 0, 0 },
+  }) do
+    local cutState, cutMap = cutFixture(spec[1], spec[2], spec[3], true)
+    CutBuildings.build(cutState, cutMap, nil, 16)
+    check(#cutState.voxQuads > 0,
+          string.format("Johto CUT block 0x%02x stamps the supplied tree",
+            spec[1]))
+  end
+  local postCutState, postCutMap = cutFixture(0x3c, 0, 0, false)
+  CutBuildings.build(postCutState, postCutMap, nil, 16)
+  check(#postCutState.voxQuads == 0 and next(postCutState.skip) == nil,
+        "a post-CUT replacement block does not use the CUT-tree model")
+
+  local violetHouseWest = {
+    { 16, 17, 17, 17, 17, 17, 17, 18 },
+    { 13, 14, 14, 14, 14, 14, 14, 15 },
+    { 13, 14, 14, 14, 14, 14, 14, 15 },
+    { 10, 11, 11, 11, 11, 11, 11, 12 },
+    { 26, 7, 7, 7, 7, 7, 7, 28 },
+    { 26, 7, 7, 7, 7, 7, 7, 28 },
+    { 26, 7, 55, 56, 24, 25, 7, 28 },
+    { 1, 2, 57, 58, 23, 23, 2, 22 },
+  }
+  local violetHouseEast = {
+    { 16, 17, 17, 17, 17, 17, 17, 18 },
+    { 13, 14, 14, 14, 14, 14, 14, 15 },
+    { 13, 14, 14, 14, 14, 14, 14, 15 },
+    { 10, 11, 11, 11, 11, 11, 11, 12 },
+    { 26, 7, 7, 7, 7, 7, 7, 28 },
+    { 26, 7, 7, 7, 7, 7, 7, 28 },
+    { 26, 7, 55, 56, 8, 9, 7, 28 },
+    { 1, 2, 57, 58, 23, 23, 2, 22 },
+  }
+  local list = profile.buildings.gen2_TilesetJohto
+  local westIndex, eastIndex, martIndex, centerIndex
+  for index, t in ipairs(list) do
+    if t.id == "gen2_violet_house_west" then westIndex = index end
+    if t.id == "gen2_violet_house_east" then eastIndex = index end
+    if t.id == "gen2_mart" then martIndex = index end
+    if t.id == "gen2_pokecenter" then centerIndex = index end
+  end
+  check(westIndex and eastIndex and westIndex < martIndex
+        and eastIndex < centerIndex,
+        "Violet house guards must precede generic Mart/Center templates")
+  check(#list[westIndex].tiles == 8 and #list[eastIndex].tiles == 8,
+        "Violet house templates must cover the complete 8x8 drawings")
+  check(list[westIndex].mode == "defer" and list[eastIndex].mode == "defer",
+        "Violet wooden houses must defer to the gable-aware structure path")
+  check(list[westIndex].detectorRoofRows == 4
+        and list[eastIndex].detectorRoofRows == 4,
+        "Violet wooden houses must keep only a two-row facade")
+  local buildingState = {
+    tileAt = {}, shapeAt = {}, skip = {}, ground = {},
+    objectQuads = {}, voxQuads = {},
+  }
+  for y, row in ipairs(violetHouseWest) do
+    for x, tile in ipairs(row) do
+      buildingState.tileAt[GridKey.of(x - 1, y - 1)] = tile
+    end
+  end
+  for y, row in ipairs(violetHouseEast) do
+    for x, tile in ipairs(row) do
+      buildingState.tileAt[GridKey.of(x + 7, y - 1)] = tile
+    end
+  end
+  Buildings.build(buildingState, {
+    tileset = { id = "gen2_TilesetJohto", imageWidth = 128,
+                imageHeight = 128, tilesPerRow = 16 },
+    def = { id = "VIOLET_CITY", width = 4, height = 2 },
+  }, { getPixel = function() return 1, 1, 1, 1 end }, 16)
+  local claimed = 0
+  for _ in pairs(buildingState.skip) do claimed = claimed + 1 end
+  check(claimed == 0,
+        "Deferred Violet wooden houses must leave their drawings for detection")
+  local westHint = buildingState.volumeHints
+      and buildingState.volumeHints[GridKey.of(2, 6)]
+  check(westHint and westHint.roofRows == 4,
+        "Deferred Violet wooden houses must pass their four-row roof to detection")
+  local stats = Buildings.stats()
+  check(not stats["gen2_TilesetJohto:" .. westIndex]
+        and not stats["gen2_TilesetJohto:" .. eastIndex],
+        "Deferred Violet wooden houses must not build flat template geometry")
+  check(not stats["gen2_TilesetJohto:" .. martIndex]
+        and not stats["gen2_TilesetJohto:" .. centerIndex],
+        "Violet wooden houses must not use generic Mart/Center geometry")
+
+  local modernHasTall, modernHasShort
+  for _, t in ipairs(profile.buildings.gen2_TilesetJohtoModern or {}) do
+    if t.id == "gen2_tree_tall" then modernHasTall = true end
+    if t.id == "gen2_tree_short" then modernHasShort = true end
+  end
+  check(not modernHasTall,
+        "JohtoModern must not claim 46/47 as tall-pine mid-rows")
+  check(modernHasShort,
+        "JohtoModern short trees still use the Crystal pine vox")
+  local ledgeS
+  for _, t in ipairs(johtoB or {}) do
+    if t.id == "gen2_ledge_s" then ledgeS = t break end
+  end
+  check(ledgeS and ledgeS.vox == "crystal_ledge_s"
+        and ledgeS.requireClass == "ledge"
+        and ledgeS.tiles and ledgeS.tiles[1] and ledgeS.tiles[1][1] == 76,
+        "Johto south hop lip is a MagicaVoxel dirt bank, not a 6px box")
+  check(profile.sprites and profile.sprites.fruit_tree == "crystal_berry_tree",
+        "Crystal fruit-tree sprites map to a MagicaVoxel berry tree")
+
+  local unkeyed = mapFor(nil)
+  local ok = pcall(TileShape.forMap, unkeyed)
+  check(ok, "a headless tileset without an id must not break shape resolution")
 end
 
 do
@@ -429,6 +768,25 @@ do
   check(not source:find("renderer") and not source:find("function"),
         "snapshot source must contain no runtime references")
 
+  local kantoMap = {
+    id = "PALLET_TOWN",
+    def = {
+      id = "PALLET_TOWN", width = 1, height = 1,
+      tileset = "TILESET_KANTO", blocks = { 1 }, borderBlock = 1,
+    },
+    tileset = {
+      id = "TILESET_KANTO", image = "tilesets/kanto.png",
+      imageWidth = 128, imageHeight = 48, tilesPerRow = 16,
+      blocks = { { 11, 11, 11, 11 } },
+      collision = { [2] = { 0x18, 0x18, 0x18, 0x18 } },
+    },
+    defOnly = true,
+  }
+  local kantoSnapshot = GeometrySnapshot.fromMap(kantoMap, nil, "fade")
+  check(kantoSnapshot.tileset.collision
+          and kantoSnapshot.tileset.collision[2][1] == 0x18,
+        "Gen 2 geometry snapshots must retain collision quads for tall grass")
+
   local workerV = {
     require = function(name)
       if name == "MeshCache" then return { GEOMETRY_VERSION = 19 } end
@@ -456,8 +814,12 @@ do
   local workerText = workerFile:read("*a") or ""
   workerFile:close()
   check(workerText:find('kind = "chunk"', 1, true) ~= nil
-        and workerText:find("waitChunkAck", 1, true) ~= nil,
+          and workerText:find("waitChunkAck", 1, true) ~= nil,
         "geometry worker must stream chunks behind acknowledgements")
+  check(workerText:find("local function collisionAt", 1, true) ~= nil
+          and workerText:find("if gen2(self) then return collisionAt",
+                              1, true) ~= nil,
+        "geometry worker must resolve Gen 2 cells from collision quads")
   local cacheFile = assert(io.open("lib/MeshCache.lua", "rb"))
   local cacheText = cacheFile:read("*a") or ""
   cacheFile:close()

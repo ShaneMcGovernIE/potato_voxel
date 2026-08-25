@@ -275,6 +275,115 @@ do
   T.eq(installs, 1, "runtime hook helper does not rebuild a wrapper")
   T.eq(target:run(2), 3, "runtime hook helper keeps the original wrapper")
 end
+do
+  T.check(type(RuntimeHooks.worldMapOwner) == "function"
+          and type(RuntimeHooks.isOutdoor) == "function"
+          and type(RuntimeHooks.borderBlockFor) == "function"
+          and type(RuntimeHooks.treeVoidFill) == "function",
+          "runtime hooks expose generation-aware map helpers")
+  T.check(RuntimeHooks.isOutdoor({ tileset = "OVERWORLD" }),
+          "OVERWORLD maps stay outdoor under the Gen 1 Map owner")
+  T.check(not RuntimeHooks.isOutdoor({ tileset = "HOUSE" }),
+          "interior tilesets stay indoor under the Gen 1 Map owner")
+  T.check(not RuntimeHooks.isOutdoor(nil),
+          "a missing map def is not outdoor")
+  local okGold, GoldMap = pcall(require, "src.world.gen2.Map")
+  T.check(okGold and type(GoldMap.isOutdoor) == "function",
+          "Gold Map module answers isOutdoor")
+  T.check(GoldMap.isOutdoor({ environment = "TOWN", tileset = "TILESET_JOHTO" }),
+          "Gold Map treats TOWN as outdoor")
+  T.check(not GoldMap.isOutdoor({ environment = "INDOOR",
+                                 tileset = "TILESET_HOUSE" }),
+          "Gold Map treats INDOOR as indoor")
+end
+do
+  local TileShape = exports.lib.require("TileShape")
+  local function goldMap(overrides)
+    local map = {
+      tileset = {
+        id = "TEST_GOLD_COLL",
+        collision = { { 0, 0, 0, 0 } },
+        imageWidth = 16, imageHeight = 8,
+      },
+      cellTile = function() return 0 end,
+      cellCollision = function() return 24 end,
+      isWaterCell = function() return false end,
+      isWalkableCell = function() return true end,
+      tileAt = function() return 0 end,
+    }
+    for k, v in pairs(overrides or {}) do map[k] = v end
+    return map
+  end
+  local map = goldMap()
+  local shapes = TileShape.forMap(map)
+  local pinned = TileShape.at(map, shapes, 0, 0, 1)
+  T.eq(pinned and pinned.class, "grass",
+       "Gold COLL_TALL_GRASS (24) pins grass even when cellTile is a graphic id")
+  local noColl = goldMap({
+    cellCollision = nil,
+    cellTile = function() return 24 end,
+  })
+  local fallback = TileShape.at(noColl, shapes, 0, 0, 1)
+  T.eq(fallback and fallback.class, "grass",
+       "without cellCollision, shapes.coll still reads native cellTile")
+end
+do
+  local TileShape = exports.lib.require("TileShape")
+  local map = {
+    tileset = {
+      id = "TILESET_JOHTO",
+      collision = { { 0x07, 0x07, 0x07, 0x07 } },
+      imageWidth = 128, imageHeight = 48,
+    },
+    cellCollision = function() return 0x07 end,
+    cellTile = function() return 0x07 end,
+    isWaterCell = function() return false end,
+    isWalkableCell = function() return false end,
+    tileAt = function(_, _, ty)
+      if ty == 0 then return 60 end
+      return 76
+    end,
+  }
+  local shapes = TileShape.forMap(map)
+  local lip = TileShape.at(map, shapes, 76, 0, 1)
+  T.eq(lip and lip.class, "ledge",
+       "Johto hop-lip tile 76 stays ledge when terrace 60 is above")
+  T.check(lip and lip.h < 16,
+          "Johto hop lip is one row (6px), not a two-row wall")
+  local hop = {
+    tileset = map.tileset,
+    cellCollision = function() return 0xA3 end,
+    cellTile = function() return 0xA3 end,
+    isWaterCell = function() return false end,
+    isWalkableCell = function() return true end,
+    tileAt = function() return 7 end,
+  }
+  local hopShape = TileShape.at(hop, shapes, 7, 0, 1)
+  T.eq(hopShape and hopShape.class, "ledge",
+       "COLL_HOP_DOWN pins unauthored tiles as ledge, not wall")
+end
+do
+  local TileShape = exports.lib.require("TileShape")
+  local map = {
+    tileset = {
+      id = "TILESET_HOUSE",
+      collision = { { 0x07 } },
+      imageWidth = 128, imageHeight = 128,
+    },
+    cellCollision = function() return 0x07 end,
+    cellTile = function() return 0x07 end,
+    isWaterCell = function() return false end,
+    isWalkableCell = function() return false end,
+    tileAt = function() return 50 end,
+  }
+  local shapes = TileShape.forMap(map)
+  T.eq(shapes[50] and shapes[50].class, "table",
+       "Johto house table north rim (tile 50) is pinned table")
+  T.eq(shapes[2] and shapes[2].class, "stool",
+       "Johto house stool tile is pinned stool")
+  T.eq(shapes[50] and shapes[50].h, 6,
+       "Johto house table height is the 6px house_table stand")
+end
 -- The sandbox-era settings read LIVE through mod.options, and writers
 -- persist into a game's save options (the same dual write the engine's
 -- manager page makes). The SDK stub has neither, so the suite installs a
@@ -325,6 +434,25 @@ if brick then
   local GridKey = exports.lib.require("GridKey")
   local VR = exports.lib.require("VR")
   local Structures = exports.lib.require("Structures")
+  do
+    local state = {
+      outdoor = true, doorFold = {}, runs = {}, volumeHints = {},
+    }
+    local cells = {}
+    for y = 0, 7 do cells[#cells + 1] = { 0, y } end
+    for y = 0, 7 do
+      state.volumeHints[GridKey.of(0, y)] = { roofRows = 4 }
+    end
+    local fakeMap = {
+      tileAt = function(_, _, y) return y end,
+    }
+    Structures.buildVolume(state, fakeMap, cells)
+    local houseRun = state.runs[GridKey.of(0, 0)]
+    T.eq(houseRun.roofRows, 4,
+         "deferred house hints reach the volume roof split")
+    T.eq(houseRun.h, 16,
+         "deferred house hints keep the facade at two rows")
+  end
   local OverworldBattle = exports.lib.require("OverworldBattle")
   local QualityMode = exports.lib.require("QualityMode")
   local DayNight = exports.lib.require("DayNight")
@@ -1541,16 +1669,24 @@ if MeshCache and MeshCache.encodeMesh then
   T.eq(bigM, #bigQuads * 6, "flattenQuads index count scales linearly")
   local flat = { grass = { n = bigK / 6, buf = bigBuf, m = bigM,
                            idx = bigIdx },
-                 flowers = nil, figures = {} }
+                 flowers = nil,
+                 vox = { n = 4,
+                         buf = { 0, 0, 0, 0, 0, 1,
+                                 1, 0, 0, 1, 0, 1,
+                                 1, 1, 0, 1, 1, 1,
+                                 0, 1, 0, 0, 1, 1 },
+                         m = 6, idx = { 1, 2, 3, 1, 3, 4 } },
+                 figures = {} }
   MeshCache.saveAux(fakeMap, "ring", flat)
   local auxBytes = fakeStore.peekBytes()["maps/VIRIDIAN_CITY/shared/deco"] or ""
   -- header (8 + fpLen) + indexed grass (u32 n + n*6 floats + u32 m +
-  -- m u32s), then the empty flowers payload (u32 0 + u32 0) and the
-  -- figures count byte (0) -- a 6x-inflated grass write is ~5.7MB vs
-  -- the correct ~960KB and fails this check.
+  -- m u32s), then the empty flowers payload, the four-vertex vox payload,
+  -- and the figures count byte (0) -- a 6x-inflated grass write is ~5.7MB
+  -- vs the correct ~960KB and fails this check.
   local fpLen = auxBytes:byte(5) + auxBytes:byte(6) * 256
                 + auxBytes:byte(7) * 65536 + auxBytes:byte(8) * 16777216
-  local expected = 8 + fpLen + 4 + (bigK / 6) * 24 + 4 + bigM * 4 + 8 + 1
+  local expected = 8 + fpLen + 4 + (bigK / 6) * 24 + 4 + bigM * 4
+                + 8 + 4 + 4 * 24 + 4 + 6 * 4 + 1
   T.eq(#auxBytes, expected,
        "saveAux writes vertex-counted bytes (floats are not vertices)")
   local packedAux, packedAuxStages = MeshCache.loadAuxPacked(fakeMap, "ring")
@@ -1560,8 +1696,10 @@ if MeshCache and MeshCache.encodeMesh then
   T.check(packedGrassInfo and packedGrassInfo.n == bigK / 6
           and packedGrassInfo.m == bigM
           and packedAux.flowers and packedAux.flowers.n == 0
+          and packedAux.vox and packedAux.vox.n == 4
+          and packedAux.vox.m == 6
           and #packedAux.figures == 0,
-          "loadAuxPacked keeps auxiliary geometry in GPU-ready records")
+          "loadAuxPacked keeps grass, vox, and figure geometry in GPU-ready records")
   T.check(packedAuxStages and type(packedAuxStages.readMs) == "number"
           and type(packedAuxStages.decodeMs) == "number",
           "loadAuxPacked reports its bounded parse stages")
@@ -1590,6 +1728,8 @@ if MeshCache and MeshCache.encodeMesh then
     end
     T.check(match, "loadAux grass index map is byte-identical")
   end
+  T.check(aux and aux.vox and aux.vox.n == 4 and aux.vox.m == 6,
+          "loadAux reads back MagicaVoxel geometry at the same counts")
   -- Cached destinations must still hydrate through the cooperative queue.
   -- Loading a large cached map directly inside request() blocks map entry
   -- for hundreds of milliseconds on Android before Voxel.loading can show

@@ -2,6 +2,17 @@
 
 ## [1.9.0] - 2026-08-24
 
+### Fixed: Gen 2 ledges and Cut trees
+
+- Kanto jumping ledges now honor their authored two-row height instead of
+  collapsing to a one-row terrace.
+- Kanto Cut-tree tiles now use transparent per-pixel props, so they keep the
+  tree silhouette instead of rendering as faceted hulls.
+- Kanto tall grass now keeps its collision quads in worker snapshots, so its
+  voxel tuft mesh survives threaded builds and cache reloads.
+- Cache geometry version 29 forces one rebuild for the corrected terrain and
+  vegetation geometry.
+
 ### Added: Gen 2 beta
 
 - Beta support for Gen 2 (Gold/Silver) via a dedicated `gen2/main.lua` renderer entry and `gen2compat` manifest flag.

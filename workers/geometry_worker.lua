@@ -66,8 +66,11 @@ end
 
 local Map = {}
 function Map.isOutdoor(def)
+  if not def then return false end
   if def.outdoor ~= nil then return def.outdoor end
-  return def.tileset == "OVERWORLD"
+  if def.tileset == "OVERWORLD" then return true end
+  local env = def.environment
+  return env == "TOWN" or env == "ROUTE"
 end
 function Map.blockAt(self, bx, by)
   if bx < 0 or by < 0 or bx >= self.def.width or by >= self.def.height then
@@ -75,29 +78,90 @@ function Map.blockAt(self, bx, by)
   end
   return self.def.blocks[by * self.def.width + bx + 1]
 end
+local function gen2(self)
+  return type(self.tileset and self.tileset.collision) == "table"
+end
+local function collisionAt(self, cx, cy)
+  local bx, by = math.floor(cx / 2), math.floor(cy / 2)
+  local blockId = self:blockAt(bx, by)
+  local quad = self.tileset.collision[blockId + 1]
+  if not quad then return 0xff end
+  return quad[(cy % 2) * 2 + (cx % 2) + 1] or 0xff
+end
+-- CollisionPermissionTable lo-nybble (home/map_objects.asm): 0 land, 1 water,
+-- 15 wall. Copied because the real Permissions module is not thread-safe to
+-- load here (srcStub returns {}).
+local COLL_PERM = {
+   0,  0,  0,  0,  0,  0,  0, 15,  0,  0,  0,  0,  0,  0,  0, 15,
+   0,  0, 15,  0,  0, 15,  0,  0,  0,  0, 15,  0,  0, 15,  0,  0,
+   1,  1,  1,  0,  1,  1,  1, 15,  1,  1,  1,  0,  1,  1,  1, 15,
+   1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
+   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+   0,  0, 15,  0,  0,  0,  0,  0,  0,  0, 15,  0,  0,  0,  0,  0,
+   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+  15, 15, 15, 15, 15,  0,  0,  0, 15, 15, 15, 15, 15,  0,  0,  0,
+  15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+   1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
+   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 15,
+}
+local function collPerm(coll)
+  if coll == nil or coll < 0 then return 15 end
+  return COLL_PERM[(coll % 256) + 1] or 15
+end
 function Map.tileAt(self, tx, ty)
   local bx, by = math.floor(tx / 4), math.floor(ty / 4)
   local block = self.tileset.blocks[self:blockAt(bx, by) + 1]
   local ix = (ty % 4) * 4 + (tx % 4) + 1
   return block[ix]
 end
-function Map.cellTile(self, cx, cy)
+function Map.cellCollision(self, cx, cy)
+  if gen2(self) then return collisionAt(self, cx, cy) end
   return self:tileAt(cx * 2, cy * 2 + 1)
+end
+function Map.cellTile(self, cx, cy)
+  return self:cellCollision(cx, cy)
 end
 function Map.inBounds(self, cx, cy)
   return cx >= 0 and cy >= 0 and cx < self.def.width * 2
          and cy < self.def.height * 2
 end
 function Map.isWalkableCell(self, cx, cy)
+  if gen2(self) then
+    if not self:inBounds(cx, cy) then return false end
+    return collPerm(collisionAt(self, cx, cy)) == 0
+  end
   return self.walkable and self.walkable[self:cellTile(cx, cy)] or false
 end
 function Map.isGrassCell(self, cx, cy)
   if not self:inBounds(cx, cy) then return false end
+  if gen2(self) then
+    local coll = collisionAt(self, cx, cy)
+    return coll == 0x10 or coll == 0x14 or coll == 0x18 or coll == 0x1c
+  end
   local grass = self.tileset.grassTile
   return grass ~= nil and self:cellTile(cx, cy) == grass
 end
 function Map.isWaterCell(self, cx, cy)
+  if gen2(self) then
+    if not self:inBounds(cx, cy) then return false end
+    return collPerm(collisionAt(self, cx, cy)) == 1
+  end
   return self.waterTiles and self.waterTiles[self:cellTile(cx, cy)] or false
+end
+function Map.isDoorTileCell(self, cx, cy)
+  if not self:inBounds(cx, cy) then return false end
+  if gen2(self) then
+    local coll = collisionAt(self, cx, cy)
+    if coll == 0x60 or coll == 0x68 then return true end
+    if math.floor(coll / 16) ~= 7 then return false end
+    return coll ~= 0x70 and coll ~= 0x76 and coll ~= 0x78 and coll ~= 0x7e
+  end
+  return self.doorTiles and self.doorTiles[self:cellTile(cx, cy)] or false
 end
 
 -- Anything else the libs touch lazily (MeshCache.resolveStore's Game,
@@ -127,12 +191,6 @@ package.loaded["src.world.Map"] = Map
 -- dir, set per job ("" for a dev harness, "mods/<id>" in the game).
 local libs = {}
 local V = { mod = {}, path = "potato_voxel" }
--- the main VM's mod:read, for libs that ship binary assets (VoxProps)
-function V.mod:read(rel)
-  local ok, body = pcall(love.filesystem.read,
-                         root == "" and rel or (root .. "/" .. rel))
-  return ok and body or nil
-end
 function V.require(name)
   local hit = libs[name]
   if hit ~= nil then return hit end
@@ -153,6 +211,12 @@ function V.data(name)
                                        or (root .. "/data/" .. name .. ".lua"))
   if not ok or not chunk then return nil end
   return chunk(V)
+end
+function V.read(rel)
+  local path = root == "" and rel or (root .. "/" .. rel)
+  local ok, data = pcall(love.filesystem.read, path)
+  if ok and type(data) == "string" then return data end
+  return nil
 end
 
 -- The worker's V.require resolves relative to `root`, which is supplied in

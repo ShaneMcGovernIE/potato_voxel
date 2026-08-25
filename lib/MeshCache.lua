@@ -102,9 +102,39 @@ end
 -- 26: compact quantization added costly whole-map save/load conversions.
 -- 27: restore GPU-native terrain/water payloads while retaining bounded
 -- streaming and body-plus-ring geometry. Reject every v26 cache artifact.
--- 28: authored .vox props (data/vox_props.lua) replace their drawings, so
--- every v27 object stream is missing geometry the build now emits.
-MeshCache.GEOMETRY_VERSION = 28
+-- 28: preserve profile conditional row heights and Kanto Cut-tree props.
+-- 29: carry Gen 2 collision quads into worker geometry so tall grass survives
+--     threaded builds and cache reloads.
+-- 30: Gold cellCollision pins, door fold, and outdoor/border dispatch.
+-- 31: Johto hop lips stay 6px ledges instead of two-row walls.
+-- 32: Johto house dining table uses the Gen 1 house_table band model.
+-- 33: that table is the 4x4 grid (5/21 underside row), not a 3-row lip.
+-- 34: Johto house table is a desk lid + flood-cut legs, not a roof-band slab.
+-- 35: voxel shade reads are the grayscale tileset PNG, not the GBC atlas.
+-- 36: Johto signs keep their wood grain (prop_bg white); tall pines
+--     revolve instead of standing as a planter-spray slab.
+-- 37: indoor border black tiles stay void even when authored in-body;
+--     Johto pines flood as one 32px silhouette; Crystal Center beds
+--     and wall panels are not one bookcase.
+-- 38: Johto tall-pine mid-canopy is cylinder, not unclaimed planter boxes.
+-- 39: Johto dirt banks next to water recess into the water sheet.
+-- 40: Elm's house table/stools/PCs use desk-set models, not 6px slabs.
+-- 41: Elm table has corner posts; wall-mounted PCs no longer punch the
+--     north wall.
+-- 42: MagicaVoxel .vox building replacements.
+-- 43: Crystal Johto pines use MagicaVoxel models from the tileset art.
+-- 44: MagicaVoxel palette UVs sample the colour's own texel, so filled
+--     .vox models keep their faces (Johto pines were hollow shells).
+-- 45: Johto hop banks use beveled MagicaVoxel dirt instead of 6px boxes.
+-- 46: MagicaVoxel stamps greedy-mesh coplanar faces and cache the
+--     template so forests of pines and dirt banks are not per-voxel quads.
+-- 47: Persist MagicaVoxel auxiliary geometry in the shared cache stream.
+-- 48: Recognize Violet City's three-row-roof wooden-house template.
+-- 49: Use complete map-scoped Violet house drawings and tuned roof courses.
+-- 50: Let Violet City's pitched wooden houses use the gable-aware detector.
+-- 51: Keep the deferred Violet house facade at two rows (16px) via its
+--     explicit detector roof-band hint.
+MeshCache.GEOMETRY_VERSION = 55
 local Identity = CacheIdentity.new({
   geometryVersion = MeshCache.GEOMETRY_VERSION,
 })
@@ -1004,8 +1034,9 @@ function MeshCache.loadMeshData(map, slot, kind, fp, packed)
   return decoded, timing
 end
 
--- Persist the aux (grass/flowers/figures) vertex streams. `flattened` is
--- { grass = {n=.., buf=..}, flowers = {n=.., buf=..}, figures = {..} } --
+-- Persist the aux (grass/flowers/vox/figures) vertex streams. `flattened` is
+-- { grass = {n=.., buf=..}, flowers = {n=.., buf=..},
+--   vox = {n=.., buf=..}, figures = {..} } --
 -- produced by ChunkMesher from the Structures quads.
 function MeshCache.saveAux(map, slot, flattened, skipIfValid)
   if not MeshCache.available() then return false end
@@ -1025,8 +1056,12 @@ function MeshCache.saveAux(map, slot, flattened, skipIfValid)
                                   flattened.flowers and flattened.flowers.buf,
                                   flattened.flowers and flattened.flowers.m or 0,
                                   flattened.flowers and flattened.flowers.idx)
+    local vox = encodeIndexed(flattened.vox and flattened.vox.n or 0,
+                              flattened.vox and flattened.vox.buf,
+                              flattened.vox and flattened.vox.m or 0,
+                              flattened.vox and flattened.vox.idx)
     local figures = encodeFigures(flattened.figures or {})
-    local bytes = packPayload(fp, body .. flowers .. figures)
+    local bytes = packPayload(fp, body .. flowers .. vox .. figures)
     return writePayload(key, mkey, bytes, fp)
   end)
   if not ok then
@@ -1066,7 +1101,9 @@ function MeshCache.loadAuxPacked(map, slot)
   local grass, pos = recordAt(1)
   local flowers
   if grass then flowers, pos = recordAt(pos) end
-  if not flowers or pos > #body then
+  local vox
+  if flowers then vox, pos = recordAt(pos) end
+  if not flowers or not vox or pos > #body then
     timing.decodeMs = elapsedMs(started)
     return nil, timing
   end
@@ -1090,7 +1127,7 @@ function MeshCache.loadAuxPacked(map, slot)
   timing.decodeMs = elapsedMs(started)
   if pos ~= #body + 1 then return nil, timing end
   Diagnostics.trace("cache hit aux %s/shared", tostring(map.id))
-  return { grass = grass, flowers = flowers, figures = figures }, timing
+  return { grass = grass, flowers = flowers, vox = vox, figures = figures }, timing
 end
 
 -- Compatibility decoded form used by probes and old direct callers.
@@ -1119,11 +1156,17 @@ function MeshCache.loadAux(map, slot)
     return nil, timing
   end
   local fpos2 = fpos + 4 + flowers.n * 24 + 4 + flowers.m * 4
-  local figures = decodeFigures(body:sub(1 + fpos2))
+  local vox = decodeIndexed(body:sub(1 + fpos2))
+  if not vox then
+    timing.decodeMs = elapsedMs(started)
+    return nil, timing
+  end
+  local fpos3 = fpos2 + 4 + vox.n * 24 + 4 + vox.m * 4
+  local figures = decodeFigures(body:sub(1 + fpos3))
   timing.decodeMs = elapsedMs(started)
   if not figures then return nil, timing end
   Diagnostics.trace("cache hit aux %s/shared", tostring(map.id))
-  return { grass = g, flowers = flowers, figures = figures }, timing
+  return { grass = g, flowers = flowers, vox = vox, figures = figures }, timing
 end
 
 -- Drop the cached payloads for one map (a block edit / a reloaded map)

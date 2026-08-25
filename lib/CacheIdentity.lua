@@ -65,6 +65,12 @@ function CacheIdentity.new(ctx)
         hash = hashString(hash, connection.walkable)
       end
     end
+    do
+      local okV, VA = pcall(function() return V.require("VoxAssets") end)
+      if okV and VA and VA.revision then
+        hash = hashString(hash, VA.revision())
+      end
+    end
     local tilesets = data and data.tilesets or {}
     for _, id in ipairs(sortedKeys(tilesets)) do
       local tileset = tilesets[id]

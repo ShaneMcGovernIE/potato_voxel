@@ -39,6 +39,7 @@ local ShadowCast = V.require("ShadowCast")
 local SpriteBillboards = V.require("SpriteBillboards")
 local ChunkMesher = V.require("ChunkMesher")
 local TerrainAtlas = V.require("TerrainAtlas")
+local VoxAssets = V.require("VoxAssets")
 local VoxelScene = V.require("VoxelScene")
 local BattleCam = V.require("BattleCam")
 local BattleBillboard = V.require("BattleBillboard")
@@ -49,7 +50,7 @@ local AntiAlias = V.require("AntiAlias")
 local ShadowSettings = V.require("ShadowSettings")
 local Upscale = V.require("Upscale")
 local PaletteFX = require("src.render.PaletteFX")
-local Map = require("src.world.Map")
+local RuntimeHooks = V.require("RuntimeHooks")
 
 local BattleScene = {}
 
@@ -206,7 +207,11 @@ local function anchorsFor(battle, surfaceW, surfaceH)
   -- region by (20, 8) and the enemy region by (136, 0).  Keep those offsets in
   -- the same layout boundary as the surface dimensions so the world cards,
   -- effects and HUD all use one composition.
-  local playerX, playerY = 26, 96
+  local okVersion, GameVersion = pcall(require, "src.core.GameVersion")
+  local generation = okVersion and GameVersion
+                   and type(GameVersion.generation) == "function"
+                   and tonumber(GameVersion.generation()) or nil
+  local playerX, playerY = generation == 2 and 40 or 26, 96
   local enemyX, enemyY = 124, 56
   if surfaceW > BattleScene.GB_W then
     playerX, playerY = playerX + 20, playerY + 8
@@ -414,11 +419,40 @@ end
 -- the engine's own pipeline context gets it too (OverworldController's
 -- ctx.paletteFor).
 local function paletteFor(state, home)
+  local okVersion, GameVersion = pcall(require, "src.core.GameVersion")
+  local generation = okVersion and GameVersion
+                   and type(GameVersion.generation) == "function"
+                   and tonumber(GameVersion.generation()) or nil
+  if generation == 2 then
+    local okPalettes, Palettes = pcall(require, "src.world.gen2.Palettes")
+    if okPalettes and Palettes then
+      return function(map)
+        local game = RuntimeHooks.gameOwner()
+        local data = game and game.data
+        local def = (map or home) and (map or home).def
+        local palettes = state.palettes or (data and data.gen2Palettes)
+        local daytime = state.daytime or state.tod
+        if not daytime and type(state.hour) == "function" then
+          local okHour, hour = pcall(state.hour, state)
+          if okHour then
+            daytime = Palettes.daytimeFor(def, hour, state.flashUsed)
+          end
+        end
+        daytime = daytime or "DAY"
+        local okSet, set = pcall(Palettes.bgSet, palettes, def, daytime)
+        return okSet and set and set[1] or nil
+      end
+    end
+  end
   return function(map)
     return PaletteFX.pal(require("src.core.Game").data,
                          state:paletteNameFor(map or home))
   end
 end
+
+-- Kept as a small seam because Gen2 resolves a palette from the live World
+-- clock while Gen1 resolves a name from its map state.
+BattleScene.paletteFor = paletteFor
 
 -- ------- the map the fight is staged on
 --
@@ -498,7 +532,8 @@ local function monCards(arena, groundY, textures)
     local tex = textures[side]
     local cell = (side == "player") and arena.player or arena.enemy
     if tex and tex.canvas and cell then
-      local mirror = (side == "player") and not tex.trainer
+      local mirror = (side == "player") and tex.mirror ~= false
+                    and not tex.trainer
       out[#out + 1] = { tex = tex.canvas,
                         model = monMatrix(tex, cell[1], groundY, cell[2],
                                           mirror) }
@@ -618,7 +653,7 @@ local function shadowSignature(state, arena, terrain, ring, nbMesh, token)
 end
 
 local function castShadows(state, arena, terrain, ring, nbMesh, cx, cy, vw, vh,
-                           atlasFor, cards, token, host, neighbors,
+                           atlasFor, voxTextureFor, cards, token, host, neighbors,
                            water, ringWater, nbWater, groundY, actorShadows)
   if not ShadowMap.available() then return end
   local worldSig = shadowSignature(state, arena, terrain, ring, nbMesh)
@@ -639,6 +674,7 @@ local function castShadows(state, arena, terrain, ring, nbMesh, cx, cy, vw, vh,
       -- the one shared world-layer run (lib/ShadowCast.lua)
       ShadowCast.terrainAndWater(ShadowMap, ChunkMesher, {
         map = host, atlasFor = atlasFor,
+        voxTextureFor = voxTextureFor,
         terrain = terrain, ring = ring,
         water = water, ringWater = ringWater,
         neighbors = neighbors,
@@ -745,8 +781,8 @@ BattleScene.FLASH_STRENGTH = 0.5
 -- overworld is not". From the update hook the condition would have to be
 -- guessed at, and a frame where both ran would double the rate.
 local function tickTiles()
-  local Game = require("src.core.Game")
-  local ow = Game and Game.overworld
+  local Game = RuntimeHooks.gameOwner()
+  local ow = Game and (Game.overworld or Game.world)
   local top = Game and Game.stack and Game.stack:top()
   -- during the wipe INTO a battle the overworld can still be the one
   -- drawing, and it is ticking the clock itself; two ticks in a frame would
@@ -773,7 +809,7 @@ function BattleScene.render(state, arena, textures, token, battle)
   -- shared rig follows the clock on an outdoor floor and stays at noon on an
   -- indoor one, and the same tint multiplies the staged shot -- with the
   -- same window glass on whatever buildings stand in the background
-  local outdoor = host.def and Map.isOutdoor(host.def) or false
+  local outdoor = host.def and RuntimeHooks.isOutdoor(host.def) or false
   DayNight.applyRig(outdoor)
   -- a canopy floor (Viridian Forest) fights under the hour's tint too,
   -- with the rig and the void exactly as they were
@@ -818,6 +854,9 @@ function BattleScene.render(state, arena, textures, token, battle)
   local function atlasFor(map)
     return TerrainAtlas.forMap(map, VoxelScene._modeColors(palette, map))
   end
+  local function voxTextureFor(map)
+    return VoxAssets.texture(VoxelScene._modeColors(palette, map))
+  end
 
   local groundY = BattleScene.groundY(host, arena)
   local cam, pitch = BattleCam.rig(arena, groundY)
@@ -849,7 +888,7 @@ function BattleScene.render(state, arena, textures, token, battle)
   local battleShadows = ShadowSettings.enabled()
   if battleShadows then
     castShadows(state, arena, terrain, ring, nbMesh, cx, cy, vw, vh,
-                atlasFor, cards, token, host, neighbors,
+                atlasFor, voxTextureFor, cards, token, host, neighbors,
                 water, ringWater, nbWater, groundY, actorShadows)
   else
     ShadowMap.off()

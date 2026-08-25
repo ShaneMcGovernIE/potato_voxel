@@ -306,6 +306,9 @@ end
 -- 140 of the second -- no rule on `above` can split them.  What is BELOW
 -- does, exactly: the wall's own face $0F sits under the top band and under
 -- nothing else (336 vs 352, clean).
+-- `when_beside` is any of the four orthogonal neighbours: Johto's dirt
+-- bank is the hop-lip AND the pond shore, and only the shore sits next
+-- to water.
 local function authoredConditions(tilesetId, heights)
   local s = load()
   local entry = s and s.tilesets and s.tilesets[tilesetId]
@@ -322,7 +325,12 @@ local function authoredConditions(tilesetId, heights)
              and type(rule[side]) == "table" then
             local set = {}
             for _, t in ipairs(rule[side]) do set[t] = true end
-            list[#list + 1] = { side = side, set = set, class = rule.class }
+            local rows = tonumber(rule.rows)
+            if rows and (rows < 1 or rows ~= math.floor(rows)) then
+              rows = nil
+            end
+            list[#list + 1] = { side = side, set = set, class = rule.class,
+                                rows = rows }
           end
         end
         if #list > 0 then
@@ -335,11 +343,15 @@ local function authoredConditions(tilesetId, heights)
 
   collect(entry.when_above, "above")
   collect(entry.when_below, "below")
+  collect(entry.when_left, "left")
+  collect(entry.when_right, "right")
+  collect(entry.when_beside, "beside")
   return any and out or nil
 end
 
-local function shapeFor(class, heights, authored)
-  return { class = class, h = heights[class] or 0,
+local function shapeFor(class, heights, authored, rows)
+  rows = rows or 1
+  return { class = class, h = (heights[class] or 0) * rows, rows = rows,
            art = ART[class] or "upright",
            -- grass and flowers draw a flat ground base like any walkable
            -- tile; the standing tufts and cutouts are additive geometry
@@ -358,7 +370,7 @@ end
 function TileShape.forMap(map)
   local tileset = map.tileset
   local id = tileset.id
-  if cache[id] then return cache[id] end
+  if id and cache[id] then return cache[id] end
 
   local heights = TileShape.heights()
   -- Per-tileset height overrides (a tileset entry's `heights`): the class
@@ -415,8 +427,9 @@ function TileShape.forMap(map)
     shapes.condShape = {}
     for _, rules in pairs(shapes.cond) do
       for _, rule in ipairs(rules) do
+        rule.shape = shapeFor(rule.class, heights, true, rule.rows)
         shapes.condShape[rule.class] = shapes.condShape[rule.class]
-          or shapeFor(rule.class, heights, true)
+          or rule.shape
       end
     end
   end
@@ -463,7 +476,7 @@ function TileShape.forMap(map)
     end
   end
   shapes.count = count
-  cache[id] = shapes
+  if id then cache[id] = shapes end
   return shapes
 end
 
@@ -482,15 +495,30 @@ function TileShape.at(map, shapes, tile, tx, ty)
       -- NOTE map:tileAt border-EXTENDS: one row off an edge answers the
       -- map's borderBlock, never nil.  A rule listing whatever that block
       -- draws will fire along that whole edge (it did, on the Marts).
-      local n = map:tileAt(tx, rule.side == "above" and ty - 1 or ty + 1)
-      if n and rule.set[n] then
+      local function hit(dx, dy)
+        local n = map:tileAt(tx + dx, ty + dy)
+        return n and rule.set[n]
+      end
+      local matched = false
+      if rule.side == "above" then
+        matched = hit(0, -1)
+      elseif rule.side == "below" then
+        matched = hit(0, 1)
+      elseif rule.side == "left" then
+        matched = hit(-1, 0)
+      elseif rule.side == "right" then
+        matched = hit(1, 0)
+      elseif rule.side == "beside" then
+        matched = hit(0, -1) or hit(0, 1) or hit(-1, 0) or hit(1, 0)
+      end
+      if matched then
         -- shapes.condShape, NOT shapes.classes: the canonical class
         -- shapes are SHARED, and `wall` in particular is the very object
         -- rule 4 hands every unauthored solid tile. Marking that one
         -- authored (which the first cut did) made every one of them skip
         -- the cell rules below, so walkable floors stopped flattening and
         -- whole rooms rose into a checkerboard of blocks.
-        return shapes.condShape[rule.class]
+        return rule.shape or shapes.condShape[rule.class]
       end
     end
   end
@@ -498,8 +526,13 @@ function TileShape.at(map, shapes, tile, tx, ty)
   local cx = math.floor(tx / 2)
   local cy = math.floor(ty / 2)
   if s.authored then return s end
+  -- Gold's cellTile is a COLL_* byte (src.world.gen2.Map); Gen 1's is the
+  -- bottom-left graphic. Prefer cellCollision when the map has it so a
+  -- wrapper that restores the Gen 1 spelling cannot poison shapes.coll.
   if shapes.coll then
-    local cs = shapes.coll[map:cellTile(cx, cy)]
+    local coll = type(map.cellCollision) == "function"
+      and map:cellCollision(cx, cy) or map:cellTile(cx, cy)
+    local cs = shapes.coll[coll]
     if cs then return cs end
   end
   if map:isWaterCell(cx, cy) then return shapes.classes.water end

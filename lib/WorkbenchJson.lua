@@ -24,9 +24,9 @@ local function encode(value, out)
     else
       out[#out + 1] = "{"
       local first = true
-      for key, entry in pairs(value) do
+      for field, entry in pairs(value) do
         if not first then out[#out + 1] = "," end
-        first = false; encode(tostring(key), out); out[#out + 1] = ":"; encode(entry, out)
+        first = false; encode(tostring(field), out); out[#out + 1] = ":"; encode(entry, out)
       end
       out[#out + 1] = "}"
     end

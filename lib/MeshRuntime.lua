@@ -237,6 +237,7 @@ function MeshRuntime.new()
       grass = materialize(aux.grass),
       flowers = materialize(aux.flowers),
       figures = figures,
+      vox = materialize(aux.vox),
     }, stages
   end
 
@@ -246,6 +247,7 @@ function MeshRuntime.new()
     if aux.flowers and aux.flowers.release then
       pcall(aux.flowers.release, aux.flowers)
     end
+    if aux.vox and aux.vox.release then pcall(aux.vox.release, aux.vox) end
     runtime.releaseFigures(aux.figures)
   end
 
@@ -261,6 +263,7 @@ function MeshRuntime.new()
     if not aux then return end
     runtime.swap(entry, "grass", aux.grass or false)
     runtime.swap(entry, "flowers", aux.flowers or false)
+    runtime.swap(entry, "vox", aux.vox or false)
     runtime.releaseFigures(entry.figures)
     entry.figures = aux.figures or false
   end
@@ -271,7 +274,7 @@ function MeshRuntime.new()
 
   function runtime.releaseEntry(entry)
     for _, slot in ipairs({ "ring", "body", "ringWater", "bodyWater",
-                            "grass", "flowers" }) do
+                            "grass", "flowers", "vox" }) do
       local mesh = entry[slot]
       if mesh and mesh.release then pcall(mesh.release, mesh) end
       entry[slot] = nil

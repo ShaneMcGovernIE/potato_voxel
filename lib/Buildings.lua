@@ -48,6 +48,7 @@
 
 -- the mod namespace (see main.lua): V.data loads a shipped data file
 local V = ...
+local VoxAssets = V.require("VoxAssets")
 
 local Budget = V.require("BuildBudget")
 local GridKey = V.require("GridKey")
@@ -1247,16 +1248,73 @@ local function matches(S, t, tx, ty)
   return true
 end
 
+-- Some Gold maps reuse a facility's tile drawing for a town-specific house
+-- exterior. A profile template can opt into a map-id scope so the specific
+-- drawing wins without changing the generic Mart/Center on other maps.
+local function mapMatches(t, map)
+  local id = map and map.def and map.def.id or map and map.id
+  if type(t.excludeMaps) == "table" then
+    for _, excluded in ipairs(t.excludeMaps) do
+      if excluded == id then return false end
+    end
+  end
+  if type(t.maps) ~= "table" then return true end
+  for _, allowed in ipairs(t.maps) do
+    if allowed == id then return true end
+  end
+  return false
+end
+
+-- A few Gen 2 graphics reuse the same 2x2 tile drawing for unrelated
+-- scenery. CUT trees are identified by the live 4x4 block that owns that
+-- drawing: after the field move, the engine swaps the block id and this
+-- template must stop claiming it. Keep this guard opt-in so existing
+-- tile-only templates retain their normal matching behaviour.
+local function blockMatches(t, map, tx, ty)
+  local included = type(t.blockIds) == "table"
+  local excluded = type(t.excludeBlockIds) == "table"
+  if not included and not excluded then return true end
+  local bx, by = math.floor(tx / 4), math.floor(ty / 4)
+  local block
+  if map and type(map.blockAt) == "function" then
+    block = map:blockAt(bx, by)
+  else
+    -- Geometry snapshots are plain tables in a few serial/headless paths;
+    -- their definition still carries the authoritative block grid.
+    local def = map and map.def
+    local blocks = def and def.blocks
+    if type(blocks) == "table" and def.width and def.height then
+      if bx < 0 or by < 0 or bx >= def.width or by >= def.height then
+        block = def.borderBlock
+      else
+        block = blocks[by * def.width + bx + 1]
+      end
+    end
+  end
+  if block == nil then return not included end
+  if included and not t.blockIds[block] then return false end
+  if excluded and t.excludeBlockIds[block] then return false end
+
+  local offset = t.blockOffset
+  return not offset
+      or (tx % 4 == offset[1] and ty % 4 == offset[2])
+end
+
 -- Find every placement of every template for this map's tileset, build one
 -- model per template, and stamp it. Returns nothing; the quads land in
 -- S.objectQuads and the tiles are claimed so the volume path never boxes a
 -- building this module has already modelled.
 function Buildings.build(S, map, data, perRow)
-  if not data then return end
   local tileset = map.tileset
   local s = profile()
-  local list = s and s.buildings and s.buildings[tileset.id]
+  local tid = (tileset and tileset.id) or (map.def and map.def.tileset)
+  local list = s and s.buildings and (s.buildings[tid]
+    or s.buildings["gen2_" .. tostring(tid)])
+  -- Sprite .vox (berry trees) share the palette atlas; load them before
+  -- any map mesh bakes UVs, even on tilesets with no building list.
+  VoxAssets.preloadProfile()
   if not list then return end
+  local voxMap = type(s.vox) == "table" and s.vox or {}
 
   local atlasW = tileset.imageWidth or 128
   local atlasH = tileset.imageHeight or 48
@@ -1284,7 +1342,7 @@ function Buildings.build(S, map, data, perRow)
     end
   end
   for index, t in ipairs(list) do
-    if type(t.tiles) == "table" and #t.tiles > 0 then
+    if mapMatches(t, map) and type(t.tiles) == "table" and #t.tiles > 0 then
       local bh, bw = #t.tiles, #t.tiles[1]
       local first = t.tiles[1][1]
       local built = nil
@@ -1312,26 +1370,89 @@ function Buildings.build(S, map, data, perRow)
               end
               if not free then break end
             end
-            if free and matches(S, t, tx, ty) then
-              if not built then
-                local key = tileset.id .. ":" .. index
-                if not models[key] then
-                  if t.claimOnly then
-                    -- claim the cells, stamp nothing: the drawing here is
-                    -- the off-map half of a building another map models in
-                    -- full (the tower's roof rows on ROUTE_10 -- Lavender's
-                    -- placement composites them via topRows). Left to the
-                    -- detector they stood as a second half-building.
-                    models[key] = {}
-                  else
-                    local sp = read(t, data, perRow)
-                    local pr = measure(sp, t)
-                    models[key] = emit(model(sp, pr, t), sp, atlasW, atlasH)
+            if free and blockMatches(t, map, tx, ty)
+                and matches(S, t, tx, ty) then
+              if t.mode == "defer" then
+                -- The map-specific match is only a guard against the
+                -- generic template below. Leave every tile untouched so
+                -- Structures' ordinary Gen 2 detector can build its
+                -- gabled roof instead of this module's flat roof model.
+                -- A deferred drawing may still need to tell that detector
+                -- where its eaves are: the generic two-row heuristic makes
+                -- Violet's capped six-row volume leave a 32px room, while
+                -- the artwork has four roof rows and a two-row facade.
+                if t.detectorRoofRows then
+                  S.volumeHints = S.volumeHints or {}
+                  for hr = 0, bh - 1 do
+                    for hc = 0, bw - 1 do
+                      local hk = GridKey.of(tx + hc, ty + hr)
+                      if not S.volumeHints[hk] then
+                        S.volumeHints[hk] = {
+                          roofRows = t.detectorRoofRows,
+                          template = t.id,
+                        }
+                      end
+                    end
                   end
                 end
-                built = models[key]
+              else
+                local voxName = t.vox or (t.id and voxMap[t.id])
+                local voxQuads = voxName and (VoxAssets.quads(voxName))
+                if voxName then
+                  -- Named .vox: stamp it, or leave the tiles for later
+                  -- passes. Do not sprite-build a vox-only template.
+                  -- requireClass skips when the resolved shape is not that
+                  -- class (Johto pond shores stay water, not dirt banks).
+                  local okClass = true
+                  if t.requireClass then
+                    for r = 0, bh - 1 do
+                      for c = 0, bw - 1 do
+                        local s = S.shapeAt[GridKey.of(tx + c, ty + r)]
+                        if not (s and s.class == t.requireClass) then
+                          okClass = false
+                          break
+                        end
+                      end
+                      if not okClass then break end
+                    end
+                  end
+                  if okClass and voxQuads and #voxQuads > 0 then
+                    local off = t.voxOffset or {}
+                    local placed = VoxAssets.place(voxQuads,
+                      tx * 8 + (off[1] or 0), off[2] or 0,
+                      ty * 8 + (off[3] or 0), t.voxScale or 1)
+                    Buildings.stamp(S, map, {}, tx, ty, bw, bh, t)
+                    local dest = S.voxQuads
+                    if dest then
+                      for i = 1, #placed do
+                        dest[#dest + 1] = placed[i]
+                      end
+                    end
+                  end
+                elseif not built then
+                  local key = tileset.id .. ":" .. index
+                  if not models[key] then
+                    if t.claimOnly then
+                      -- claim the cells, stamp nothing: the drawing here is
+                      -- the off-map half of a building another map models in
+                      -- full (the tower's roof rows on ROUTE_10 -- Lavender's
+                      -- placement composites them via topRows). Left to the
+                      -- detector they stood as a second half-building.
+                      models[key] = {}
+                    elseif data then
+                      local sp = read(t, data, perRow)
+                      local pr = measure(sp, t)
+                      models[key] = emit(model(sp, pr, t), sp, atlasW, atlasH)
+                    end
+                  end
+                  built = models[key]
+                  if built then
+                    Buildings.stamp(S, map, built, tx, ty, bw, bh, t)
+                  end
+                elseif built then
+                  Buildings.stamp(S, map, built, tx, ty, bw, bh, t)
+                end
               end
-              Buildings.stamp(S, map, built, tx, ty, bw, bh, t)
             end
           end
         end

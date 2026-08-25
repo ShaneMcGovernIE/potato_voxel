@@ -37,8 +37,9 @@ local ShadowSettings = V.require("ShadowSettings")
 local MapAtmos = V.require("MapAtmos")
 local BattleBillboard = V.require("BattleBillboard")
 local Diagnostics = V.require("DiagnosticsBridge")
+local VoxAssets = V.require("VoxAssets")
 local PaletteFX = require("src.render.PaletteFX")
-local Map = require("src.world.Map")
+local RuntimeHooks = V.require("RuntimeHooks")
 
 local VoxelScene = {}
 
@@ -135,7 +136,7 @@ end
 -- void to wants -- the overworld battle's arena shot is one of those. The
 -- gradient is added on top of this by skyFor, for the free-roam camera alone.
 function VoxelScene.skyColor(map, t)
-  if not (map and map.def and Map.isOutdoor(map.def)) then return nil end
+  if not (map and map.def and RuntimeHooks.isOutdoor(map.def)) then return nil end
   if not t or t <= 0 then return nil end
   local sky = VoxelScene.skyShade(SKY_SHADE, t)
   -- outdoors the flat fill follows the CLOCK: it becomes the hour's haze --
@@ -299,6 +300,7 @@ end
 local billboardMat = Mat4.identity()
 local figureMat = Mat4.identity()
 local figureCasterMat = Mat4.identity()
+local spriteVoxMat = Mat4.identity()
 
 local nbMatrices = {}
 for i = 1, 16 do
@@ -387,11 +389,22 @@ end
 local function drawEntity(sprite, px, py, facing, phase, flip, gh, colors,
                           lift)
   local def = sprite.def
+  local y = gh + (lift or 0)
+  local voxName = VoxAssets.forSprite(def.image)
+  if voxName then
+    local mesh = VoxAssets.mesh(voxName)
+    if mesh then
+      local ox, oz = VoxAssets.spriteOrigin(voxName, px, py)
+      Mat4.translateInPlace(spriteVoxMat, ox, y, oz)
+      Voxel3D.draw(mesh, VoxAssets.texture(colors), spriteVoxMat,
+                   0, spriteVoxMat)
+      return true
+    end
+  end
   local tex = sprite:resolveImage()
   if colors and not def.trueColor then
     tex = TerrainAtlas.forSprite(def.image, colors) or tex
   end
-  local y = gh + (lift or 0)
 
   -- pick the very frame the 2D path would draw (same tables). The card
   -- always faces SOUTH -- the direction the 2D game implies -- and only
@@ -430,6 +443,9 @@ VoxelScene.drawEntity = drawEntity
 -- mesh for it.
 local function drawGhost(p)
   local def = p.sprite.def
+  -- MagicaVoxel replacements are solid meshes: inverted-depth ghosting
+  -- would self-overlap. Real depth occlusion is enough.
+  if VoxAssets.forSprite(def.image) then return end
   local frame, mirror = frameFor(def, viewFacing(p), p.phase, p.flip)
   local mesh = SpriteBillboards.shadowQuad(def, frame)
   if not mesh then return end
@@ -883,7 +899,7 @@ end
 -- two layers share the fitted box (a sprite begin reuses the world's
 -- fit), so shadow edges land identically wherever they come from.
 local function castShadows(state, terrain, ring, nbMesh, posed, cx, cy, vw, vh,
-                           atlasFor, water, ringWater, nbWater,
+                           atlasFor, voxTextureFor, water, ringWater, nbWater,
                            battleCards, battleToken)
   if not ShadowMap.available() then
     if not shadowUnavailableLogged then
@@ -927,6 +943,7 @@ local function castShadows(state, terrain, ring, nbMesh, posed, cx, cy, vw, vh,
       -- shared world-layer run (lib/ShadowCast.lua)
       ShadowCast.terrainAndWater(ShadowMap, ChunkMesher, {
         map = state.map, atlasFor = atlasFor,
+        voxTextureFor = voxTextureFor,
         terrain = terrain, ring = ring,
         water = water, ringWater = ringWater,
         neighbors = state.neighbors or {},
@@ -979,13 +996,25 @@ local function castShadows(state, terrain, ring, nbMesh, posed, cx, cy, vw, vh,
         -- swaps frame as the eye circles, which costs a redraw the signature
         -- already charges for (FirstPerson.signature) and keeps a card from
         -- fringing against a mirror-flipped record of itself
-        local frame, mirror = frameFor(def, viewFacing(p), p.phase, p.flip)
-        local mesh = SpriteBillboards.shadowQuad(def, frame)
-        if mesh then
-          ShadowMap.draw(mesh, p.sprite:resolveImage(),
-                         ShadowMap.snug(
-                           Voxel3D.casterMatrix(p.px, p.py, p.gh + (p.lift or 0),
-                                                mirror)))
+        local voxName = VoxAssets.forSprite(def.image)
+        if voxName then
+          local mesh = VoxAssets.mesh(voxName)
+          if mesh then
+            local ox, oz = VoxAssets.spriteOrigin(voxName, p.px, p.py)
+            Mat4.translateInPlace(spriteVoxMat, ox,
+                                  p.gh + (p.lift or 0), oz)
+            ShadowMap.draw(mesh, VoxAssets.texture(p.colors), spriteVoxMat)
+          end
+        else
+          local frame, mirror = frameFor(def, viewFacing(p), p.phase, p.flip)
+          local mesh = SpriteBillboards.shadowQuad(def, frame)
+          if mesh then
+            ShadowMap.draw(mesh, p.sprite:resolveImage(),
+                           ShadowMap.snug(
+                             Voxel3D.casterMatrix(p.px, p.py,
+                                                  p.gh + (p.lift or 0),
+                                                  mirror)))
+          end
         end
       end
       -- a staged fight's mons (VR frames only): the same cards the eye pass
@@ -1028,7 +1057,7 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- every surface by. A CANOPY map (Viridian Forest) is the case between:
   -- the rig stays at noon and no sky is painted, but the hour's tint still
   -- falls through the leaves -- night reaches a forest floor.
-  local outdoor = state.map.def and Map.isOutdoor(state.map.def) or false
+  local outdoor = state.map.def and RuntimeHooks.isOutdoor(state.map.def) or false
   DayNight.applyRig(outdoor)
   Voxel3D.tint = DayNight.tint(outdoor or DayNight.isCanopy(state.map))
   -- and the window glass: the tileset's own panes (found in its art --
@@ -1047,6 +1076,9 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
 
   local function atlasFor(map)
     return TerrainAtlas.forMap(map, modeColors(paletteFor, map))
+  end
+  local function voxTextureFor(map)
+    return VoxAssets.texture(modeColors(paletteFor, map))
   end
 
   -- sprite palettes only exist in the SGB modes; under RED++ the OBP bake
@@ -1105,7 +1137,7 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
                 and ShadowSettings.enabled()
   if shadowsOn then
     castShadows(state, terrain, ring, nbMesh, posed, shCx, shCy, vw, vh,
-                atlasFor, water, ringWater, nbWater,
+                atlasFor, voxTextureFor, water, ringWater, nbWater,
                 battleCards, battleToken)
   else
     ShadowMap.off()
@@ -1119,6 +1151,13 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
 
   Voxel3D.draw(terrain, atlasFor(state.map), nil)
   Voxel3D.draw(ring, atlasFor(state.map), nil)
+  do
+    Voxel3D.draw(ChunkMesher.vox(state.map), voxTextureFor(state.map), nil)
+    for i, nb in ipairs(state.neighbors or {}) do
+      Voxel3D.draw(ChunkMesher.vox(nb.map), voxTextureFor(nb.map),
+                   nbTransform(i, nb.ox, nb.oy))
+    end
+  end
   for i, nb in ipairs(state.neighbors or {}) do
     Voxel3D.draw(nbMesh[i], atlasFor(nb.map),
                  nbTransform(i, nb.ox, nb.oy))

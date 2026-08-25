@@ -45,7 +45,7 @@
 local V = ...
 
 local Assets = require("src.render.Assets")
-local Map = require("src.world.Map")
+local RuntimeHooks = V.require("RuntimeHooks")
 local Buildings = V.require("Buildings")
 local TileShape = V.require("TileShape")
 local Budget = V.require("BuildBudget")
@@ -54,7 +54,6 @@ local VegetationBuilder = V.require("VegetationBuilder")
 local StructureMatcher = V.require("StructureMatcher")
 local StairBuilder = V.require("StairBuilder")
 local BookcaseBuilder = V.require("BookcaseBuilder")
-local VoxProps = V.require("VoxProps")
 
 local Structures = {}
 
@@ -118,8 +117,14 @@ local cache = {}
 
 local atlasData = {}
 
-local function pixels(tileset)
-  local path = tileset.image
+-- Shade classification (tree hulls, grass tufts, building floods) is
+-- 2bpp grayscale: min(r,g,b) is the GB shade. GoldAtlas bakes GBC colour
+-- into renderer.atlasData; feeding that in made every green texel look
+-- "dark" (its red/blue channels), so Johto trees became solid wedges and
+-- grass tiles extruded as tuft carpets. Always sample the tileset PNG.
+local function pixels(tileset, _map)
+  local path = tileset and tileset.image
+  if not path then return nil end
   if atlasData[path] == nil then
     local ok, data = pcall(Assets.imageData, path)
     atlasData[path] = (ok and data and data.getPixel) and data or false
@@ -129,8 +134,8 @@ end
 
 -- tiles whose art is entirely black or transparent (interior darkness):
 -- these never extrude, whatever class they resolved to
-local function voidTiles(tileset)
-  local data = pixels(tileset)
+local function voidTiles(tileset, map)
+  local data = pixels(tileset, map)
   if not data then return nil end
   local perRow = tileset.tilesPerRow or 16
   local iw, ih = data:getDimensions()
@@ -158,13 +163,24 @@ end
 
 local DIRS4 = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
 
+-- Gen 1 doors are a tileset graphic list; Gold doors are warp COLL kinds
+-- (Map:isDoorTileCell). Prefer the predicate so a missing doorTiles table
+-- does not leave facade doors as walkable holes.
+local function isDoorCell(map, cx, cy)
+  if type(map.isDoorTileCell) == "function" then
+    return map:isDoorTileCell(cx, cy) and true or false
+  end
+  local doors = map.doorTiles
+  return doors and doors[map:cellTile(cx, cy)] or false
+end
+
 function Structures.forMap(map)
   local S = cache[map.id]
   if S then return S end
 
   local tileset = map.tileset
   local shapes = TileShape.forMap(map)
-  local void = voidTiles(tileset)
+  local void = voidTiles(tileset, map)
   local perRow = tileset.tilesPerRow or 16
 
   local def = map.def
@@ -186,8 +202,7 @@ function Structures.forMap(map)
   -- cell is the shape "nothing" has always had here. (It used to add 1 to
   -- that `false`, which threw, failed the mesh build for every map on the
   -- route, and dropped the mode to the flat 2D path entirely.)
-  local TileRenderer = require("src.render.TileRenderer")
-  local borderId = TileRenderer.borderBlockFor(map)
+  local borderId = RuntimeHooks.borderBlockFor(map)
   local borderBlk = borderId and tileset.blocks[borderId + 1] or nil
   -- TREES fill stops at ROUND_RING instead of running the full RING.
   -- Only that far out does a tree cell get carved into a hull; past it
@@ -204,8 +219,7 @@ function Structures.forMap(map)
   -- WATER and the other tilesets' own borders keep the full ring: a flat
   -- sheet of water is what water looks like from above anyway, and an
   -- interior's border is black already.
-  local hullRingOnly = borderBlk and def.tileset == "OVERWORLD"
-                       and (TileRenderer.voidFill or "trees") == "trees"
+  local hullRingOnly = borderBlk and RuntimeHooks.treeVoidFill(map)
   local tw2, th2 = tw, th
   local function tileLookup(tx, ty)
     if tx >= 0 and ty >= 0 and tx < tw2 and ty < th2 then
@@ -227,7 +241,12 @@ function Structures.forMap(map)
       if tile then
         local k = GridKey.of(tx, ty)
         local s = TileShape.at(map, shapes, tile, tx, ty)
-        if s and void and void[tile] and not s.authored then
+        -- Authored pins win on the map body (a Center PC's black screen
+        -- is bookcase tile 61). Off-body they must not: Crystal Centers
+        -- fill the indoor border block with that same 61, and meshing
+        -- it stood a 32px black wall around the room.
+        local onBody = tx >= 0 and ty >= 0 and tx < tw and ty < th
+        if s and void and void[tile] and (not s.authored or not onBody) then
           s = shapes.classes.void
         end
         shapeAt[k], tileAt[k] = s, tile
@@ -248,12 +267,12 @@ function Structures.forMap(map)
   -- AFTER the characters -- see VoxelScene -- so the southern tuft row
   -- still overdraws a walker's feet even though characters stamp over
   -- terrain.)
-  S = { shapeAt = shapeAt, tileAt = tileAt, outdoor = Map.isOutdoor(def),
+  S = { shapeAt = shapeAt, tileAt = tileAt, outdoor = RuntimeHooks.isOutdoor(def),
         hideBareRing = hullRingOnly or nil,
         runs = {}, skip = {}, ground = {}, doorFold = {}, objectQuads = {},
-        grassQuads = {}, flowerQuads = {}, roundStamps = {}, figures = {} }
-  Buildings.build(S, map, pixels(tileset), perRow)
-  VoxProps.build(S, map, pixels(tileset), perRow)
+        grassQuads = {}, flowerQuads = {}, roundStamps = {}, figures = {},
+        voxQuads = {} }
+  Buildings.build(S, map, pixels(tileset, map), perRow)
 
   -- Fold doors into their buildings. A door cell is WALKABLE (the player
   -- steps onto it to warp), so it resolves to ground and punches a hole in
@@ -262,8 +281,9 @@ function Structures.forMap(map)
   -- whites, shredding it into misdetected sprite clusters. Visually the
   -- door is part of the facade, so mark the door cell's tiles structural:
   -- the fold then shows the door art standing at ground level in the
-  -- building's front face. Door graphics only (the tileset's doorTiles);
-  -- interior stair/mat warps stay flat.
+  -- building's front face. Door graphics (Gen 1 doorTiles) or Gold's
+  -- immediate-warp collision (isDoorTileCell); interior stair/mat warps
+  -- stay flat.
   --
   -- A PROFILE PIN WINS over the fold. The fold is detection, and rule 1
   -- of the resolution order is that an authored tile bypasses detection
@@ -274,7 +294,7 @@ function Structures.forMap(map)
   -- silently did nothing and the flights stayed painted on the floor.
   for cy = math.floor(y0 / 2), math.floor(y1 / 2) do
     for cx = math.floor(x0 / 2), math.floor(x1 / 2) do
-      if map.doorTiles[map:cellTile(cx, cy)] then
+      if isDoorCell(map, cx, cy) then
         local northK = GridKey.of(cx * 2, cy * 2 - 1)
         local ns = shapeAt[northK]
         if ns and ns.art == "upright" then
@@ -327,7 +347,7 @@ function Structures.forMap(map)
   -- ---- bookcases: pinned shelves collapsed to one cell of depth ----
   -- The atlas comes along so the shelf front can carry its own measured
   -- relief: the panes it seals behind its black frames sink a voxel.
-  Structures.buildBookcases(S, map, x0, x1, y0, y1, pixels(tileset), perRow)
+  Structures.buildBookcases(S, map, x0, x1, y0, y1, pixels(tileset, map), perRow)
 
   -- ---- figures: a person drawn INTO furniture, lifted off it ----
   -- Before the region flood and the volume pass, so everything after this
@@ -382,7 +402,7 @@ function Structures.forMap(map)
   end
 
   -- ---- model each region: carve out per-pixel objects, volume the rest --
-  local data = pixels(tileset)
+  local data = pixels(tileset, map)
   for _, region in ipairs(regions) do
     Budget.tick()
     local leftover = region.tiles
@@ -617,6 +637,10 @@ local ROUND_SHADE = { front = 1.0, back = 0.68, side = 0.78,
 -- -- black rim edge, gold band, body, foot, the drawn flowerpot profile
 -- -- are the vessel, and only they revolve.
 local PLANTER_SPRAY = { rows = 24, depth = 5 }
+-- A tileset entry may set `planter_spray = false` to pass nil here: the
+-- 16x32 hull still stacks two cells, but every row revolves. Johto's
+-- outdoor pine is the case -- the default spray stood its canopy as a
+-- 5-voxel slab on a revolved trunk, which read as two green boxes.
 
 -- `spray`, when given, caps the chord over the canvas's top `rows` rows to
 -- `depth` voxels instead of revolving them.
@@ -707,20 +731,29 @@ local function roundTemplate(S, map, data, cx, cy, groundTiles, N, capRows,
   -- which the band's own `enclosed` count asks for -- keeps it). Measured on
   -- the Center plant: one flood over both bands keeps 53% of the drawing and
   -- leaves the pot a hollow black frame; per band keeps 68% and both read.
+  --
+  -- A stacked TREE is the opposite: the band seam cuts through the canopy,
+  -- the flood walks in through mid-body, and each half becomes a box.
+  -- `spray.one_band` floods the whole 32px silhouette once.
+  local oneBand = spray and spray.one_band
+  if oneBand then spray = nil end
   local mask = {}
-  for band = 0, NY / NX - 1 do
+  local bandCount = oneBand and 1 or (NY / NX)
+  local bandH = NY / bandCount
+  for band = 0, bandCount - 1 do
     Budget.tick()
-    local y0, y1 = band * NX, band * NX + NX - 1
+    local y0, y1 = band * bandH, band * bandH + bandH - 1
     local out = floodOutside({ off = true, dark = true,
                                light = true, white = true }, y0, y1)
     local enclosed = 0
+    local area = (y1 - y0 + 1) * NX
     for i = y0 * NX, (y1 + 1) * NX - 1 do
       if not out[i] then
         mask[i] = true
         if cls[i] ~= "black" then enclosed = enclosed + 1 end
       end
     end
-    if enclosed < NX * NX / 8 then
+    if enclosed < area / 8 then
       out = floodOutside({ off = true, light = true, white = true }, y0, y1)
       for i = y0 * NX, (y1 + 1) * NX - 1 do
         mask[i] = (not out[i] and cls[i] ~= "off") or nil
@@ -1416,7 +1449,7 @@ end
 local roundCache = {}
 
 function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
-  local data = pixels(map.tileset)
+  local data = pixels(map.tileset, map)
   local tw, th = map.def.width * 4, map.def.height * 4
 
   -- ground-set fingerprint: the template's art-matched floor depends on
@@ -1438,6 +1471,12 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
   -- voxels the body band is repeated up to
   local stumpCap, canCap, canBase, canHeight, canWell, canTaper
     = 6, 9, 4, 9, 5, 4
+  -- Default the potted-plant leaf spray. A tileset may set
+  -- `planter_spray = false` when the 16x32 stack is a TREE (Johto's
+  -- 4-row pine) rather than a pot: revolving the canopy is what the
+  -- drawing states, and the 24-row 5-voxel slab turns that pine into
+  -- two stacked boxes.
+  local planterSpray = PLANTER_SPRAY
   do
     local okP, prof = pcall(V.data, "voxel_heights")
     local entry = okP and type(prof) == "table" and prof.tilesets
@@ -1459,6 +1498,9 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
     end
     if entry and type(entry.can_taper) == "number" then
       canTaper = entry.can_taper
+    end
+    if entry and entry.planter_spray == false then
+      planterSpray = entry.planter_one_band and { one_band = true } or nil
     end
   end
 
@@ -1546,13 +1588,15 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
               end
             end
             local sig = tsid .. "|p32|"
+                        .. (planterSpray and (planterSpray.one_band and "|ob|" or "|sp|")
+                            or "|nsp|")
                         .. (Structures.HULL_BILLBOARDS and "|bb|" or "")
                         .. gsig .. "|" .. table.concat(ids, ":")
             local tpl = roundCache[sig]
             if not tpl then
               local tq, tbg = roundTemplate(S, map, data, cx, cy,
                                             groundTiles, 16, nil, 32,
-                                            PLANTER_SPRAY)
+                                            planterSpray)
               tpl = { quads = tq, bg = tbg }
               roundCache[sig] = tpl
             end
@@ -1571,6 +1615,52 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
           grouped[ckey + 8192] = true
         end
       elseif s and s.art == "cylinder" and near then
+        -- Johto's 4-row pine repeats its mid-canopy across the cell seam
+        -- (30 31 / 46 47 / 46 47 / 62 63). Pinning 46/47 `planter` was
+        -- the wrong grouping: when the top cell stayed `cylinder`, the
+        -- mid tiles never joined a stack and meshed as unclaimed 32px
+        -- boxes. A repeated mid-row plus a cylinder cell below is that
+        -- pine -- ONE 16x32 hull, one flood, standing on the south plot.
+        local belowK = GridKey.of(cx * 2, (cy + 1) * 2)
+        local below = S.shapeAt[belowK]
+        local midTop = S.tileAt[GridKey.of(cx * 2, cy * 2 + 1)]
+        local midBot = S.tileAt[belowK]
+        local stacked = below and below.art == "cylinder"
+                        and midTop ~= nil and midTop == midBot
+        if stacked then
+          local ground = false
+          if data then
+            local ids = {}
+            for dy = 0, 3 do
+              for dx = 0, 1 do
+                ids[#ids + 1] = S.tileAt[GridKey.of(cx * 2 + dx, cy * 2 + dy)]
+              end
+            end
+            local sig = tsid .. "|t32|"
+                        .. (Structures.HULL_BILLBOARDS and "|bb|" or "")
+                        .. gsig .. "|" .. table.concat(ids, ":")
+            local tpl = roundCache[sig]
+            if not tpl then
+              local tq, tbg = roundTemplate(S, map, data, cx, cy,
+                                            groundTiles, 16, nil, 32,
+                                            { one_band = true })
+              tpl = { quads = tq, bg = tbg }
+              roundCache[sig] = tpl
+            end
+            ground = tpl.bg or false
+            S.roundStamps[#S.roundStamps + 1] =
+              { quads = tpl.quads, mx = cx * 16 + 8,
+                mz = (cy + 1) * 16 + 8 }
+          end
+          for dy = 0, 3 do
+            for dx = 0, 1 do
+              local tk = GridKey.of(cx * 2 + dx, cy * 2 + dy)
+              S.skip[tk] = true
+              S.ground[tk] = ground
+            end
+          end
+          grouped[ckey + 8192] = true
+        else
         -- a `stump`-class cell is the same hull with a cut face: its
         -- top capRows of drawing project onto the round top. A `can`-class
         -- cell is that hull cut at BOTH ends -- lid on top, base circle on
@@ -1615,6 +1705,7 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
             S.skip[tk] = true
             S.ground[tk] = ground
           end
+        end
         end
       end
     end
@@ -1889,10 +1980,26 @@ function Structures.buildVolume(S, map, tiles)
     -- flat ROOFTOP (the lab, the mart) repeats one texture tile over the
     -- whole roof area -- and a rooftop tilted into a 48px ramp reads
     -- wrong instantly. Distinct top rows -> slope; repeated -> level top.
+    local volumeHint
+    if S.volumeHints then
+      for ty = run.north, run.front do
+        volumeHint = S.volumeHints[GridKey.of(r.tx, ty)]
+        if volumeHint then break end
+      end
+    end
     local roofRows = 0
     if S.outdoor and (not run.fromRepeat or adopted) and h >= 16
        and not flatDoor then
-      roofRows = math.min(2, math.floor(h / 8) - 1)
+      local hintedRoofRows = volumeHint and volumeHint.roofRows
+      if hintedRoofRows then
+        -- A deferred building supplies the roof band that the generic
+        -- two-row heuristic cannot infer from a capped run. Clamp it to
+        -- the measured volume so a malformed hint cannot invert the wall.
+        roofRows = math.min(math.max(0, hintedRoofRows),
+                            math.floor(h / 8) - 1)
+      else
+        roofRows = math.min(2, math.floor(h / 8) - 1)
+      end
       if roofRows > 0 and map:tileAt(r.tx, run.north)
                          == map:tileAt(r.tx, run.north + 1) then
         roofRows = 0
@@ -2897,7 +3004,7 @@ end
 
 -- Compatibility façade: stair geometry ownership lives in StairBuilder.
 function Structures.buildStairs(S, map, x0, x1, y0, y1)
-  return StairBuilder.build(S, map, x0, x1, y0, y1, pixels(map.tileset))
+  return StairBuilder.build(S, map, x0, x1, y0, y1, pixels(map.tileset, map))
 end
 
 -- ---- tall grass ----
@@ -2953,7 +3060,6 @@ function Structures.invalidate(mapId)
     atlasData = {}
     roundCache = {}
     Buildings.invalidate()
-    VoxProps.invalidate()
   end
 end
 

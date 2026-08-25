@@ -10,12 +10,19 @@ local function eq(actual, expected, message)
   end
 end
 
-package.preload["src.render.PaletteFX"] = function() return {} end
+package.preload["src.render.PaletteFX"] = function()
+  return { pal = function(_, name) return "gen1:" .. tostring(name) end }
+end
 package.preload["src.world.Map"] = function() return {} end
 
 local empty = {}
 local V = {
-  require = function() return empty end,
+  require = function(name)
+    if name == "RuntimeHooks" then
+      return { gameOwner = function() return require("src.core.Game") end }
+    end
+    return empty
+  end,
 }
 
 local BattleScene = assert(loadfile("lib/BattleScene.lua"))(V)
@@ -65,6 +72,69 @@ eq(wide.captureH, 144, "side captures retain their logical height")
 eq(wide.hud.enemy[1], 0, "WIDE enemy HUD follows the wide viewport")
 eq(wide.hud.player[1], 184, "WIDE player HUD follows the wide viewport")
 eq(wide.scaleMode, "fixed", "FIXED exposes its scale mode")
+
+package.preload["src.core.GameVersion"] = function()
+  return { generation = function() return 2 end }
+end
+local gen2 = BattleScene.layoutMetrics(battle(false, false), {
+  pw = 1280, ph = 720, dpiX = 1, dpiY = 1,
+})
+eq(gen2.anchors.player[1], 40,
+   "Gen2 keeps the native 6x6 player-pic anchor")
+eq(gen2.anchors.player[2], 96,
+   "Gen2 keeps the native player-pic baseline")
+eq(gen2.anchors.enemy[1], 124,
+   "Gen2 keeps the native 7x7 enemy-pic anchor")
+eq(gen2.anchors.enemy[2], 56,
+   "Gen2 keeps the native enemy-pic baseline")
+package.loaded["src.core.GameVersion"] = nil
+package.preload["src.core.GameVersion"] = nil
+
+package.preload["src.core.GameVersion"] = function()
+  return { generation = function() return 2 end }
+end
+package.preload["src.world.gen2.Palettes"] = function()
+  return {
+    daytimeFor = function(_, hour, flashUsed)
+      return flashUsed and "DARK" or (hour >= 18 and "NITE" or "DAY")
+    end,
+    bgSet = function(_, _, daytime)
+      return { { "gen2:" .. daytime } }
+    end,
+  }
+end
+package.preload["src.core.Game"] = function()
+  return { data = { gen2Palettes = "world-palettes" } }
+end
+local gen2PaletteState = {
+  palettes = "state-palettes",
+  daytime = nil,
+  tod = "MORN",
+  hour = function() return 22 end,
+  flashUsed = false,
+}
+local gen2Palette = BattleScene.paletteFor(gen2PaletteState, { def = "CAVE" })
+eq(gen2Palette({ def = "CAVE" })[1], "gen2:MORN",
+   "Gen2 battle palette prefers the World daytime/tod state")
+gen2PaletteState.daytime = "NITE"
+eq(BattleScene.paletteFor(gen2PaletteState, { def = "CAVE" })({ def = "CAVE" })[1],
+   "gen2:NITE", "Gen2 battle palette prefers resolved daytime")
+package.loaded["src.core.GameVersion"] = nil
+package.loaded["src.world.gen2.Palettes"] = nil
+package.loaded["src.core.Game"] = nil
+package.preload["src.core.GameVersion"] = nil
+package.preload["src.world.gen2.Palettes"] = nil
+package.preload["src.core.Game"] = function()
+  return { data = {} }
+end
+local gen1PaletteState = {
+  paletteNameFor = function() return "ROUTE" end,
+}
+local gen1Palette = BattleScene.paletteFor(gen1PaletteState, {})
+eq(gen1Palette({}), "gen1:ROUTE",
+   "Gen1 battle palette keeps the native palette-name path")
+package.loaded["src.core.Game"] = nil
+package.preload["src.core.Game"] = nil
 
 local fill = BattleScene.layoutMetrics(battle(true, true), {
   pw = 1280, ph = 720, dpiX = 1, dpiY = 1,

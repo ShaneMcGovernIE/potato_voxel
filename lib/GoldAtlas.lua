@@ -7,30 +7,35 @@ local Palettes = require("src.world.gen2.Palettes")
 
 local GoldAtlas = {}
 local cache = {}
+local pixelCache = {}
 
 local function sourcePixels(atlas, tileset)
+  -- Prefer the live atlas: Johto/Kanto roof overlays live there, not on
+  -- the tileset PNG World:atlasFor started from.
+  if atlas and love.graphics and love.graphics.newCanvas then
+    local ok, data = pcall(function()
+      local w, h = atlas:getDimensions()
+      local previous = love.graphics.getCanvas()
+      local canvas = love.graphics.newCanvas(w, h, { dpiscale = 1 })
+      love.graphics.setCanvas(canvas)
+      love.graphics.clear(0, 0, 0, 0)
+      love.graphics.setBlendMode("replace", "premultiplied")
+      love.graphics.setColor(1, 1, 1, 1)
+      love.graphics.draw(atlas, 0, 0)
+      love.graphics.setCanvas(previous)
+      love.graphics.setBlendMode("alpha", "alphamultiply")
+      local out = canvas:newImageData()
+      canvas:release()
+      return out
+    end)
+    if ok and data then return data end
+  end
   local path = tileset and tileset.image
   if path then
     local ok, data = pcall(Assets.imageData, path)
     if ok and data then return data end
   end
-  if not (atlas and love.graphics and love.graphics.newCanvas) then return nil end
-  local ok, data = pcall(function()
-    local w, h = atlas:getDimensions()
-    local previous = love.graphics.getCanvas()
-    local canvas = love.graphics.newCanvas(w, h, { dpiscale = 1 })
-    love.graphics.setCanvas(canvas)
-    love.graphics.clear(0, 0, 0, 0)
-    love.graphics.setBlendMode("replace", "premultiplied")
-    love.graphics.setColor(1, 1, 1, 1)
-    love.graphics.draw(atlas, 0, 0)
-    love.graphics.setCanvas(previous)
-    love.graphics.setBlendMode("alpha", "alphamultiply")
-    local out = canvas:newImageData()
-    canvas:release()
-    return out
-  end)
-  return ok and data or nil
+  return nil
 end
 
 local function shadeOf(red)
@@ -54,16 +59,19 @@ end
 function GoldAtlas.forMap(world, map, rawAtlas)
   if not (world and map and map.tileset and rawAtlas
       and love.image and love.image.newImageData and love.graphics) then
-    return rawAtlas, false
+    return rawAtlas, false, nil
   end
   local key, daytime = keyFor(world, map)
-  if cache[key] ~= nil then return cache[key] or rawAtlas, cache[key] ~= false end
+  if cache[key] ~= nil then
+    return cache[key] or rawAtlas, cache[key] ~= false, pixelCache[key]
+  end
 
   local data = world.game and world.game.data and world.game.data.gen2Palettes
   local palettes = data and Palettes.bgSet(data, map.def, daytime)
   local source = palettes and sourcePixels(rawAtlas, map.tileset)
-  if not source then cache[key] = false; return rawAtlas, false end
+  if not source then cache[key] = false; return rawAtlas, false, nil end
 
+  local pixels = nil
   local ok, image = pcall(function()
     local w, h = source:getDimensions()
     local out = love.image.newImageData(w, h)
@@ -87,12 +95,14 @@ function GoldAtlas.forMap(world, map, rawAtlas)
         out:setPixel(x, y, r, g, b, a)
       end
     end
+    pixels = out
     local atlas = love.graphics.newImage(out)
     atlas:setFilter("nearest", "nearest")
     return atlas
   end)
   cache[key] = ok and image or false
-  return cache[key] or rawAtlas, cache[key] ~= false
+  pixelCache[key] = ok and pixels or nil
+  return cache[key] or rawAtlas, cache[key] ~= false, pixelCache[key]
 end
 
 function GoldAtlas.invalidate()
@@ -100,6 +110,7 @@ function GoldAtlas.invalidate()
     if image and image ~= false and image.release then pcall(image.release, image) end
   end
   cache = {}
+  pixelCache = {}
 end
 
 if Assets.register then Assets.register(GoldAtlas.invalidate) end

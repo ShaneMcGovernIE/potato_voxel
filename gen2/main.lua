@@ -30,6 +30,10 @@ function V.data(name)
   return value
 end
 
+function V.read(rel)
+  return mod:read(rel)
+end
+
 local Voxel = V.require("VoxelState")
 local Voxel3D = V.require("Voxel3D")
 local VoxelScene = V.require("VoxelScene")
@@ -39,12 +43,14 @@ local Workbench = V.require("VoxelWorkbench")
 local SpriteBillboards = V.require("SpriteBillboards")
 local Buildings = V.require("Buildings")
 local Structures = V.require("Structures")
+local WorldFeature = V.require("WorldFeature")
 local BrickProfile = V.require("BrickProfile")
 BrickProfile.apply(V)
 
 local VoxelGrid = V.require("VoxelGrid")
 local WorldCurve = V.require("WorldCurve")
 local OverworldBattle = V.require("OverworldBattle")
+local Gen2BattleFeature = V.require("Gen2BattleFeature")
 local DayNight = V.require("DayNight")
 local Water = V.require("Water")
 local AntiAlias = V.require("AntiAlias")
@@ -59,13 +65,20 @@ local DebugOverlay = V.require("DebugOverlay")
 local PlayerId = V.require("PlayerId")
 DebugOverlay.install()
 
+local Gen2Battle = Gen2BattleFeature.new({
+  mod = mod,
+  OverworldBattle = OverworldBattle,
+  RuntimeHooks = RuntimeHooks,
+  DebugOverlay = DebugOverlay,
+})
+Gen2Battle.install()
+
 local Bridge = { lastError = nil, frames = 0, rendered = 0, pending = 0,
                  primedMapId = nil, terrainReady = false, meshPending = 0,
                  overlayFrames = 0, overlayStates = 0, playerCard = nil,
                  cameraView = nil }
 local mapModules = {}
 local warned = {}
-local voxelMaps = setmetatable({}, { __mode = "k" })
 
 local function warnOnce(key, message)
   if warned[key] then return end
@@ -98,22 +111,6 @@ local function ensurePlayerPose()
   return true
 end
 
-local function voxelMap(map)
-  local cached = voxelMaps[map]
-  if cached then return cached end
-  local proxy = {}
-  setmetatable(proxy, { __index = function(_, key)
-    if key == "cellTile" then
-      return function(_, cx, cy)
-        return map:tileAt(cx * 2, cy * 2 + 1)
-      end
-    end
-    return map[key]
-  end })
-  voxelMaps[map] = proxy
-  return proxy
-end
-
 local function attachAtlas(world, map)
   if not (world and map and map.def and type(world.atlasFor) == "function") then
     return nil, "Gold map or World:atlasFor is unavailable"
@@ -124,48 +121,43 @@ local function attachAtlas(world, map)
 
   map.tileset = tileset or map.tileset
   map.renderer = map.renderer or {}
-  local colored, isColored = GoldAtlas.forMap(world, map, atlas)
+  local colored, isColored, atlasData = GoldAtlas.forMap(world, map, atlas)
   map.renderer.image = colored
   map.renderer.gbcAtlas = isColored
   map.renderer.data = world.game and world.game.data or map.renderer.data
-  map.doorTiles = map.doorTiles or {}
+  if atlasData and atlasData.getPixel then
+    map.renderer.atlasData = atlasData
+  elseif not map.renderer.atlasData then
+    local Assets = require("src.render.Assets")
+    local ok, pix = pcall(Assets.imageData, map.tileset.image)
+    if ok and pix and pix.getPixel then map.renderer.atlasData = pix end
+  end
   return map
 end
 
+-- world.neighbors already has ox/oy out to two hops (World.computeNeighbors).
+-- Rebuilding from root.connections only kept the four 1-hop strips and
+-- dropped anything visible on a long connection.
 local function directNeighbors(world)
-  local root, maps, tilesets = world and world.map and world.map.def,
-      world and world.maps, world and world.tilesets
+  local maps, tilesets = world and world.maps, world and world.tilesets
   local Map = mapModule()
-  if not (root and maps and tilesets and Map) then return {} end
-
-  local native = {}
-  for _, entry in ipairs(world.neighbors or {}) do
-    if entry and entry.id then native[entry.id] = entry end
-  end
+  if not (maps and tilesets and Map) then return {} end
 
   local out, seen = {}, {}
-  for _, dir in ipairs({ "north", "south", "west", "east" }) do
-    local conn = root.connections and root.connections[dir]
-    local id = conn and (conn.mapId or conn.map)
+  for _, rec in ipairs(world.neighbors or {}) do
+    local id = rec and rec.id
     local def = id and maps[id]
     local tileset = def and tilesets[def.tileset]
-    if def and tileset and not seen[id] then
+    local ox, oy = rec and tonumber(rec.ox), rec and tonumber(rec.oy)
+    if def and tileset and ox and oy and not seen[id] then
       seen[id] = true
-      local rec = native[id]
-      local ox, oy = rec and tonumber(rec.ox), rec and tonumber(rec.oy)
-      if not (ox and oy) then
-        local offset = tonumber(conn.offset) or 0
-        if dir == "north" then ox, oy = offset * 32, -def.height * 32
-        elseif dir == "south" then ox, oy = offset * 32, root.height * 32
-        elseif dir == "west" then ox, oy = -def.width * 32, offset * 32
-        else ox, oy = root.width * 32, offset * 32 end
-      end
-      local map = voxelMap(Map.new(def, tileset))
+      local map = Map.new(def, tileset)
       local attached, err = attachAtlas(world, map)
       if attached then
         out[#out + 1] = { id = id, map = map, ox = ox, oy = oy }
       else
-        warnOnce("neighbor:" .. tostring(id), "skipping neighbour " .. tostring(id) .. ": " .. tostring(err))
+        warnOnce("neighbor:" .. tostring(id),
+                 "skipping neighbour " .. tostring(id) .. ": " .. tostring(err))
       end
     end
   end
@@ -178,7 +170,7 @@ local function stateFor(world)
   end
   local posed, poseErr = ensurePlayerPose()
   if not posed then return nil, poseErr end
-  local map, err = attachAtlas(world, voxelMap(world.map))
+  local map, err = attachAtlas(world, world.map)
   if not map then return nil, err end
   Bridge.mapId, Bridge.tilesetId = map.id, map.tileset and map.tileset.id
 
@@ -222,7 +214,7 @@ local function stateFor(world)
     player = world.player,
     entities = entities,
     neighbors = directNeighbors(world),
-    ghosts = {},
+    ghosts = world.ghosts or {},
   }
 end
 
@@ -255,17 +247,18 @@ end
 
 local function renderFrame(world, ctx)
   if not Voxel3D.available() then return nil, "3D canvases/shaders are unavailable" end
+  WorldFeature.flushBlockRefresh()
   local state, err = stateFor(world)
   if not state then return nil, err end
 
   if Bridge.primedMapId ~= state.map.id then
     Bridge.primedMapId = state.map.id
-    local ok, mesh = pcall(ChunkMesher.get, state.map, false,
+    local ok, mesh = pcall(ChunkMesher.get, state.map, "body",
                            masksFor(state.neighbors))
     if not ok then return nil, "initial Gold mesh build failed: " .. tostring(mesh) end
     if not mesh then return nil, "initial Gold mesh build produced no terrain" end
   end
-  Bridge.terrainReady = ChunkMesher.peek(state.map, false) ~= nil
+  Bridge.terrainReady = ChunkMesher.peek(state.map, "body") ~= nil
 
   local level = targetLevel(world)
   Voxel.setLevel(level)
@@ -287,7 +280,7 @@ local function renderFrame(world, ctx)
     }
   end
   local canvas = VoxelScene.render(state, pw, ph, vw, vh, nil)
-  Bridge.terrainReady = ChunkMesher.peek(state.map, false) ~= nil
+  Bridge.terrainReady = ChunkMesher.peek(state.map, "body") ~= nil
   if not canvas then Bridge.meshPending = Bridge.meshPending + 1 end
   ChunkMesher.pump(false)
   return canvas
@@ -391,6 +384,7 @@ end, 1000)
 
 mod.exports.gen2Compatible = true
 Workbench.install()
+WorldFeature.installMapHooks({ mod = mod, DebugOverlay = DebugOverlay })
 
 do
   local deferredWork = {}

@@ -68,9 +68,8 @@ local function outdoorNow()
   local ow = Game and Game.overworld
   local map = ow and ow.map
   if not map then return false end
-  local okMap, Map = pcall(require, "src.world.Map")
-  if not okMap then return false end
-  local outdoor = map.def and Map.isOutdoor(map.def) or false
+  local RuntimeHooks = V.require("RuntimeHooks")
+  local outdoor = map.def and RuntimeHooks.isOutdoor(map.def) or false
   -- a canopy floor takes the hour's colour and nothing else of it, exactly as
   -- it does in the 3D pass (BattleScene, VoxelScene)
   return outdoor or DayNight.isCanopy(map)

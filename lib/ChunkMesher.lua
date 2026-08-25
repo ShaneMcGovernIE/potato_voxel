@@ -296,6 +296,10 @@ local function buildFlowerMesh(map)
   return quadsMesh(Structures.forMap(map).flowerQuads)
 end
 
+local function buildVoxMesh(map)
+  return quadsMesh(Structures.forMap(map).voxQuads or {})
+end
+
 -- Authored FIGURES (a person drawn into furniture) as one mesh each, in
 -- the card's own local space -- because each one is placed by its own
 -- matrix at draw time, leaned back by the camera pitch exactly like a
@@ -434,6 +438,7 @@ local function flattenAux(map)
   end
   local grass = flatten(S.grassQuads)
   local flowers = flatten(S.flowerQuads)
+  local vox = flatten(S.voxQuads or {})
   local figures = {}
   for _, f in ipairs(S.figures or {}) do
     local fq = flatten(f.quads)
@@ -450,7 +455,7 @@ local function flattenAux(map)
                                  wx = f.wx, wz = f.wz, y = f.y, w = w }
     end
   end
-  return { grass = grass, flowers = flowers, figures = figures }
+  return { grass = grass, flowers = flowers, figures = figures, vox = vox }
 end
 
 -- Fill the aux slots (grass/flowers/figures) for a job, from the disk
@@ -480,7 +485,7 @@ local function fillAux(job)
 
   -- fresh build: flatten to the indexed stream once and build from it
   -- (and save it)
-  local grass, flowers, figures
+  local grass, flowers, figures, vox
   if MeshCache.available() then
     local okFlat, flat = pcall(flattenAux, map)
     if okFlat and flat then
@@ -489,19 +494,24 @@ local function fillAux(job)
       job.stages = mergeStages(job.stages, meshStages)
       grass, flowers, figures = auxMeshes.grass, auxMeshes.flowers,
                                 auxMeshes.figures
+      vox = auxMeshes.vox
     end
   else
     local okG, g = pcall(buildGrassMesh, map)
     local okF, fl = pcall(buildFlowerMesh, map)
     local okX, fig = pcall(buildFigureMeshes, map)
+    local okV, vx = pcall(buildVoxMesh, map)
     grass, flowers, figures = (okG and g) or false, (okF and fl) or false,
                               (okX and fig) or false
+    vox = (okV and vx) or false
   end
   if not current then
-    releaseAux({ grass = grass, flowers = flowers, figures = figures })
+    releaseAux({ grass = grass, flowers = flowers, figures = figures,
+                 vox = vox })
     return false
   end
-  swapAux(c, { grass = grass, flowers = flowers, figures = figures })
+  swapAux(c, { grass = grass, flowers = flowers, figures = figures,
+               vox = vox })
   if c.stale then c.stale.aux = nil end
   return true
 end
@@ -863,7 +873,8 @@ end
 function ChunkMesher.get(map, bodyOnly, masks)
   local slot = slotFor(bodyOnly)
   local c = entry(map.id)
-  if c.grass == nil or c.flowers == nil or (c.stale and c.stale.aux) then
+  if c.grass == nil or c.flowers == nil or c.vox == nil
+     or (c.stale and c.stale.aux) then
     if MeshCache.available() then
       local aux = MeshCache.loadAuxPacked(map, slot)
       if aux then
@@ -874,13 +885,17 @@ function ChunkMesher.get(map, bodyOnly, masks)
         local okF, flowers = pcall(buildFlowerMesh, map)
         swapSlot(c, "grass", (okG and grass) or false)
         swapSlot(c, "flowers", (okF and flowers) or false)
+        local okV, vox = pcall(buildVoxMesh, map)
+        swapSlot(c, "vox", (okV and vox) or false)
         if c.stale then c.stale.aux = nil end
       end
     else
       local okG, grass = pcall(buildGrassMesh, map)
       local okF, flowers = pcall(buildFlowerMesh, map)
+      local okV, vox = pcall(buildVoxMesh, map)
       swapSlot(c, "grass", (okG and grass) or false)
       swapSlot(c, "flowers", (okF and flowers) or false)
+      swapSlot(c, "vox", (okV and vox) or false)
       if c.stale then c.stale.aux = nil end
     end
   end
@@ -956,6 +971,11 @@ end
 function ChunkMesher.flowers(map)
   local c = cache[map.id]
   return c and c.flowers or nil
+end
+
+function ChunkMesher.vox(map)
+  local c = cache[map.id]
+  return c and c.vox or nil
 end
 
 -- Authored figures as `{ mesh, wx, wz, y, w }` records -- each placed by

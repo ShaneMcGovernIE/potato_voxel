@@ -133,9 +133,40 @@
 -- above, a facade seen face-on and sloped ends as diagonal silhouettes,
 -- and no single class covers that.  They live in the `buildings` list at
 -- the bottom of this file, as a band table over the drawing's rows.
+--
+-- MagicaVoxel (.vox) replacements: `vox` maps a building template `id`
+-- to an asset name under assets/vox/<name>.vox. A template may also set
+-- `vox = "name"` itself. A named file that is missing skips that template
+-- so later passes (cylinders) still run; templates with no `vox`
+-- assignment keep the procedural model.
+--
+-- `sprites` maps an overworld sprite sheet stem (fruit_tree.png ->
+-- "fruit_tree") to a MagicaVoxel asset drawn instead of the billboard.
 
 local profile = {
   version = 1,
+
+  -- building template id -> MagicaVoxel asset (assets/vox/<name>.vox)
+  vox = {
+    gen2_tree_tall = "crystal_pine_tall",
+    gen2_tree_short = "crystal_pine_short",
+    gen2_cut_tree = "crystal_cut_tree",
+    gen2_ledge_nw = "crystal_ledge_nw",
+    gen2_ledge_n = "crystal_ledge_n",
+    gen2_ledge_ne = "crystal_ledge_ne",
+    gen2_ledge_w = "crystal_ledge_w",
+    gen2_ledge_c = "crystal_ledge_c",
+    gen2_ledge_e = "crystal_ledge_e",
+    gen2_ledge_sw = "crystal_ledge_sw",
+    gen2_ledge_s = "crystal_ledge_s",
+    gen2_ledge_se = "crystal_ledge_se",
+    fruit_tree = "crystal_berry_tree",
+  },
+
+  -- overworld sprite sheet stem -> MagicaVoxel asset
+  sprites = {
+    fruit_tree = "crystal_berry_tree",
+  },
 
   -- class -> height in world pixels
   heights = {
@@ -195,6 +226,16 @@ local profile = {
     [150] = "bookcase",
     [151] = "console",
     [159] = "cylinder",
+    -- COLL_HOP_* ($a0-$a7): stand-on jump lips. Unauthored tiles in these
+    -- cells must not fall through to wall (16px / two rows).
+    [160] = "ledge",
+    [161] = "ledge",
+    [162] = "ledge",
+    [163] = "ledge",
+    [164] = "ledge",
+    [165] = "ledge",
+    [166] = "ledge",
+    [167] = "ledge",
   },
 
   -- Only tiles the detector must not touch need listing. Tile ids are
@@ -2834,62 +2875,80 @@ local profile = {
     -- =====================================================================
 
     gen2_TilesetJohto = {
-      cylinder = { 30, 31, 62, 63 },
+      -- 30/31 canopy, 46/47 mid (the 4-row pine's repeated waist),
+      -- 62/63 trunk. Short trees are one 16x16 cell (30/31 over 62/63).
+      -- Tall pines are two cells (30 31 / 46 47 / 46 47 / 62 63).
+      -- MagicaVoxel templates (gen2_tree_tall / gen2_tree_short) claim
+      -- these first; the cylinder builder is the missing-file fallback.
+      -- Do NOT pin 46/47 planter: ungrouped planter tiles mesh as 32px boxes.
+      cylinder = { 30, 31, 46, 47, 62, 63 },
       fence = { 74 },
       flower = { 3 },
       ground = { 5, 6 },
       heights = {
         fence = 16,
       },
-      ledge = { 76 },
-      planter = { 46, 47 },
-      planter_spray = false,
+      -- Dirt-bank / hop-lip tiles. 76 is the south face of a jump ledge;
+      -- promoting it to wall when 60 sits above stretched that 8px lip
+      -- into a 16px (two-row) upright box. MagicaVoxel autotile pieces
+      -- (gen2_ledge_*) replace the 6px boxes with a beveled dirt bank.
+      -- Next to water they are the pond shore, not a hop: recess them
+      -- into the water sheet so the kerb sits submerged.
+      ledge = { 43, 44, 45, 59, 60, 61, 75, 76, 77 },
+      when_beside = {
+        [43] = { { beside = { 20, 88 }, class = "water" } },
+        [44] = { { beside = { 20, 88 }, class = "water" } },
+        [45] = { { beside = { 20, 88 }, class = "water" } },
+        [59] = { { beside = { 20, 88 }, class = "water" } },
+        [60] = { { beside = { 20, 88 }, class = "water" } },
+        [61] = { { beside = { 20, 88 }, class = "water" } },
+        [75] = { { beside = { 20, 88 }, class = "water" } },
+        [76] = { { beside = { 20, 88 }, class = "water" } },
+        [77] = { { beside = { 20, 88 }, class = "water" } },
+      },
       post = { 89, 90 },
+      -- The town sign fills its 16x16 cell: a wooden board whose dark
+      -- grain reaches the left/right edges, with only the top and bottom
+      -- rows as grass-white. The rim vote would take dark as background
+      -- and drain the board, leaving a black frame. Name white only.
+      prop_bg = {
+        {
+          shades = { "white" },
+          tiles = { 78, 79, 94, 95 },
+        },
+      },
       rail_face = { 89, 90 },
       signpost = { 78, 79, 94, 95 },
-      terrace = { 44, 60 },
       water = { 20, 88 },
-      when_above = {
-        [76] = {
-          {
-            above = { 60, 75, 76, 77 },
-            class = "wall",
-          },
-        },
-      },
-      when_below = {
-        [30] = {
-          {
-            below = { 46 },
-            class = "planter",
-          },
-        },
-        [31] = {
-          {
-            below = { 47 },
-            class = "planter",
-          },
-        },
-      },
     },
 
     gen2_TilesetJohtoModern = {
       cylinder = { 30, 31, 62, 63 },
       flower = { 3 },
       ground = { 5, 6 },
-      ledge = { 76 },
+      ledge = { 43, 44, 45, 59, 60, 61, 75, 76, 77 },
+      when_beside = {
+        [43] = { { beside = { 20, 88 }, class = "water" } },
+        [44] = { { beside = { 20, 88 }, class = "water" } },
+        [45] = { { beside = { 20, 88 }, class = "water" } },
+        [59] = { { beside = { 20, 88 }, class = "water" } },
+        [60] = { { beside = { 20, 88 }, class = "water" } },
+        [61] = { { beside = { 20, 88 }, class = "water" } },
+        [75] = { { beside = { 20, 88 }, class = "water" } },
+        [76] = { { beside = { 20, 88 }, class = "water" } },
+        [77] = { { beside = { 20, 88 }, class = "water" } },
+      },
       post = { 74, 89, 90 },
-      signpost = { 78, 79, 94, 95 },
-      terrace = { 44, 60 },
-      water = { 20, 88 },
-      when_above = {
-        [76] = {
-          {
-            above = { 60, 75, 76, 77 },
-            class = "wall",
-          },
+      -- Same town-sign drawing as TILESET_JOHTO: the board's dark grain
+      -- reaches the cell edges, so the rim vote must not drain it.
+      prop_bg = {
+        {
+          shades = { "white" },
+          tiles = { 78, 79, 94, 95 },
         },
       },
+      signpost = { 78, 79, 94, 95 },
+      water = { 20, 88 },
     },
 
     gen2_TilesetCave = {
@@ -2944,11 +3003,16 @@ local profile = {
     gen2_TilesetHouse = {
       console = { 6, 7, 12, 13 },
       heights = {
+        stool = 5,
         table = 6,
       },
       planter = { 8, 9, 10, 11, 24, 25, 26, 27 },
       planter_spray = false,
-      table = { 5, 21, 38, 39, 41, 47, 54, 57, 58, 59, 60 },
+      stool = { 2, 3, 18, 19 },
+      -- 50/51 are the north rim of the 3-row dining table (Gen 1's
+      -- house_table used 38/41 there). Pins are the degradation path;
+      -- the gen2_house_table template claims the full drawing.
+      table = { 5, 21, 38, 39, 41, 47, 50, 51, 54, 57, 58, 59, 60 },
       when_above = {
         [59] = {
           {
@@ -2970,16 +3034,18 @@ local profile = {
       flower = { 3, 4 },
       ground = { 16, 35, 44, 48, 57 },
       ledge = { 13, 52, 54, 55 },
+      -- The four tiles in Kanto's CUT-tree cell are a transparent
+      -- foreground silhouette, not the round tree-wall hull. Keeping them
+      -- in the per-pixel prop pool preserves the tree's outline and leaves
+      -- the grass tile it stands on visible around the cutout.
+      prop = { 45, 46, 61, 62 },
+      prop_ground = { [45] = 44, [46] = 44, [61] = 44, [62] = 44 },
       post = { 14, 85 },
       signpost = { 70, 71, 86, 87 },
       terrace = { 17 },
       water = { 20, 49, 51, 84 },
       when_below = {
         [57] = {
-          {
-            below = { 14 },
-            class = "terrace",
-          },
           {
             below = { 14 },
             class = "terrace",
@@ -3035,13 +3101,22 @@ local profile = {
     },
 
     gen2_TilesetPokecenter = {
-      bookcase = { 3, 4, 5, 10, 11, 15, 19, 20, 21, 26, 27, 28, 29, 30, 31, 32, 33, 37, 44, 45, 46, 47, 48, 49, 53, 60, 61, 62, 63, 64, 65, 70, 71, 76, 77, 78, 79 },
+      -- Healing machine and both PCs: tall face-on drawings, one cell
+      -- of depth. 61 is the PC's black screen -- it is ALSO the indoor
+      -- border block, but indoor maps no longer mesh that apron.
+      bookcase = { 4, 5, 10, 11, 20, 21, 26, 27, 28, 29, 30, 31, 32, 33,
+                   44, 45, 46, 47, 48, 49, 60, 61, 62, 63, 64, 65,
+                   76, 77, 78, 79 },
       counter = { 12, 36, 52 },
-      ground = { 1, 17 },
-      heights = {
-        table = 6,
-      },
-      table = { 72, 73, 88, 89 },
+      -- Plus-sign recovery beds. The old `table` pin at 6px folded the
+      -- duvet into a crate.
+      bed = { 72, 73, 88, 89 },
+      ground = { 1, 17, 80, 81 },
+      -- Magazine rack (68/69 over 84/85) and the plant on the counter.
+      prop = { 19, 53, 68, 69, 70, 71, 84, 85 },
+      -- Striped wall panel and the door/window trims. Authored so they
+      -- do not flood into a volume with leftover solids.
+      wall = { 2, 3, 15, 37 },
     },
 
     gen2_TilesetRuinsOfAlph = {
@@ -3098,6 +3173,9 @@ local profile = {
   --
   --   tiles      the tile-id grid that identifies the building, rows of the
   --              8px tile atlas, north row first
+  --   mode       "defer" matches the drawing but leaves it unclaimed so the
+  --              normal Gen 2 structure detector can supply its gable
+  --              geometry; omit it for a building owned by this module
   --   roofRows   how many rows off the top are drawn as TOP-FACING roof;
   --              the rest of the drawing is the facade, seen face-on
   --   roofBack   rows laid along the north rim, one row per voxel of depth
@@ -4678,6 +4756,124 @@ local profile = {
     -- =====================================================================
 
     gen2_TilesetJohto = {
+      -- Gold/Silver CUT trees use the 19/21 over 69/29 2x2 drawing. The
+      -- four cuttable blocks rotate that drawing into a different quadrant;
+      -- ordinary short pines use 30/31 over 62/63 and must not be claimed by
+      -- this replacement.
+      {
+        id = "gen2_cut_tree_5b", vox = "crystal_cut_tree",
+        blockIds = { [0x5b] = true }, blockOffset = { 2, 0 },
+        tiles = { { 19, 21 }, { 69, 29 } },
+      },
+      {
+        id = "gen2_cut_tree_5f", vox = "crystal_cut_tree",
+        blockIds = { [0x5f] = true }, blockOffset = { 2, 2 },
+        tiles = { { 19, 21 }, { 69, 29 } },
+      },
+      {
+        id = "gen2_cut_tree_63", vox = "crystal_cut_tree",
+        blockIds = { [0x63] = true }, blockOffset = { 0, 2 },
+        tiles = { { 19, 21 }, { 69, 29 } },
+      },
+      {
+        id = "gen2_cut_tree_67", vox = "crystal_cut_tree",
+        blockIds = { [0x67] = true }, blockOffset = { 0, 0 },
+        tiles = { { 19, 21 }, { 69, 29 } },
+      },
+      {
+        -- Crystal pine from the outdoor tree tiles, revolved into a
+        -- MagicaVoxel hull. Tall four-row pines match before the short
+        -- two-row form. voxOffset parks the 16x16x32 model on the south
+        -- cell, matching the cylinder stamp.
+        id = "gen2_tree_tall",
+        vox = "crystal_pine_tall",
+        voxOffset = { 0, 0, 16 },
+        tiles = {
+          { 30, 31 },
+          { 46, 47 },
+          { 46, 47 },
+          { 62, 63 },
+        },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil,
+      },
+      {
+        id = "gen2_tree_short",
+        vox = "crystal_pine_short",
+        tiles = {
+          { 30, 31 },
+          { 62, 63 },
+        },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil,
+      },
+      -- Crystal hop banks: one MagicaVoxel piece per autotile. Exposed
+      -- edges are sloped and ragged; interior faces stay flush so a run
+      -- of tiles reads as one dirt bank. requireClass keeps pond shores
+      -- on the water sheet.
+      {
+        id = "gen2_ledge_nw", vox = "crystal_ledge_nw",
+        requireClass = "ledge", support = 7,
+        tiles = { { 43 } },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil,
+      },
+      {
+        id = "gen2_ledge_n", vox = "crystal_ledge_n",
+        requireClass = "ledge", support = 7,
+        tiles = { { 44 } },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil,
+      },
+      {
+        id = "gen2_ledge_ne", vox = "crystal_ledge_ne",
+        requireClass = "ledge", support = 7,
+        tiles = { { 45 } },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil,
+      },
+      {
+        id = "gen2_ledge_w", vox = "crystal_ledge_w",
+        requireClass = "ledge", support = 7,
+        tiles = { { 59 } },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil,
+      },
+      {
+        id = "gen2_ledge_c", vox = "crystal_ledge_c",
+        requireClass = "ledge", support = 7,
+        tiles = { { 60 } },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil,
+      },
+      {
+        id = "gen2_ledge_e", vox = "crystal_ledge_e",
+        requireClass = "ledge", support = 7,
+        tiles = { { 61 } },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil,
+      },
+      {
+        id = "gen2_ledge_sw", vox = "crystal_ledge_sw",
+        requireClass = "ledge", support = 7,
+        tiles = { { 75 } },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil,
+      },
+      {
+        id = "gen2_ledge_s", vox = "crystal_ledge_s",
+        requireClass = "ledge", support = 7,
+        tiles = { { 76 } },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil,
+      },
+      {
+        id = "gen2_ledge_se", vox = "crystal_ledge_se",
+        requireClass = "ledge", support = 7,
+        tiles = { { 77 } },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil,
+      },
       {
         frontEave = 4,
         id = "gen2_lighthouse",
@@ -5053,7 +5249,49 @@ local profile = {
           { 1, 2, 2, 2, 2, 2, 2, 22 },
         },
       },
+      -- Violet City's two wooden exteriors reuse the generic Mart/Center
+      -- drawing, but they are pitched houses rather than flat civic blocks.
+      -- Match the complete grids here only to keep the generic templates
+      -- below from intercepting them; the normal Gen 2 detector owns the
+      -- geometry and supplies its gabled roof.
       {
+        id = "gen2_violet_house_west",
+        maps = { "VIOLET_CITY" },
+        mode = "defer",
+        -- The detector caps this eight-row drawing at a 48px peak. Four
+        -- of those rows are roof; the remaining two are the house room.
+        -- Keep the eaves at 16px instead of letting the default two-row
+        -- roof leave a 32px-tall room.
+        detectorRoofRows = 4,
+        tiles = {
+          { 16, 17, 17, 17, 17, 17, 17, 18 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 10, 11, 11, 11, 11, 11, 11, 12 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 55, 56, 24, 25, 7, 28 },
+          { 1, 2, 57, 58, 23, 23, 2, 22 },
+        },
+      },
+      {
+        id = "gen2_violet_house_east",
+        maps = { "VIOLET_CITY" },
+        mode = "defer",
+        detectorRoofRows = 4,
+        tiles = {
+          { 16, 17, 17, 17, 17, 17, 17, 18 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 13, 14, 14, 14, 14, 14, 14, 15 },
+          { 10, 11, 11, 11, 11, 11, 11, 12 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 7, 7, 7, 7, 7, 28 },
+          { 26, 7, 55, 56, 8, 9, 7, 28 },
+          { 1, 2, 57, 58, 23, 23, 2, 22 },
+        },
+      },
+      {
+        excludeMaps = { "VIOLET_CITY" },
         frontEave = 4,
         id = "gen2_mart",
         roofBack = 2,
@@ -5073,6 +5311,7 @@ local profile = {
         },
       },
       {
+        excludeMaps = { "VIOLET_CITY" },
         frontEave = 4,
         id = "gen2_pokecenter",
         roofBack = 2,
@@ -5438,6 +5677,18 @@ local profile = {
     },
 
     gen2_TilesetKanto = {
+      -- The four Kanto CUT-tree graphics form one 16x16 cell. Claim the
+      -- complete 2x2 tile drawing before the prop pass so the supplied
+      -- MagicaVoxel tree replaces the flat cutout, while the missing-file
+      -- path still falls back to that existing prop treatment.
+      {
+        id = "gen2_cut_tree",
+        vox = "crystal_cut_tree",
+        tiles = {
+          { 45, 46 },
+          { 61, 62 },
+        },
+      },
       {
         frontEave = 4,
         id = "gen2_kanto_museum",
@@ -5996,6 +6247,98 @@ local profile = {
         },
       },
     },
+
+    -- Johto generic house (TILESET_HOUSE). Scanned off PLAYERS_NEIGHBORS
+    -- / CHERRYGROVE_GYM_SPEECH / GUIDE_GENTS (the same 4x4 grid on every
+    -- standard house). Gen 1 house_table is this drawing with the third
+    -- row a repeat of the second; Johto uses the underside corners
+    -- (5/21) there instead. Same 32px plot, same band numbers.
+    gen2_TilesetHouse = {
+      -- Desk-set, not the house_table roof-band: Johto's third row is the
+      -- isometric underside (5/21), so treating 28 of 32 rows as a roof
+      -- laid a 32x32 beige slab. A desk lid (rows 0-15) plus fascia and
+      -- a flood-cut base (rows 24-30) is a thin top with real legs, which
+      -- is how Gen 1 lab_computers / house furniture get a gap underneath.
+      {
+        id = "gen2_house_table",
+        tiles = {
+          { 38, 39, 39, 41 },
+          { 54, 47, 47, 57 },
+          {  5, 47, 47, 21 },
+          { 60, 58, 58, 59 },
+        },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil, panes = false,
+        parts = {},
+        desk = {
+          top = { 0, 15 },
+          fascia = { 16, 18 },
+          base = { 24, 30 },
+        },
+      },
+      -- F09: the stool. Same 2x2 tile ids as Gen 1 house_stool.
+      {
+        id = "gen2_house_stool",
+        tiles = {
+          { 2, 3 },
+          { 18, 19 },
+        },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil,
+        panes = false,
+        parts = {
+          { kind = "upright", x = { 2, 13 }, top = { 5, 10 },
+            facade = { 11, 15 }, z = 3, depth = 11,
+            stretch = true },
+        },
+      },
+    },
+
+    gen2_TilesetPlayersHouse = {
+      -- Top-down 4x4 tabletop with only a 2-row rim -- no drawn legs.
+      -- A desk-set base of that rim was a 2px painted stub. Raise the
+      -- lid as a flat sheet and stand four corner posts to the floor.
+      {
+        id = "gen2_players_house_table",
+        tiles = {
+          { 35, 34, 34, 36 },
+          { 37, 21, 21, 53 },
+          { 37, 21, 21, 53 },
+          { 51, 50, 50, 52 },
+        },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil, panes = false,
+        parts = {
+          { kind = "flat", x = { 1, 30 }, rows = { 0, 15 },
+            z = 2, at = 6, thick = 2 },
+          { kind = "box", x = { 2, 5 }, rows = { 24, 30 },
+            z = 2, depth = 4, base = 0 },
+          { kind = "box", x = { 26, 29 }, rows = { 24, 30 },
+            z = 2, depth = 4, base = 0 },
+          { kind = "box", x = { 2, 5 }, rows = { 24, 30 },
+            z = 26, depth = 4, base = 0 },
+          { kind = "box", x = { 26, 29 }, rows = { 24, 30 },
+            z = 26, depth = 4, base = 0 },
+        },
+      },
+      -- Round stool; same 2x2 ids as TILESET_HOUSE but a different
+      -- drawing (seat sits higher). Floor-anchored upright part.
+      {
+        id = "gen2_players_house_stool",
+        tiles = {
+          { 2, 3 },
+          { 18, 19 },
+        },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil,
+        panes = false,
+        parts = {
+          { kind = "upright", x = { 2, 13 }, top = { 3, 8 },
+            facade = { 9, 13 }, z = 3, depth = 11,
+            stretch = true },
+        },
+      },
+    },
   },
 }
 
@@ -6006,7 +6349,15 @@ do
   local merged = {}
   for i = 1, #extra do merged[#merged + 1] = extra[i] end
   for i = 1, #shared do merged[#merged + 1] = shared[i] end
-  profile.buildings.gen2_TilesetJohtoModern = merged
+  -- TILESET_JOHTO_MODERN's 46/47 are Goldenrod masonry, not pine waist.
+  local kept = {}
+  for i = 1, #merged do
+    if merged[i].id ~= "gen2_tree_tall"
+        and not tostring(merged[i].id):match("^gen2_cut_tree_") then
+      kept[#kept + 1] = merged[i]
+    end
+  end
+  profile.buildings.gen2_TilesetJohtoModern = kept
 end
 
 -- Engine tileset ids (TILESET_* / Tileset*) resolve onto the gen-prefixed keys.
@@ -6022,6 +6373,8 @@ tilesets.TILESET_DARK_CAVE = tilesets.gen2_TilesetCave
 tilesets.TILESET_ELITE_FOUR_ROOM = tilesets.gen2_TilesetEliteFourRoom
 tilesets.TILESET_FOREST = tilesets.gen2_TilesetForest
 tilesets.TILESET_HOUSE = tilesets.gen2_TilesetHouse
+buildings.TILESET_HOUSE = buildings.gen2_TilesetHouse
+buildings.TilesetHouse = buildings.gen2_TilesetHouse
 tilesets.TILESET_JOHTO = tilesets.gen2_TilesetJohto
 tilesets.TILESET_JOHTO_MODERN = tilesets.gen2_TilesetJohtoModern
 tilesets.TILESET_KANTO = tilesets.gen2_TilesetKanto
@@ -6030,6 +6383,8 @@ tilesets.TILESET_LIGHTHOUSE = tilesets.gen2_TilesetLighthouse
 tilesets.TILESET_MART = tilesets.gen2_TilesetMart
 tilesets.TILESET_PARK = tilesets.gen2_TilesetPark
 tilesets.TILESET_PLAYERS_HOUSE = tilesets.gen2_TilesetPlayersHouse
+buildings.TILESET_PLAYERS_HOUSE = buildings.gen2_TilesetPlayersHouse
+buildings.TilesetPlayersHouse = buildings.gen2_TilesetPlayersHouse
 tilesets.TILESET_PLAYERS_ROOM = tilesets.gen2_TilesetPlayersRoom
 tilesets.TILESET_POKECENTER = tilesets.gen2_TilesetPokecenter
 tilesets.TILESET_RUINS_OF_ALPH = tilesets.gen2_TilesetRuinsOfAlph

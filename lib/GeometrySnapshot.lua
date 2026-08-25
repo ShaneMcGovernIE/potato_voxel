@@ -67,6 +67,7 @@ function GeometrySnapshot.fromMap(map, masks, voidFill, options)
       imageWidth = field(tileset, "imageWidth", state),
       imageHeight = field(tileset, "imageHeight", state),
       blocks = field(tileset, "blocks", state),
+      collision = field(tileset, "collision", state),
       walkable = field(tileset, "walkable", state),
       counterTiles = field(tileset, "counterTiles", state),
       doorTiles = field(tileset, "doorTiles", state),

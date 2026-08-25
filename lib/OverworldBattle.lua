@@ -46,6 +46,7 @@ local BattleDOF = V.require("BattleDOF")
 local BattlePics = V.require("BattlePics")
 local Voxel3D = V.require("Voxel3D")
 local ChunkMesher = V.require("ChunkMesher")
+local RuntimeHooks = V.require("RuntimeHooks")
 
 local OverworldBattle = {}
 
@@ -196,8 +197,8 @@ function OverworldBattle.wantsFront()
   if not Voxel3D.available() then return false end
   -- required here rather than through the file's own helper: this runs
   -- while a battler is being built, which is before that helper is defined
-  local g = require("src.core.Game")
-  local ow = g and g.overworld
+  local g = RuntimeHooks.gameOwner()
+  local ow = g and (g.overworld or g.world)
   if not (ow and ow.map and ow.player) then return false end
   -- a B rung carries its own stage, so the answer is yes on every map and
   -- there is nothing to search or to cache
@@ -310,9 +311,27 @@ end
 -- nil when no overworld battle is running. Never more than one: battles do
 -- not nest.
 local session = nil
+local textureProvider = nil
+
+-- Gen 1 renders its pic layer through BattleState:drawPicsLayer. Gold keeps
+-- the same staged scene but owns a different screen API, so its feature can
+-- supply a side-capture provider without changing the Gen 1 renderer path.
+function OverworldBattle.setTextureProvider(provider)
+  if provider ~= nil and type(provider) ~= "function" then
+    error("OverworldBattle texture provider must be a function or nil", 2)
+  end
+  textureProvider = provider
+end
 
 local function game()
-  return require("src.core.Game")
+  return RuntimeHooks.gameOwner()
+end
+
+-- Gen 1 calls this owner `overworld`; Gold keeps the same live state under
+-- `world`.  Resolve it at the boundary so the rest of the battle staging
+-- code can remain generation-neutral.
+local function world(gameOwner)
+  return gameOwner and (gameOwner.overworld or gameOwner.world)
 end
 
 -- Put the map's cast back. Both lists are handed back by identity, so
@@ -409,7 +428,7 @@ function OverworldBattle.ensure(battle)
     return
   end
   local g = game()
-  local ow = g and g.overworld
+  local ow = world(g)
   if ow and ow.map then OverworldBattle.begin(ow, battle) end
 end
 
@@ -437,12 +456,12 @@ end
 -- update runs with no canvas bound: a 3D pass that binds a depth target and
 -- unbinds to the screen when it is done cannot do that in the middle of
 -- someone else's frame without putting the frame back itself.
-function OverworldBattle.update(dt)
+function OverworldBattle.update(dt, activeBattle)
   if not session then return end
 
   local g = game()
   local top = g and g.stack and g.stack:top()
-  local ow = g and g.overworld
+  local ow = world(g)
   -- A battle that ended without saying so (a script tearing the state down,
   -- a path that never emits battle.ended) would otherwise leave the cast
   -- culled for good. Armed only once something has actually covered the
@@ -470,7 +489,7 @@ function OverworldBattle.update(dt)
   BattleCam.update(dt)
   -- the battle only exists once it has been pushed; a session opened at
   -- pushBattle time has it, one opened from battle.started was handed it
-  session.battle = session.battle or (top ~= ow and top or nil)
+  session.battle = activeBattle or session.battle or (top ~= ow and top or nil)
   -- the world pass is hidden behind the battle, so mesh builds get the wide
   -- slice: nothing visible can hitch on them
   ChunkMesher.pump(true)
@@ -884,10 +903,11 @@ end
 function OverworldBattle.textures(battle)
   if not battle then return nil end
   local out = {}
-  local okE, enemy = pcall(OverworldBattle.sideTexture, battle, "enemy")
+  local provider = textureProvider or OverworldBattle.sideTexture
+  local okE, enemy = pcall(provider, battle, "enemy")
   local okP, player = true, nil
   if not OverworldBattle.backPinned() then
-    okP, player = pcall(OverworldBattle.sideTexture, battle, "player")
+    okP, player = pcall(provider, battle, "player")
   end
   out.enemy = okE and enemy or nil
   out.player = okP and player or nil
@@ -905,17 +925,24 @@ end
 --
 -- Four wraps, each idempotent so a hot reload cannot stack them.
 
+local function gen1BattleEngine()
+  local ok, GameVersion = pcall(require, "src.core.GameVersion")
+  return not (ok and GameVersion and type(GameVersion.generation) == "function"
+              and tonumber(GameVersion.generation()) == 2)
+end
+
 function OverworldBattle.install()
+  if not gen1BattleEngine() then return false end
   local OverworldState = require("src.world.OverworldController")
   if not OverworldState.dramaticShapeBattleHook then
-    local inner = OverworldState.pushBattle
+    local inner = gen1BattleEngine() and OverworldState.pushBattle or nil
     -- The one place the overworld starts a battle, and it runs BEFORE the
     -- transition is pushed -- which is what lets the cull happen off-screen
     -- and the wipe play over a map with nobody on it.
-    function OverworldState:pushBattle(battle)
+    rawset(OverworldState, "pushBattle", function(self, battle)
       pcall(OverworldBattle.begin, self, battle)
       return inner(self, battle)
-    end
+    end)
     OverworldState.dramaticShapeBattleHook = true
   end
 
@@ -962,19 +989,19 @@ function OverworldBattle.install()
   -- has one anchor to hang from whichever side and whichever species it is
   -- carrying. Outside that render both helpers answer exactly as they always
   -- did.
-  local innerBack = BattleState.backPlacement
-  function BattleState.backPlacement(w, h, pad, padL, scale)
+  local innerBack = gen1BattleEngine() and BattleState.backPlacement or nil
+  rawset(BattleState, "backPlacement", function(w, h, pad, padL, scale)
     local x, y, s = innerBack(w, h, pad, padL, scale)
     if not texturing then return x, y, s end
     return TEX_AX - w * scale / 2, TEX_AY - (h - pad) * scale, s
-  end
+  end)
 
-  local innerFront = BattleState.frontPlacement
-  function BattleState.frontPlacement(ex, ey, w, h, scale)
+  local innerFront = gen1BattleEngine() and BattleState.frontPlacement or nil
+  rawset(BattleState, "frontPlacement", function(ex, ey, w, h, scale)
     local x, y, s = innerFront(ex, ey, w, h, scale)
     if not texturing then return x, y, s end
     return TEX_AX - w * scale / 2, TEX_AY - h * scale, s
-  end
+  end)
 
   local innerDraw = BattleState.draw
   function BattleState:draw()

@@ -74,7 +74,7 @@ function WorldFeature.installMapHooks(ctx)
     if mapId then WorldFeature.queueBlockRefresh(mapId) end
   end)
 
-  local Map = require("src.world.Map")
+  local Map = RuntimeHooks.worldMapOwner()
   RuntimeHooks.wrapOnce(Map, "setBlock", "dramaticShapeBlockHook",
     function(setBlock)
       return function(self, bx, by, block)

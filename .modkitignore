@@ -10,7 +10,6 @@ tests/voxel_loading_test.lua
 tests/shadow_cadence_probe.lua
 tests/shadow_golden.lua
 tests/sandbox_api_test.lua
-tests/vox_props_test.lua
 tests/cache_stream_contract_test.lua
 tests/goldens/shadow_golden.txt
 
@@ -22,6 +21,9 @@ tests/battle_wide_hud_test.lua
 tests/battle_pics_detached_pixel_test.lua
 tests/battle_shadow_alignment_test.lua
 tools/thread_smoke/main.lua
+tools/inspect_tilesets.lua
+tools/tileset_inspector.md
+tools/build_berry_tree_vox.py
 
 # Local analysis, backup, and historical package artifacts.
 backup.ab

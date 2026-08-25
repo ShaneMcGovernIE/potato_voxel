@@ -11,6 +11,7 @@
 local V = ...
 
 local Mat4 = V.require("Mat4")
+local VoxAssets = V.require("VoxAssets")
 
 local ShadowCast = {}
 
@@ -39,8 +40,17 @@ end
 --   nbMesh, nbWater: per-neighbour meshes
 function ShadowCast.terrainAndWater(ShadowMap, ChunkMesher, scene)
   local atlasFor = scene.atlasFor
+  local voxTextureFor = scene.voxTextureFor
+                       or function() return VoxAssets.texture() end
   ShadowMap.draw(scene.terrain, atlasFor(scene.map), nil)
   ShadowMap.draw(scene.ring, atlasFor(scene.map), nil)
+  do
+    ShadowMap.draw(ChunkMesher.vox(scene.map), voxTextureFor(scene.map), nil)
+    for i, nb in ipairs(scene.neighbors or {}) do
+      ShadowMap.draw(ChunkMesher.vox(nb.map), voxTextureFor(nb.map),
+                     nbTransform(i, nb.ox, nb.oy))
+    end
+  end
   for i, nb in ipairs(scene.neighbors or {}) do
     ShadowMap.draw(scene.nbMesh and scene.nbMesh[i], atlasFor(nb.map),
                    nbTransform(i, nb.ox, nb.oy))

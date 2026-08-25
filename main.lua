@@ -93,6 +93,10 @@ function V.data(name)
   return value
 end
 
+function V.read(rel)
+  return mod:read(rel)
+end
+
 -- ------- pipelines
 
 local Voxel = V.require("VoxelState")

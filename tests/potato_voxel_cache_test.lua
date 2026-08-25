@@ -27,8 +27,8 @@ local Brick = exports.brick
 local Battles = exports.lib.require("OverworldBattle")
 local QualityMode = exports.lib.require("QualityMode")
 
-T.eq(MeshCache.GEOMETRY_VERSION, 28,
-     "v28 invalidates object streams built without authored vox props")
+T.eq(MeshCache.GEOMETRY_VERSION, 55,
+     "v55 targets Johto CUT graphics without replacing short pines")
 
 -- Platform switching for the Switch-gated cache fixes: stub the OS the
 -- engine Platform module answers, exactly like the main suite does, and
