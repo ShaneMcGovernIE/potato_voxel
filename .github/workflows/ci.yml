@@ -50,6 +50,14 @@ jobs:
         working-directory: mod
         run: luajit tests/voxel_loading_test.lua
 
+      - name: MagicaVoxel suite
+        working-directory: mod
+        run: luajit tests/magicavoxel_test.lua
+
+      - name: Vox atlas suite
+        working-directory: mod
+        run: luajit tests/vox_atlas_test.lua
+
       - name: modkit lint
         working-directory: engine
         run: python3 tools/modkit.py lint mods/potato_voxel

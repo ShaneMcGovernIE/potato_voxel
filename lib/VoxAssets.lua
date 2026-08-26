@@ -27,6 +27,16 @@ local revision = nil
 local revisionPeriod = nil
 local spriteMap = nil
 
+-- Row zero goes to whoever loads first, and a cached mesh's UVs address the
+-- row its build session assigned. The geometry workers reach that state
+-- through Buildings.build -> preloadProfile(), which fixes the rows before
+-- any UV is baked. Nothing guaranteed the same on the main VM: a cache hit
+-- meshes nothing, so the first claim fell to whatever drew first -- an
+-- overworld sprite replacement through VoxAssets.mesh() reaches load()
+-- directly. Today only `sprites` can do that (one Gen 2 entry), so the hole
+-- is narrow, but it is a hole: every entry point runs the sweep first.
+local profileClaimed = false
+
 local function readFile(name)
   if type(name) ~= "string" or name == "" then return nil end
   name = name:gsub("%.vox$", "")
@@ -209,6 +219,7 @@ function VoxAssets.load(name)
   name = tostring(name or ""):gsub("%.vox$", "")
   if name == "" then return nil end
   if models[name] ~= nil then return models[name] or nil end
+  VoxAssets.claimProfileRows()
   local buf = readFile(name)
   if not buf then
     models[name] = false
@@ -338,6 +349,12 @@ function VoxAssets.texture(colors)
   elseif texture then
     return texture ~= false and texture or nil
   end
+  -- A cache HIT never meshes a map, so Buildings.build -- 1.9.4's only
+  -- caller of preloadProfile() -- never runs, no .vox is ever loaded, and
+  -- the atlas stays empty. Returning nil here made Voxel3D.draw's
+  -- `if texture then mesh:setTexture(texture) end` a no-op, so every
+  -- authored model drew untextured white.
+  VoxAssets.claimProfileRows()
   if #palettes == 0 then return nil end
   if not (love and love.image and love.image.newImageData) then return nil end
   local rows = #palettes
@@ -382,6 +399,15 @@ function VoxAssets.preload(names)
   end
 end
 
+-- Run the profile sweep once per VM, before any caller can claim row zero
+-- for itself. Flagged before the sweep runs so preload()'s own load() calls
+-- do not recurse.
+function VoxAssets.claimProfileRows()
+  if profileClaimed then return end
+  profileClaimed = true
+  pcall(VoxAssets.preloadProfile)
+end
+
 -- Load every profile-named .vox (buildings, sprite replacements) so
 -- palette-atlas rows are fixed before any map mesh bakes UVs.
 function VoxAssets.preloadProfile()
@@ -411,6 +437,12 @@ function VoxAssets.preloadProfile()
       end
     end
   end
+  -- Rows are handed out in load order and a map mesh bakes the row index
+  -- into its UVs, so every VM that touches a cache must agree on the order.
+  -- The gathering above walks hash tables with pairs(); sorting makes the
+  -- assignment a function of the name set alone rather than of the shape of
+  -- the profile table.
+  table.sort(names)
   VoxAssets.preload(names)
 end
 
@@ -546,6 +578,7 @@ function VoxAssets._resetForTests()
   paletteUses, paletteShades, coloredTextures = {}, {}, {}
   paletteProfiles = {}
   texture, revision, revisionPeriod, spriteMap = false, nil, nil, nil
+  profileClaimed = false
 end
 
 return VoxAssets

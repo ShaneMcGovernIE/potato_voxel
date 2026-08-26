@@ -361,32 +361,37 @@ do
     bakedData = data
     return { setFilter = function() end }
   end
+  -- A model's atlas row is whatever the profile sweep assigned it -- rows
+  -- are claimed before any caller's own load(), so nothing may assume 0.
+  local function texel(model, x, y)
+    return bakedData.pixels[x .. ":" .. (model.row * 16 + y)]
+  end
+
   VoxAssets._resetForTests()
-  VoxAssets.load("crystal_pine_short")
+  local pine = VoxAssets.load("crystal_pine_short")
   check(VoxAssets.texture(worldColors) ~= nil,
         "voxel model texture can be baked under a world palette")
-  check(bakedData.pixels["1:0"][1] == 0
-        and bakedData.pixels["1:0"][2] == 0,
+  check(texel(pine, 1, 0)[1] == 0 and texel(pine, 1, 0)[2] == 0,
         "voxel model texture bakes its darkest shade")
-  check(bakedData.pixels["4:0"][1] == 248 / 255
-        and bakedData.pixels["4:0"][2] == 248 / 255,
+  check(texel(pine, 4, 0)[1] == 248 / 255
+        and texel(pine, 4, 0)[2] == 248 / 255,
         "voxel model texture bakes its lightest shade")
   VoxAssets._resetForTests()
-  VoxAssets.load("crystal_pine_short")
+  pine = VoxAssets.load("crystal_pine_short")
   check(VoxAssets.texture(gen2Palettes) ~= nil,
         "voxel model texture accepts the live Gen 2 palette bundle")
-  check(bakedData.pixels["1:0"][1] == gen2Palettes.bg[3][4][1] / 255
-        and bakedData.pixels["1:0"][2] == gen2Palettes.bg[3][4][2] / 255,
+  check(texel(pine, 1, 0)[1] == gen2Palettes.bg[3][4][1] / 255
+        and texel(pine, 1, 0)[2] == gen2Palettes.bg[3][4][2] / 255,
         "voxel model texture uses the tree's active Gen 2 palette slot")
   VoxAssets._resetForTests()
-  VoxAssets.load("poles_wood_horizontal")
-  VoxAssets.load("poles_wood_vertical")
+  local horizontal = VoxAssets.load("poles_wood_horizontal")
+  local vertical = VoxAssets.load("poles_wood_vertical")
   VoxAssets.load("pole_stone")
   check(VoxAssets.texture(advancedPalettes) ~= nil,
         "voxel model textures accept the Advanced world palette bundle")
-  check(bakedData.pixels["9:2"][1] == advancedPalettes.world[6][4][1] / 255
-        and bakedData.pixels["9:2"][2] == advancedPalettes.world[6][4][2] / 255
-        and bakedData.pixels["9:18"][1] == advancedPalettes.world[1][4][1] / 255,
+  check(texel(horizontal, 9, 2)[1] == advancedPalettes.world[6][4][1] / 255
+        and texel(horizontal, 9, 2)[2] == advancedPalettes.world[6][4][2] / 255
+        and texel(vertical, 9, 2)[1] == advancedPalettes.world[1][4][1] / 255,
         "the two fence models bake their distinct Advanced palette groups")
   _G.love = oldLove
 end
