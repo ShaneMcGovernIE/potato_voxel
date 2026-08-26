@@ -63,6 +63,25 @@ do
         "texture() assigns palette rows without a map ever being meshed")
 end
 
+-- 2. The revision follows the art the clock selects, not the clock.
+do
+  local same = newVoxAssets(profile("tree_day"))
+  period = "day"
+  local day = same.revision()
+  period = "night"
+  local night = same.revision()
+  check(day == night,
+        "day and night that resolve to the same canopy art share a revision")
+
+  local differs = newVoxAssets(profile("tree_night"))
+  period = "day"
+  local dayArt = differs.revision()
+  period = "night"
+  local nightArt = differs.revision()
+  check(dayArt ~= nightArt,
+        "a profile with distinct night canopy art still moves the revision")
+end
+
 -- 4. Row assignment survives a profile table rebuilt in another order.
 -- The geometry workers do not share the main VM's profile table: it reaches
 -- them serialized and re-parsed, which inserts the same keys in a different

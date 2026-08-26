@@ -328,9 +328,33 @@ function VoxAssets.revision()
       end
     end
   end
-  hash = (hash * 31 + #period) % 2147483647
-  for i = 1, #period do
-    hash = (hash * 31 + period:byte(i)) % 2147483647
+  -- The clock reaches the geometry through exactly one door: the canopy
+  -- model a tileset selects for the current period (Structures resolves it
+  -- through TileShape.canopyVox). Hash what the period SELECTS, not the
+  -- label -- the names above already contribute both variants' file
+  -- contents, so a day and a night that resolve to the same art produce
+  -- the same revision, and one that resolves to different art still moves.
+  --
+  -- Hashing the bare label instead made the dataKey -- and with it the whole
+  -- cache identity -- flip at every 06:00 and 18:00 local under the default
+  -- SYNC setting, discarding a complete cache twice a day for art that in
+  -- most profiles is identical either side of the boundary.
+  local selected = {}
+  if ok and type(prof) == "table" then
+    for _, entry in pairs(prof.tilesets or {}) do
+      local canopy = entry and entry.canopy_vox
+      local chosen = type(canopy) == "table" and canopy[period] or nil
+      if type(chosen) == "string" and chosen ~= "" then
+        selected[#selected + 1] = chosen:gsub("%.vox$", "")
+      end
+    end
+  end
+  table.sort(selected)
+  for _, name in ipairs(selected) do
+    hash = (hash * 31 + #name) % 2147483647
+    for i = 1, #name do
+      hash = (hash * 31 + name:byte(i)) % 2147483647
+    end
   end
   revision = tostring(hash)
   revisionPeriod = period
