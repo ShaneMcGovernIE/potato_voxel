@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.9.3] - 2026-08-26
+
+### Gen 1
+
+- Added new 3D wooden fences.
+- Added new stone bollards for Pewter City and other routes.
+- Added new large trees for Viridian Forest.
+- Added new smaller trees for towns and routes.
+- Added new 3D jump ledges, including their end pieces.
+- Corrected colours for fences, ledges, and other scenery.
+- Fixed trees appearing incorrectly between connected maps.
+- Fixed a problem that caused Gen 1 precaching to fail.
+
+### Gen 2
+
+- Improved precaching for Gold, Silver, and Crystal.
+- Improved support for each game's maps and graphics.
+- Added a new 3D cave entrance model.
+- Improved colours for Gen 2 scenery.
+- Corrected some Violet City building behaviour.
+
+### Both generations
+
+- Improved support for coloured 3D models.
+- Added better model rotation and positioning.
+- Improved cache rebuilding when models or colours change.
+- Added extra checks to detect problems before they affect the game.
+
 ## [1.9.0] - 2026-08-24
 
 ### Fixed: Gen 2 ledges and Cut trees

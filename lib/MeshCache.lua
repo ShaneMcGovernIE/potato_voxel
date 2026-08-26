@@ -134,7 +134,24 @@ end
 -- 50: Let Violet City's pitched wooden houses use the gable-aware detector.
 -- 51: Keep the deferred Violet house facade at two rows (16px) via its
 --     explicit detector roof-band hint.
-MeshCache.GEOMETRY_VERSION = 55
+-- 57: Use the flat Mart and Pokemon Center models for Violet City.
+-- 58: Replace Gen1 wooden fence posts and runs with authored VOX models.
+-- 59: Rotate Gen1 wooden fence models to match the 2D fence run orientation.
+-- 60: Keep the two Gen1 fence palette rows separate for Advanced colours.
+-- 61: Add authored stone-pole VOX geometry support.
+-- 62: Move the stone pole replacement to the actual OVERWORLD bollard cells.
+-- 63: Replace Gen1 FOREST's 2x2 canopy groups with day/night VOX models.
+-- 64: Rotate Gen1 FOREST canopy VOX models to match the 2D trunk direction
+--     and keep the Gen1 profile on the daytime model at night.
+-- 65: Point the Gen1 FOREST trunk south/down instead of east/right.
+-- 66: Pitch the Gen1 FOREST tree -90 degrees so its trunk rests on the floor.
+-- 67: Add authored Gen1 ordinary-tree and jump-ledge VOX geometry.
+-- 68: Replace the wrong Gen1 double-tree asset with the Johto short bush.
+-- 69: Keep authored round scenery out of unmasked connection rings and accept
+--     single-row upright top bands during Gen1 precache.
+-- 70: Replace Gen1 jump-ledge terminal caps when tile 52 sits over ground.
+-- 71: Give the Gen1 terminal-cap copy tile 52's Advanced palette group.
+MeshCache.GEOMETRY_VERSION = 71
 local Identity = CacheIdentity.new({
   geometryVersion = MeshCache.GEOMETRY_VERSION,
 })

@@ -44,6 +44,7 @@ local state = {
   failed = false,
   nextGen = 1,
   mapCache = {},  -- map id -> Lua-source dump (short-lived per map)
+  mapPeriods = {},
   version = GEOMETRY_VERSION,
   root = "",      -- mod fs prefix ("mods/potato_voxel" in-game, "" in a harness)
   stopping = false,
@@ -51,6 +52,17 @@ local state = {
   resultGens = {},
   lastHeartbeat = {},
 }
+
+local function voxelPeriod()
+  local okDayNight, DayNight = pcall(V.require, "DayNight")
+  if okDayNight and DayNight and DayNight.voxelPeriod then
+    local okPeriod, period = pcall(DayNight.voxelPeriod)
+    if okPeriod and (period == "day" or period == "night") then
+      return period
+    end
+  end
+  return "day"
+end
 
 -- Every love.* touch is pcall-guarded: the engine's mod sandbox blocks
 -- love.thread unless the mod declares the `compute` permission (see
@@ -87,9 +99,8 @@ end
 function WorkerPool.enabled()
   local platform = platformInfo()
   if platform.mobile or platform.nx or platform.web then return false end
-  local okBrick = pcall(V.require, "Brick")
   local ok, brick = pcall(function()
-    local B = V.require("Brick")
+    local B = V.require("BrickProfile")
     return B and B.isBrick and B.isBrick()
   end)
   if ok and brick then return false end
@@ -111,6 +122,7 @@ function WorkerPool.start()
   if state.started or state.stopping or not WorkerPool.enabled() then return end
   -- A fresh fill may follow a wipe or data hot-reload with the same ids.
   state.mapCache = {}
+  state.mapPeriods = {}
   -- the mod's own fs path ("mods/potato_voxel" in-game, "" in a dev
   -- harness whose game root IS the mod dir)
   state.root = (V.mod and V.mod.path) or ""
@@ -202,6 +214,7 @@ function WorkerPool.shutdown()
   state.stopping = true
   state.inFlight = 0
   state.mapCache = {}
+  state.mapPeriods = {}
   reapStopped()
 end
 
@@ -298,8 +311,9 @@ end
 -- Map -> Lua-source table, dumped once per map (body+ring share it).
 -- Skip-only fields are map internals the geometry path never reads.
 function WorkerPool.serializeMap(map)
+  local period = voxelPeriod()
   local cached = state.mapCache[map.id]
-  if cached then return cached end
+  if cached and state.mapPeriods[map.id] == period then return cached end
   -- Real MapLoader objects have the complete geometry contract.  Project
   -- those objects before crossing the worker boundary; the legacy dumper is
   -- retained only for tiny compatibility probes that intentionally omit a
@@ -308,15 +322,18 @@ function WorkerPool.serializeMap(map)
      and type(map.def.width) == "number"
      and type(map.def.height) == "number"
      and type(map.tileset) == "table" then
-    local snapshot = GeometrySnapshot.fromMap(map, nil, "trees")
+    local snapshot = GeometrySnapshot.fromMap(map, nil, "trees",
+                                              { voxelPeriod = period })
     local src = GeometrySnapshot.toSource(snapshot)
     state.mapCache[map.id] = src
+    state.mapPeriods[map.id] = period
     return src
   end
   local out = { "return " }
   dumpValue(map, out, 0, {})
   local src = table.concat(out)
   state.mapCache[map.id] = src
+  state.mapPeriods[map.id] = period
   return src
 end
 
@@ -324,6 +341,7 @@ end
 function WorkerPool.forgetMap(mapId)
   if not mapId or state.mapCache[mapId] == nil then return false end
   state.mapCache[mapId] = nil
+  state.mapPeriods[mapId] = nil
   return true
 end
 
@@ -410,6 +428,7 @@ end
 -- replays boots in one process).
 function WorkerPool._resetForTests()
   state.mapCache = {}
+  state.mapPeriods = {}
   state.started = false
   state.failed = false
   state.nextGen = 1

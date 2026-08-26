@@ -90,7 +90,7 @@ function DiagnosticsTransport.new(ctx)
     local body = buildBody(false)
     if not body then return false end
     local ok, handle, reason = pcall(mod.postLog, mod, body, { format = "text" })
-    if not ok or not handle and reason and reason:find("too large") then
+    if not ok or ((not handle) and reason and reason:find("too large")) then
       trace("log send: payload too large for this engine; retrying trimmed")
       body = buildBody(true)
       if not body then return false end

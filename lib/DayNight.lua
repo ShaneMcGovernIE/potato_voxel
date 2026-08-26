@@ -492,6 +492,14 @@ function DayNight.tod(t)
   return TOD[best] or "DAY"
 end
 
+-- The authored Viridian canopy has one model under the sun and another under
+-- the moon. Twilight remains on the sun model until the clock hands off to
+-- the moon, matching the same body choice the sky and shadows use.
+function DayNight.voxelPeriod(t)
+  local _, _, moon = DayNight.bodyAt(t or DayNight.time())
+  return moon and "night" or "day"
+end
+
 -- ------- persistence
 --
 -- The clock rides the SAVE SLOT, not the options file: what time it is in

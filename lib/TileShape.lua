@@ -755,6 +755,67 @@ function TileShape.propBg(tilesetId)
   return bgCache[tilesetId] or nil
 end
 
+-- Authored MagicaVoxel replacements for a tileset's wooden-fence passes.
+-- `vertical` is used by the profile-pinned post pass; `horizontal` is used
+-- only when a structural region is made entirely from `horizontal_tiles`.
+-- This stays in the profile so the detector does not grow Gen1 tile ids or
+-- asset names as private knowledge.
+function TileShape.voxAsset(tilesetId, orientation)
+  local s = load()
+  local entry = s and s.tilesets and s.tilesets[tilesetId]
+  local vox = entry and entry.fence_vox
+  local name = type(vox) == "table" and vox[orientation] or nil
+  if type(name) ~= "string" or name == "" then return nil end
+  return name:gsub("%.vox$", "")
+end
+
+function TileShape.voxTiles(tilesetId, orientation)
+  local s = load()
+  local entry = s and s.tilesets and s.tilesets[tilesetId]
+  local vox = entry and entry.fence_vox
+  if type(vox) ~= "table" then return nil end
+  local tiles = vox[orientation .. "_tiles"]
+  return type(tiles) == "table" and tiles or nil
+end
+
+-- Authored MagicaVoxel replacements for profile-pinned cylinder cells.
+-- The key is the cell's top-left tile, so one tileset can keep its normal
+-- cylinder trees while replacing a distinct round drawing with a model.
+function TileShape.cylinderVox(tilesetId, tile)
+  local s = load()
+  local entry = s and s.tilesets and s.tilesets[tilesetId]
+  local vox = entry and entry.cylinder_vox
+  local name = type(vox) == "table" and vox[tile] or nil
+  if type(name) ~= "string" or name == "" then return nil end
+  return (name:gsub("%.vox$", ""))
+end
+
+-- Authored day/night MagicaVoxel replacements for a profile-pinned canopy
+-- group. The period is supplied by the mod's clock rather than guessed from
+-- the map, so a CYCLE or SYNC setting can change the model at runtime.
+function TileShape.canopyVox(tilesetId, period)
+  local s = load()
+  local entry = s and s.tilesets and s.tilesets[tilesetId]
+  local vox = entry and entry.canopy_vox
+  local name = type(vox) == "table" and vox[period] or nil
+  if type(name) ~= "string" or name == "" then return nil end
+  return name:gsub("%.vox$", "")
+end
+
+function TileShape.canopyVoxRotation(tilesetId)
+  local s = load()
+  local entry = s and s.tilesets and s.tilesets[tilesetId]
+  local rotation = entry and entry.canopy_vox_rotation
+  return type(rotation) == "number" and rotation or 0
+end
+
+function TileShape.canopyVoxPitch(tilesetId)
+  local s = load()
+  local entry = s and s.tilesets and s.tilesets[tilesetId]
+  local pitch = entry and entry.canopy_vox_pitch
+  return type(pitch) == "number" and pitch or 0
+end
+
 -- What a bookcase rank does with the rows it VACATES -- the ones behind the
 -- one-cell-deep box it collapses onto (a tileset entry's
 -- bookcase_backfill).  Returns the mode name, or nil for the default.

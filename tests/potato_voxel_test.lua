@@ -752,6 +752,10 @@ if brick then
           "the cycle's dawn horizon gap stays shadowless")
   T.check(DayNight.strengthAt(DayNight.DAY_LEN) < 1e-9,
           "the cycle's dusk horizon gap stays shadowless")
+  T.eq(DayNight.voxelPeriod(DayNight.T.day), "day",
+       "Viridian canopy uses the day model under the sun")
+  T.eq(DayNight.voxelPeriod(DayNight.T.night), "night",
+       "the clock still reports night for Gen1's day-only canopy selection")
   do
     local dkx, dkz = DayNight.shearAt(DayNight.T.dusk)
     T.check(math.sqrt(dkx * dkx + dkz * dkz) <= DayNight.K_MAX + 1e-9,
@@ -1883,8 +1887,8 @@ end
         local stripped = src:gsub("%[%[(.-)%]%]", function(s) return s:gsub("[^\n]", " ") end)
         local lines = {}
         for line in (stripped .. "\n"):gmatch("(.-)\n") do
-          line = line:gsub('"[^"]*"', '""')
-          lines[#lines + 1] = line:gsub("%-%-[^\n]*", " ")
+          local l = line:gsub('"[^"]*"', '""')
+          lines[#lines + 1] = l:gsub("%-%-[^\n]*", " ")
         end
         local declared = {}
         -- is `name` a parameter of the function `pi` sits inside (or of a

@@ -69,7 +69,7 @@ function MagicaVoxel.parse(buf)
     elseif id == "RGBA" and content >= 1024 then
       palette = {}
       palette[0] = { 0, 0, 0, 0 }
-      for i = 1, 255 do
+      for i = 1, 256 do
         local o = body + (i - 1) * 4
         palette[i] = {
           u8(buf, o) / 255,

@@ -368,6 +368,21 @@ do
 end
 
 do
+  local buildings = assert(io.open("lib/Buildings.lua", "rb"))
+  local source = buildings:read("*a") or ""
+  buildings:close()
+  check(source:find("p.top[2] or p.top[1]", 1, true),
+        "single-row upright top bands must not fail Gen1 precache")
+
+  local structures = assert(io.open("lib/Structures.lua", "rb"))
+  source = structures:read("*a") or ""
+  structures:close()
+  check(source:find("local authored = onBody and canopyVoxQuads() or nil", 1, true)
+        and source:find("local cellVoxQuads = onBody and s.class", 1, true),
+        "authored round scenery must never populate an unmasked border ring")
+end
+
+do
   -- Tree canopies and grey gym bollards must retain their authored round
   -- geometry. `prop` is a per-pixel slab and is the wrong renderer here.
   local profile = assert(loadfile("data/voxel_heights.lua"))()
@@ -526,6 +541,50 @@ do
         and cutTreeTemplate.tiles[2][2] == 62,
         "Kanto CUT trees use the supplied MagicaVoxel model")
 
+  local gen1Ledges = {}
+  for _, t in ipairs(profile.buildings.OVERWORLD or {}) do
+    if t.id and t.id:match("^kanto_ledge_") then
+      gen1Ledges[t.tiles[1][1]] = t
+    end
+  end
+  check(gen1Ledges[13] and gen1Ledges[13].vox == "kanto_ledge_13"
+        and gen1Ledges[29] and gen1Ledges[29].vox == "kanto_ledge_29"
+        and gen1Ledges[39] and gen1Ledges[39].vox == "kanto_ledge_39"
+        and gen1Ledges[54] and gen1Ledges[54].vox == "kanto_ledge_54"
+        and gen1Ledges[55] and gen1Ledges[55].vox == "kanto_ledge_55"
+        and gen1Ledges[52] and gen1Ledges[52].vox == "kanto_ledge_52"
+        and gen1Ledges[13].requireClass == "ledge"
+        and gen1Ledges[29].requireClass == "ledge"
+        and gen1Ledges[39].requireClass == "ledge"
+        and gen1Ledges[54].requireClass == "ledge"
+        and gen1Ledges[55].requireClass == "ledge"
+        and gen1Ledges[52].requireClass == "ledge",
+        "Gen1 hop tiles and terminal caps select guarded VOX ledges")
+
+  local groundAbove52 = false
+  for _, rule in ipairs(profile.tilesets.OVERWORLD.when_above[52] or {}) do
+    for _, tile in ipairs(rule.above or {}) do
+      if tile == 57 then groundAbove52 = true break end
+    end
+  end
+  check(groundAbove52,
+        "Gen1 ledge terminal caps resolve over the ground tile")
+
+  local caveTemplate
+  for _, t in ipairs(johtoB or {}) do
+    if t.id == "gen2_cave_entrance" then caveTemplate = t break end
+  end
+  check(profile.vox.gen2_cave_entrance == "crystal_cave_entrance"
+        and caveTemplate and caveTemplate.vox == "crystal_cave_entrance"
+        and caveTemplate.blockIds[0x73]
+        and caveTemplate.blockOffset[1] == 0
+        and caveTemplate.blockOffset[2] == 2
+        and caveTemplate.tiles[1][1] == 70
+        and caveTemplate.tiles[1][2] == 71
+        and caveTemplate.tiles[2][1] == 86
+        and caveTemplate.tiles[2][2] == 87,
+        "Johto cave entrances use the block $73 70/71 over 86/87 model")
+
   local johtoCut = {}
   for _, t in ipairs(johtoB or {}) do
     if t.id and t.id:match("^gen2_cut_tree_") then
@@ -563,10 +622,9 @@ do
   check(not modernCut,
         "JohtoModern must not inherit Johto's obsolete tree CUT blocks")
 
-  -- Violet City's two wooden exteriors are full 8x8 tile drawings. They
-  -- share their drawing with the generic Mart/Center templates, but their
-  -- roofs are pitched. Exercise the map-scoped guard that lets the normal
-  -- Gen 2 detector build them instead of the flat template path.
+  -- Violet City's Mart and Pokemon Center reuse the generic 8x8 drawings.
+  -- They are civic buildings with flat roofs, so the normal flat building
+  -- templates must remain active on this map.
   local BuildBudget = assert(loadfile("lib/BuildBudget.lua"))()
   local GridKey = assert(loadfile("lib/GridKey.lua"))()
   local Buildings = assert(loadfile("lib/Buildings.lua"))({
@@ -665,23 +723,17 @@ do
     { 1, 2, 57, 58, 23, 23, 2, 22 },
   }
   local list = profile.buildings.gen2_TilesetJohto
-  local westIndex, eastIndex, martIndex, centerIndex
+  local martIndex, centerIndex
   for index, t in ipairs(list) do
-    if t.id == "gen2_violet_house_west" then westIndex = index end
-    if t.id == "gen2_violet_house_east" then eastIndex = index end
     if t.id == "gen2_mart" then martIndex = index end
     if t.id == "gen2_pokecenter" then centerIndex = index end
   end
-  check(westIndex and eastIndex and westIndex < martIndex
-        and eastIndex < centerIndex,
-        "Violet house guards must precede generic Mart/Center templates")
-  check(#list[westIndex].tiles == 8 and #list[eastIndex].tiles == 8,
-        "Violet house templates must cover the complete 8x8 drawings")
-  check(list[westIndex].mode == "defer" and list[eastIndex].mode == "defer",
-        "Violet wooden houses must defer to the gable-aware structure path")
-  check(list[westIndex].detectorRoofRows == 4
-        and list[eastIndex].detectorRoofRows == 4,
-        "Violet wooden houses must keep only a two-row facade")
+  check(martIndex and centerIndex
+        and not list[martIndex].excludeMaps
+        and not list[centerIndex].excludeMaps
+        and list[martIndex].roofRows == 32
+        and list[centerIndex].roofRows == 32,
+        "Violet City must use the flat Mart and Center templates")
   local buildingState = {
     tileAt = {}, shapeAt = {}, skip = {}, ground = {},
     objectQuads = {}, voxQuads = {},
@@ -700,22 +752,15 @@ do
     tileset = { id = "gen2_TilesetJohto", imageWidth = 128,
                 imageHeight = 128, tilesPerRow = 16 },
     def = { id = "VIOLET_CITY", width = 4, height = 2 },
-  }, { getPixel = function() return 1, 1, 1, 1 end }, 16)
+  }, { getPixel = function() return 0, 0, 0, 1 end }, 16)
   local claimed = 0
   for _ in pairs(buildingState.skip) do claimed = claimed + 1 end
-  check(claimed == 0,
-        "Deferred Violet wooden houses must leave their drawings for detection")
-  local westHint = buildingState.volumeHints
-      and buildingState.volumeHints[GridKey.of(2, 6)]
-  check(westHint and westHint.roofRows == 4,
-        "Deferred Violet wooden houses must pass their four-row roof to detection")
   local stats = Buildings.stats()
-  check(not stats["gen2_TilesetJohto:" .. westIndex]
-        and not stats["gen2_TilesetJohto:" .. eastIndex],
-        "Deferred Violet wooden houses must not build flat template geometry")
-  check(not stats["gen2_TilesetJohto:" .. martIndex]
-        and not stats["gen2_TilesetJohto:" .. centerIndex],
-        "Violet wooden houses must not use generic Mart/Center geometry")
+  check(claimed == 128 and #buildingState.objectQuads > 0,
+        "Violet Mart and Center must stamp flat building geometry")
+  check(stats["gen2_TilesetJohto:" .. martIndex]
+        and stats["gen2_TilesetJohto:" .. centerIndex],
+        "Violet Mart and Center must build their flat models")
 
   local modernHasTall, modernHasShort
   for _, t in ipairs(profile.buildings.gen2_TilesetJohtoModern or {}) do
@@ -842,7 +887,7 @@ do
       if name == "DiagnosticsBridge" then
         return { note = function() end, warn = function() end }
       end
-      if name == "Brick" then
+      if name == "Brick" or name == "BrickProfile" then
         return { isBrick = function() return false end }
       end
       error("unexpected worker dependency: " .. tostring(name))
@@ -903,7 +948,7 @@ do
         return { note = function() end, warn = function() end,
                  error = function() end }
       end
-      if name == "Brick" then
+      if name == "Brick" or name == "BrickProfile" then
         return { isBrick = function() return false end }
       end
       error("unexpected worker dependency: " .. tostring(name))

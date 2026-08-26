@@ -48,6 +48,8 @@ local Assets = require("src.render.Assets")
 local RuntimeHooks = V.require("RuntimeHooks")
 local Buildings = V.require("Buildings")
 local TileShape = V.require("TileShape")
+local VoxAssets = V.require("VoxAssets")
+local DayNight = V.require("DayNight")
 local Budget = V.require("BuildBudget")
 local GridKey = V.require("GridKey")
 local VegetationBuilder = V.require("VegetationBuilder")
@@ -162,6 +164,38 @@ end
 -- ----------------------------------------------------------------- build --
 
 local DIRS4 = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
+
+local function stampVoxCell(S, quads, tx, ty, tiles, rotation, width, depth,
+                            pitch, height)
+  if not (quads and #quads > 0) then return false end
+  local placed = VoxAssets.place(quads,
+    math.floor(tx / 2) * 16, 0, math.floor(ty / 2) * 16, 1,
+    rotation, width, depth, pitch, height)
+  for i = 1, #placed do S.voxQuads[#S.voxQuads + 1] = placed[i] end
+  for _, c in ipairs(tiles or {}) do
+    local k = GridKey.of(c[1], c[2])
+    S.skip[k] = true
+    S.ground[k] = false
+  end
+  return true
+end
+
+local function fenceRegionTiles(S, region, allowed)
+  if type(allowed) ~= "table" or #region.tiles == 0 then return nil end
+  local cells = {}
+  for _, c in ipairs(region.tiles) do
+    local tile = S.tileAt[GridKey.of(c[1], c[2])]
+    local match = false
+    for _, id in ipairs(allowed) do
+      if tile == id then match = true break end
+    end
+    if not match then return nil end
+    local cellKey = GridKey.of(math.floor(c[1] / 2), math.floor(c[2] / 2))
+    cells[cellKey] = cells[cellKey] or {}
+    cells[cellKey][#cells[cellKey] + 1] = c
+  end
+  return cells
+end
 
 -- Gen 1 doors are a tileset graphic list; Gold doors are warp COLL kinds
 -- (Map:isDoorTileCell). Prefer the predicate so a missing doorTiles table
@@ -406,7 +440,18 @@ function Structures.forMap(map)
   for _, region in ipairs(regions) do
     Budget.tick()
     local leftover = region.tiles
-    if data then
+    local horizontalName = TileShape.voxAsset(tileset.id, "horizontal")
+    local horizontalTiles = TileShape.voxTiles(tileset.id, "horizontal")
+    local fenceCells = horizontalName
+      and fenceRegionTiles(S, region, horizontalTiles) or nil
+    local horizontalQuads = horizontalName and fenceCells
+      and VoxAssets.quads(horizontalName) or nil
+    if horizontalQuads and fenceCells then
+      for _, tiles in pairs(fenceCells) do
+        stampVoxCell(S, horizontalQuads, tiles[1][1], tiles[1][2], tiles)
+      end
+      leftover = {}
+    elseif data then
       leftover = Structures.extractObjects(S, map, region, data, perRow)
     end
     if #leftover > 0 then
@@ -484,7 +529,11 @@ function Structures.forMap(map)
         reg.minY = math.min(reg.minY, c[2])
         reg.maxY = math.max(reg.maxY, c[2])
       end
-      Structures.extractObjects(S, map, reg, data, perRow, "opaque")
+      local verticalName = TileShape.voxAsset(tileset.id, "vertical")
+      local verticalQuads = verticalName and VoxAssets.quads(verticalName) or nil
+      if not stampVoxCell(S, verticalQuads, tiles[1][1], tiles[1][2], tiles) then
+        Structures.extractObjects(S, map, reg, data, perRow, "opaque")
+      end
     end
 
     -- ---- profile-pinned relief props: top-down drawings that extrude ----
@@ -1463,6 +1512,33 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
     gsig = table.concat(g, ",")
   end
   local tsid = tostring(map.tileset.id or map.tileset.image or "?")
+  local canopyVoxRotation = TileShape.canopyVoxRotation(map.tileset.id)
+  local canopyVoxPitch = TileShape.canopyVoxPitch(map.tileset.id)
+  local cylinderVoxCache = {}
+  local function cylinderVoxQuads(tile)
+    local name = TileShape.cylinderVox(map.tileset.id, tile)
+    if not name then return nil end
+    if cylinderVoxCache[name] == nil then
+      cylinderVoxCache[name] = VoxAssets.quads(name) or false
+    end
+    return cylinderVoxCache[name] or nil
+  end
+  local canopyVoxCache = {}
+  local function canopyVoxQuads()
+    local period = map.voxelPeriod or DayNight.voxelPeriod()
+    local name = TileShape.canopyVox(map.tileset.id, period)
+    if not name then return nil end
+    if canopyVoxCache[name] == nil then
+      local quads, model = VoxAssets.quads(name)
+      canopyVoxCache[name] = (quads and model and #quads > 0) and {
+        quads = quads,
+        width = model.sx,
+        depth = model.sy,
+        height = model.sz,
+      } or false
+    end
+    return canopyVoxCache[name] or nil
+  end
 
   -- the stump class's drawn-ellipse height, hand-authored per tileset
   -- (the profile's stump_cap, in art rows), and the can class's three: the
@@ -1503,7 +1579,6 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
       planterSpray = entry.planter_one_band and { one_band = true } or nil
     end
   end
-
   -- cells consumed by a 2x2 `canopy` group; the scan runs north to
   -- south, west to east, so an anchor always claims its partners
   -- before they are visited
@@ -1529,8 +1604,24 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
           end
         end
         if whole then
+          -- Authored VOX quads use the palette texture and therefore live
+          -- in the shared aux mesh, which has no body/ring connection mask.
+          -- Never put synthetic border-ring trees there: they would remain
+          -- visible over an adjoining map body (Route 2 over Viridian).
+          local onBody = cx * 2 >= 0 and cy * 2 >= 0
+                         and cx * 2 + 3 < tw and cy * 2 + 3 < th
+          local authored = onBody and canopyVoxQuads() or nil
+          if authored then
+            stampVoxCell(S, authored.quads, cx * 2, cy * 2, {
+              { cx * 2, cy * 2 },
+              { cx * 2 + 1, cy * 2 },
+              { cx * 2, cy * 2 + 1 },
+              { cx * 2 + 1, cy * 2 + 1 },
+            }, canopyVoxRotation, authored.width, authored.depth,
+               canopyVoxPitch, authored.height)
+          end
           local ground = false
-          if data then
+          if not authored and data then
             local ids = {}
             for dy = 0, 3 do
               for dx = 0, 3 do
@@ -1672,7 +1763,20 @@ function Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
         local well = s.class == "can" and canWell or nil
         local taper = s.class == "can" and canTaper or nil
         local ground = false
-        if data then
+        local voxPlaced = false
+        local onBody = cx * 2 >= 0 and cy * 2 >= 0
+                       and cx * 2 + 1 < tw and cy * 2 + 1 < th
+        local cellVoxQuads = onBody and s.class == "cylinder"
+          and cylinderVoxQuads(S.tileAt[k]) or nil
+        if cellVoxQuads then
+          voxPlaced = stampVoxCell(S, cellVoxQuads, cx * 2, cy * 2, {
+            { cx * 2, cy * 2 },
+            { cx * 2 + 1, cy * 2 },
+            { cx * 2, cy * 2 + 1 },
+            { cx * 2 + 1, cy * 2 + 1 },
+          })
+        end
+        if not voxPlaced and data then
           local sig = tsid .. (cap and ("|c" .. cap) or "")
             .. (base and ("|b" .. base) or "")
             .. (tall and ("|h" .. tall) or "")
@@ -1918,6 +2022,7 @@ function Structures.buildVolume(S, map, tiles)
           repeatRead = true
         end
       end
+
       local isDoor = false
       for ty = north, front do
         if S.doorFold[GridKey.of(tx, ty)] then

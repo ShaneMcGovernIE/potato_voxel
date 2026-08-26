@@ -606,7 +606,10 @@ local function deskSetModel(sp, pr, t)
           end
         end
       else
-        local tr0, tr1 = p.top[1], p.top[2]
+        -- A one-row top band is written as `{ row }` in the profile.  Treat
+        -- its missing endpoint as the same row; passing nil through to
+        -- math.min made every map containing that part fail precache.
+        local tr0, tr1 = p.top[1], p.top[2] or p.top[1]
         local fr0, fr1 = p.facade[1], p.facade[2]
         local pd = p.depth
         -- `rise` lifts a part off the desk's top plane and `z` names its
@@ -1377,10 +1380,9 @@ function Buildings.build(S, map, data, perRow)
                 -- generic template below. Leave every tile untouched so
                 -- Structures' ordinary Gen 2 detector can build its
                 -- gabled roof instead of this module's flat roof model.
-                -- A deferred drawing may still need to tell that detector
-                -- where its eaves are: the generic two-row heuristic makes
-                -- Violet's capped six-row volume leave a 32px room, while
-                -- the artwork has four roof rows and a two-row facade.
+                -- A deferred drawing may still need to tell the detector
+                -- where its eaves are when its repeated rows would
+                -- otherwise make the generic roof heuristic ambiguous.
                 if t.detectorRoofRows then
                   S.volumeHints = S.volumeHints or {}
                   for hr = 0, bh - 1 do

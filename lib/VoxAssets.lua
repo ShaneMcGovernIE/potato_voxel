@@ -20,9 +20,11 @@ local palettes = {}
 local paletteIndex = {}
 local paletteUses = {}
 local paletteShades = {}
+local paletteProfiles = {}
 local texture = false
 local coloredTextures = {}
 local revision = nil
+local revisionPeriod = nil
 local spriteMap = nil
 
 local function readFile(name)
@@ -56,6 +58,81 @@ local function colorsKey(colors)
     parts[#parts + 1] = table.concat({ c[1] or 0, c[2] or 0, c[3] or 0 }, ",")
   end
   return table.concat(parts, ";")
+end
+
+local function paletteSetKey(set)
+  local parts = {}
+  for i = 1, 8 do
+    parts[#parts + 1] = colorsKey(set and set[i] or {})
+  end
+  return table.concat(parts, "|")
+end
+
+local function textureKey(colors)
+  if not colors then return nil end
+  if colors.bg or colors.obj then
+    return table.concat({
+      "gen2",
+      paletteSetKey(colors.bg),
+      paletteSetKey(colors.obj),
+    }, "#")
+  end
+  if colors.world then
+    return table.concat({ "advanced", paletteSetKey(colors.world) }, "#")
+  end
+  return colorsKey(colors)
+end
+
+-- These are the source palette slots of the original graphics that the
+-- authored models replace. A single MagicaVoxel model owns one palette row,
+-- so remembering the source slot here lets one texture atlas carry the real
+-- per-slot colours instead of incorrectly painting every model with one
+-- named SGB palette.
+local function profileForName(name)
+  if name == "poles_wood_vertical" then
+    return { kind = "world", slot = 1 }
+  end
+  if name == "poles_wood_horizontal" then
+    return { kind = "world", slot = 6 }
+  end
+  if name == "pole_stone" then
+    return { kind = "world", slot = 1 }
+  end
+  if name == "kanto_tree_small" then
+    return { kind = "world", slot = 3 }
+  end
+  if name == "kanto_ledge_13" then
+    return { kind = "world", slot = 1 }
+  end
+  if name == "kanto_ledge_52" then
+    return { kind = "world", slot = 6 }
+  end
+  if name == "kanto_ledge_29" then
+    return { kind = "world", slot = 3 }
+  end
+  if name == "kanto_ledge_39" or name == "kanto_ledge_54"
+      or name == "kanto_ledge_55" then
+    return { kind = "world", slot = 6 }
+  end
+  if name == "crystal_berry_tree" then
+    return { kind = "obj", slot = 7 }
+  end
+  if name == "crystal_pine_tall" or name == "crystal_pine_short"
+      or name == "crystal_cut_tree" then
+    return { kind = "bg", slot = 3 }
+  end
+  if name == "crystal_cave_entrance"
+      or (name and name:match("^crystal_ledge_")) then
+    return { kind = "bg", slot = 6 }
+  end
+  return nil
+end
+
+local function targetForProfile(bundle, profile)
+  if not (bundle and profile
+      and (bundle.bg or bundle.obj or bundle.world)) then return nil end
+  local set = bundle[profile.kind]
+  return set and set[profile.slot] or nil
 end
 
 local function luminance(c)
@@ -118,6 +195,16 @@ function VoxAssets.recolorPalette(palette, used, colors)
   return remapPalette(palette, shadeMap(palette, set), colors)
 end
 
+-- Public seam for tests and for any future authored model. `bundle` is a Gen 2
+-- palette descriptor ({ bg = eight BG palettes, obj = eight OBJ palettes }),
+-- an Advanced world descriptor ({ world = eight tile-group palettes }), or a
+-- plain four-colour input for the older SGB path.
+function VoxAssets.paletteFor(bundle, name)
+  if not bundle then return nil end
+  if not (bundle.bg or bundle.obj or bundle.world) then return bundle end
+  return targetForProfile(bundle, profileForName(name))
+end
+
 function VoxAssets.load(name)
   name = tostring(name or ""):gsub("%.vox$", "")
   if name == "" then return nil end
@@ -132,7 +219,16 @@ function VoxAssets.load(name)
     models[name] = false
     return nil
   end
+  local profile = profileForName(name)
   local key = paletteKey(model.palette)
+  -- Two authored models may intentionally share a MagicaVoxel palette while
+  -- consuming different live palette groups (the two Gen1 fence layouts do).
+  -- Keep those rows separate so one model's Advanced colours cannot repaint
+  -- the other model through a deduplicated atlas row.
+  if profile then
+    key = key .. "#profile:" .. tostring(profile.kind)
+      .. ":" .. tostring(profile.slot)
+  end
   local row = paletteIndex[key]
   if not row then
     palettes[#palettes + 1] = model.palette
@@ -147,6 +243,8 @@ function VoxAssets.load(name)
     uses[voxel.c] = true
   end
   paletteShades[row + 1] = shadeMap(model.palette, uses)
+  paletteProfiles[row + 1] = paletteProfiles[row + 1] or profile
+  model.paletteProfile = paletteProfiles[row + 1]
   coloredTextures = {}
   model.row = row
   model.name = name
@@ -169,7 +267,15 @@ function VoxAssets.quads(name)
 end
 
 function VoxAssets.revision()
-  if revision then return revision end
+  local period = "day"
+  local okDayNight, DayNight = pcall(V.require, "DayNight")
+  if okDayNight and DayNight and DayNight.voxelPeriod then
+    local okPeriod, current = pcall(DayNight.voxelPeriod)
+    if okPeriod and (current == "day" or current == "night") then
+      period = current
+    end
+  end
+  if revision and revisionPeriod == period then return revision end
   local names, seen = {}, {}
   local function add(n)
     if type(n) ~= "string" or n == "" then return end
@@ -188,6 +294,15 @@ function VoxAssets.revision()
         for _, t in ipairs(list) do add(t.vox) end
       end
     end
+    for _, entry in pairs(prof.tilesets or {}) do
+      local fenceVox = entry and entry.fence_vox
+      if type(fenceVox) == "table" then
+        add(fenceVox.vertical)
+        add(fenceVox.horizontal)
+      end
+      for _, n in pairs(entry and entry.cylinder_vox or {}) do add(n) end
+      for _, n in pairs(entry and entry.canopy_vox or {}) do add(n) end
+    end
   end
   for name in pairs(models) do add(name) end
   table.sort(names)
@@ -202,7 +317,12 @@ function VoxAssets.revision()
       end
     end
   end
+  hash = (hash * 31 + #period) % 2147483647
+  for i = 1, #period do
+    hash = (hash * 31 + period:byte(i)) % 2147483647
+  end
   revision = tostring(hash)
+  revisionPeriod = period
   return revision
 end
 
@@ -211,7 +331,7 @@ function VoxAssets.paletteRows()
 end
 
 function VoxAssets.texture(colors)
-  local key = colors and colorsKey(colors) or nil
+  local key = textureKey(colors)
   if key then
     local cached = coloredTextures[key]
     if cached ~= nil then return cached or nil end
@@ -224,8 +344,12 @@ function VoxAssets.texture(colors)
   local ok, data = pcall(love.image.newImageData, 16, 16 * rows)
   if not ok or not data then return nil end
   for row, palette in ipairs(palettes) do
-    local baked = colors and remapPalette(palette, paletteShades[row], colors)
-                  or palette
+    local rowColors = colors
+    if colors and (colors.bg or colors.obj or colors.world) then
+      rowColors = targetForProfile(colors, paletteProfiles[row])
+    end
+    local baked = rowColors
+      and remapPalette(palette, paletteShades[row], rowColors) or palette
     for i = 0, 255 do
       local c = baked[i] or { 0, 0, 0, 1 }
       local x, y = i % 16, math.floor(i / 16) + (row - 1) * 16
@@ -271,6 +395,19 @@ function VoxAssets.preloadProfile()
         for _, t in ipairs(list) do
           if t.vox then names[#names + 1] = t.vox end
         end
+      end
+    end
+    for _, entry in pairs(prof.tilesets or {}) do
+      local fenceVox = entry and entry.fence_vox
+      if type(fenceVox) == "table" then
+        if fenceVox.vertical then names[#names + 1] = fenceVox.vertical end
+        if fenceVox.horizontal then names[#names + 1] = fenceVox.horizontal end
+      end
+      for _, n in pairs(entry and entry.cylinder_vox or {}) do
+        names[#names + 1] = n
+      end
+      for _, n in pairs(entry and entry.canopy_vox or {}) do
+        names[#names + 1] = n
       end
     end
   end
@@ -332,9 +469,38 @@ end
 -- Translate model-space quads (origin at MagicaVoxel min, Y up) into
 -- world pixels. `ox, oy, oz` is the world origin of the MagicaVoxel (0,0,0)
 -- corner -- typically the north-west tile of the stamp, ground plane.
-function VoxAssets.place(quads, ox, oy, oz, scale)
+-- `rotation` is a clockwise quarter-turn around +Y when viewed from above;
+-- `width` and `depth` are the unscaled model dimensions used to keep the
+-- rotated footprint in the same positive-origin box. `pitch` is a
+-- quarter-turn around +X; `height` keeps that rotation in positive space.
+function VoxAssets.rotateYPoint(x, z, width, depth, rotation)
+  local q = ((rotation or 0) % 4 + 4) % 4
+  if q == 1 then return depth - z, x end
+  if q == 2 then return width - x, depth - z end
+  if q == 3 then return z, width - x end
+  return x, z
+end
+
+function VoxAssets.rotateXPoint(y, z, height, depth, pitch)
+  local q = ((pitch or 0) % 4 + 4) % 4
+  if q == 1 then return depth - z, y end
+  if q == 2 then return height - y, depth - z end
+  if q == 3 then return z, height - y end
+  return y, z
+end
+
+function VoxAssets.place(quads, ox, oy, oz, scale, rotation, width, depth,
+                         pitch, height)
   scale = scale or 1
   ox, oy, oz = ox or 0, oy or 0, oz or 0
+  local turns = ((rotation or 0) % 4 + 4) % 4
+  local canRotate = turns ~= 0 and type(width) == "number"
+                    and type(depth or width) == "number"
+  depth = depth or width
+  local pitchTurns = ((pitch or 0) % 4 + 4) % 4
+  local rotatedDepth = turns % 2 == 1 and width or depth
+  local canPitch = pitchTurns ~= 0 and type(height) == "number"
+                   and type(rotatedDepth) == "number"
   local n = quads and #quads or 0
   local out = {}
   if scale == 1 then
@@ -343,7 +509,14 @@ function VoxAssets.place(quads, ox, oy, oz, scale)
       local dst = { uv = q.uv, shade = q.shade, own = true }
       for k = 1, 4 do
         local c = q[k]
-        dst[k] = { ox + c[1], oy + c[2], oz + c[3] }
+        local x, y, z = c[1], c[2], c[3]
+        if canRotate then
+          x, z = VoxAssets.rotateYPoint(x, z, width, depth, turns)
+        end
+        if canPitch then
+          y, z = VoxAssets.rotateXPoint(y, z, height, rotatedDepth, pitchTurns)
+        end
+        dst[k] = { ox + x, oy + y, oz + z }
       end
       out[i] = dst
     end
@@ -354,7 +527,14 @@ function VoxAssets.place(quads, ox, oy, oz, scale)
     local dst = { uv = q.uv, shade = q.shade, own = true }
     for k = 1, 4 do
       local c = q[k]
-      dst[k] = { ox + c[1] * scale, oy + c[2] * scale, oz + c[3] * scale }
+      local x, y, z = c[1], c[2], c[3]
+      if canRotate then
+        x, z = VoxAssets.rotateYPoint(x, z, width, depth, turns)
+      end
+      if canPitch then
+        y, z = VoxAssets.rotateXPoint(y, z, height, rotatedDepth, pitchTurns)
+      end
+      dst[k] = { ox + x * scale, oy + y * scale, oz + z * scale }
     end
     out[i] = dst
   end
@@ -364,7 +544,8 @@ end
 function VoxAssets._resetForTests()
   models, palettes, paletteIndex = {}, {}, {}
   paletteUses, paletteShades, coloredTextures = {}, {}, {}
-  texture, revision, spriteMap = false, nil, nil
+  paletteProfiles = {}
+  texture, revision, revisionPeriod, spriteMap = false, nil, nil, nil
 end
 
 return VoxAssets

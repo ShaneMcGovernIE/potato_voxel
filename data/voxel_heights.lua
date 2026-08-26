@@ -151,6 +151,7 @@ local profile = {
     gen2_tree_tall = "crystal_pine_tall",
     gen2_tree_short = "crystal_pine_short",
     gen2_cut_tree = "crystal_cut_tree",
+    gen2_cave_entrance = "crystal_cave_entrance",
     gen2_ledge_nw = "crystal_ledge_nw",
     gen2_ledge_n = "crystal_ledge_n",
     gen2_ledge_ne = "crystal_ledge_ne",
@@ -265,6 +266,24 @@ local profile = {
       -- fence-textured tower. `post` extracts each cell alone, so these
       -- render as the same thin posts, marching north
       post = { 14, 85 },
+      -- The grey stone bollards (42/43 over 58/59) share the cylinder
+      -- archetype with trees, but use an authored 16px stone pole.
+      -- The key is the cell's top-left tile, which is always 42.
+      cylinder_vox = {
+        [42] = "pole_stone",
+        -- Ordinary Kanto trees outside Viridian Forest use the same compact
+        -- bush geometry as Violet City and Route 30, on their normal cell
+        -- origin. Keep a Gen1-specific name for its Advanced palette row.
+        [64] = "kanto_tree_small",
+      },
+      -- Authored one-cell replacements for the two Gen1 wooden-fence
+      -- orientations. The vertical pair is profile-pinned above; the
+      -- horizontal run is the detector's repeated tile 57 region.
+      fence_vox = {
+        vertical = "poles_wood_horizontal",
+        horizontal = "poles_wood_vertical",
+        horizontal_tiles = { 57 },
+      },
       -- the cliff-mound's dark east slope and its NE corner ($24 the
       -- slope column, $02 the corner) and $34 the cliff foot.
       -- $34 is authored `wall` by default (16px), which keeps it out of
@@ -281,7 +300,7 @@ local profile = {
         -- (the flat repeating brown surface inside the mound).
         [52] = {
           { above = { 2, 36,                       -- $02/$24: slope & corner
-                      13, 29, 39, 54, 55,          -- ledge hop-down tiles
+                      13, 29, 39, 54, 55, 57,       -- ledge hop-down/ground tiles
                       44, 45, 60 }, class = "ledge" },
         },
       },
@@ -676,6 +695,15 @@ local profile = {
       -- drawing stays `cylinder` so the group build can verify and
       -- claim its cells -- and so a stray partial drawing degrades to
       -- per-cell hulls rather than boxes
+      -- Pitch the authored north-facing trunk onto the ground. This is a
+      -- vertical-plane rotation, not a horizontal yaw or a position offset.
+      canopy_vox_pitch = -1,
+      canopy_vox = {
+        day = "tree_large_kanto_day",
+        -- Gen1's forest art is fixed daytime art; keep the night key
+        -- explicit so the clock can never fall back to a procedural hull.
+        night = "tree_large_kanto_day",
+      },
       canopy = { 4 },
       cylinder = { 5, 6, 7, 21, 22, 23, 35, 36, 37, 38, 39, 53, 54 },
       -- the stumps ($02/$03/$12/$13): a hull whose drawn top is a CUT
@@ -3219,6 +3247,56 @@ local profile = {
     -- =====================================================================
 
     OVERWORLD = {
+      -- Gen1 hop lips. These are one-tile authored replacements guarded by
+      -- the resolved class, so reused graphics inside buildings or shores
+      -- cannot become terrain. Separate asset names preserve each source
+      -- tile's Advanced palette group even where geometry is shared.
+      {
+        id = "kanto_ledge_13", vox = "kanto_ledge_13",
+        requireClass = "ledge", support = 7,
+        tiles = { { 13 } },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil,
+      },
+      {
+        id = "kanto_ledge_29", vox = "kanto_ledge_29",
+        requireClass = "ledge", support = 7,
+        tiles = { { 29 } },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil,
+      },
+      {
+        id = "kanto_ledge_39", vox = "kanto_ledge_39",
+        requireClass = "ledge", support = 7,
+        tiles = { { 39 } },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil,
+      },
+      {
+        id = "kanto_ledge_54", vox = "kanto_ledge_54",
+        requireClass = "ledge", support = 7,
+        tiles = { { 54 } },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil,
+      },
+      {
+        id = "kanto_ledge_55", vox = "kanto_ledge_55",
+        requireClass = "ledge", support = 7,
+        tiles = { { 55 } },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil,
+      },
+      -- The cliff-foot tile at the end of a Gen1 hop run is $34 (52).
+      -- It is a wall everywhere else, but the profile rule above resolves
+      -- it as a 6px ledge when its north neighbour is ground. Reuse the
+      -- east-facing authored hop model for that terminal cap.
+      {
+        id = "kanto_ledge_52", vox = "kanto_ledge_52",
+        requireClass = "ledge", support = 7,
+        tiles = { { 52 } },
+        roofRows = 0, roofBack = 0, roofFront = 0, roofCycle = { 0 },
+        slab = 0, frontEave = 0, ledge = nil,
+      },
       -- assets/docs/buildings/B30: the POKEMON TOWER -- the one drawing
       -- in the catalogue that STRADDLES A MAP BOUNDARY.  Twelve of its
       -- twenty rows stand in ROUTE_10's last rows (the 64px purple roof
@@ -4781,6 +4859,14 @@ local profile = {
         tiles = { { 19, 21 }, { 69, 29 } },
       },
       {
+        -- Johto cave mouths are the lower-left 2x2 drawing in block $73:
+        -- 70/71 over 86/87.  The block guard matters because those four
+        -- tiles are reused by unrelated indoor props in other tilesets.
+        id = "gen2_cave_entrance", vox = "crystal_cave_entrance",
+        blockIds = { [0x73] = true }, blockOffset = { 0, 2 },
+        tiles = { { 70, 71 }, { 86, 87 } },
+      },
+      {
         -- Crystal pine from the outdoor tree tiles, revolved into a
         -- MagicaVoxel hull. Tall four-row pines match before the short
         -- two-row form. voxOffset parks the 16x16x32 model on the south
@@ -5249,49 +5335,7 @@ local profile = {
           { 1, 2, 2, 2, 2, 2, 2, 22 },
         },
       },
-      -- Violet City's two wooden exteriors reuse the generic Mart/Center
-      -- drawing, but they are pitched houses rather than flat civic blocks.
-      -- Match the complete grids here only to keep the generic templates
-      -- below from intercepting them; the normal Gen 2 detector owns the
-      -- geometry and supplies its gabled roof.
       {
-        id = "gen2_violet_house_west",
-        maps = { "VIOLET_CITY" },
-        mode = "defer",
-        -- The detector caps this eight-row drawing at a 48px peak. Four
-        -- of those rows are roof; the remaining two are the house room.
-        -- Keep the eaves at 16px instead of letting the default two-row
-        -- roof leave a 32px-tall room.
-        detectorRoofRows = 4,
-        tiles = {
-          { 16, 17, 17, 17, 17, 17, 17, 18 },
-          { 13, 14, 14, 14, 14, 14, 14, 15 },
-          { 13, 14, 14, 14, 14, 14, 14, 15 },
-          { 10, 11, 11, 11, 11, 11, 11, 12 },
-          { 26, 7, 7, 7, 7, 7, 7, 28 },
-          { 26, 7, 7, 7, 7, 7, 7, 28 },
-          { 26, 7, 55, 56, 24, 25, 7, 28 },
-          { 1, 2, 57, 58, 23, 23, 2, 22 },
-        },
-      },
-      {
-        id = "gen2_violet_house_east",
-        maps = { "VIOLET_CITY" },
-        mode = "defer",
-        detectorRoofRows = 4,
-        tiles = {
-          { 16, 17, 17, 17, 17, 17, 17, 18 },
-          { 13, 14, 14, 14, 14, 14, 14, 15 },
-          { 13, 14, 14, 14, 14, 14, 14, 15 },
-          { 10, 11, 11, 11, 11, 11, 11, 12 },
-          { 26, 7, 7, 7, 7, 7, 7, 28 },
-          { 26, 7, 7, 7, 7, 7, 7, 28 },
-          { 26, 7, 55, 56, 8, 9, 7, 28 },
-          { 1, 2, 57, 58, 23, 23, 2, 22 },
-        },
-      },
-      {
-        excludeMaps = { "VIOLET_CITY" },
         frontEave = 4,
         id = "gen2_mart",
         roofBack = 2,
@@ -5311,7 +5355,6 @@ local profile = {
         },
       },
       {
-        excludeMaps = { "VIOLET_CITY" },
         frontEave = 4,
         id = "gen2_pokecenter",
         roofBack = 2,

@@ -91,6 +91,7 @@ function GeometrySnapshot.fromMap(map, masks, voidFill, options)
     voidFill = tostring(voidFill or "trees"),
     authoredProfileRevision = field(map, "profileRevision", state)
       or field(def, "profileRevision", state),
+    voxelPeriod = options.voxelPeriod,
   }
   return snapshot
 end

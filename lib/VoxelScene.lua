@@ -45,8 +45,8 @@ local VoxelScene = {}
 
 -- What the active display mode actually paints with.
 --
--- paletteFor hands back a map's RAW SGB zone palette, and that is not what
--- any of the non-colour modes draw. The flat path runs it through
+-- paletteFor hands back a map's named zone palette, and that is not what
+-- ADVANCED's per-tile world art draws. The flat path runs it through
 -- PaletteFX.effectiveColors on the way to the shade-remap shader, and that
 -- call IS where GRAY, INVERTED and CLASSIC happen -- OG / OG INV replace
 -- the palette with the DMG greys (inverted for the latter), CLASSIC
@@ -60,10 +60,29 @@ local VoxelScene = {}
 -- as plain SGB blue.
 local function modeColors(paletteFor, map)
   local c = paletteFor and paletteFor(map) or nil
+  -- Gen 2's live palette is eight BG/OBJ slots, not the single SGB zone
+  -- palette the Gen 1 path hands us. Gold has already baked that bundle into
+  -- its terrain atlas; authored .vox rows consume it separately below.
+  if c and (c.bg or c.obj) then return nil end
+  return PaletteFX.effectiveColors(c)
+end
+
+local function voxelColors(paletteFor, map)
+  local c = paletteFor and paletteFor(map) or nil
+  if c and (c.bg or c.obj) then return c end
+  if PaletteFX.usesGbcPack and PaletteFX.usesGbcPack()
+      and map and map.tileset and map.renderer
+      and type(PaletteFX.worldGroupColors) == "function" then
+    local data = map.renderer.data
+    local ok, world = pcall(PaletteFX.worldGroupColors, data,
+                            map.tileset.id, map.id, nil)
+    if ok and world then return { world = world } end
+  end
   return PaletteFX.effectiveColors(c)
 end
 
 VoxelScene._modeColors = modeColors   -- named for the suite
+VoxelScene._voxelColors = voxelColors -- named for the Gen 2 palette suite
 
 -- ------------------------------------------------------------------ sky --
 --
@@ -387,7 +406,7 @@ end
 -- `lift` raises the figure off the ground plane (ledge hops arc UP in 3D,
 -- where the 2D path could only slide the sprite north).
 local function drawEntity(sprite, px, py, facing, phase, flip, gh, colors,
-                          lift)
+                          lift, voxColors)
   local def = sprite.def
   local y = gh + (lift or 0)
   local voxName = VoxAssets.forSprite(def.image)
@@ -396,7 +415,7 @@ local function drawEntity(sprite, px, py, facing, phase, flip, gh, colors,
     if mesh then
       local ox, oz = VoxAssets.spriteOrigin(voxName, px, py)
       Mat4.translateInPlace(spriteVoxMat, ox, y, oz)
-      Voxel3D.draw(mesh, VoxAssets.texture(colors), spriteVoxMat,
+      Voxel3D.draw(mesh, VoxAssets.texture(voxColors or colors), spriteVoxMat,
                    0, spriteVoxMat)
       return true
     end
@@ -467,6 +486,23 @@ end
 -- The last live-set key, so eviction only runs when the neighbourhood
 -- actually changes (a map crossing), not every frame.
 local lastLiveKey = nil
+local lastCanopyVoxelPeriod = nil
+
+local function refreshCanopyVoxelPeriod()
+  local period = DayNight.voxelPeriod()
+  if lastCanopyVoxelPeriod == nil then
+    lastCanopyVoxelPeriod = period
+    return
+  end
+  if period == lastCanopyVoxelPeriod then return end
+  lastCanopyVoxelPeriod = period
+  -- The model is part of the cached auxiliary geometry, so a moon/sun handoff
+  -- must rebuild the forest map. ChunkMesher keeps the old mesh visible while
+  -- the replacement cooks, avoiding a one-frame hole in the world.
+  if ChunkMesher.seen("VIRIDIAN_FOREST") then
+    ChunkMesher.refresh("VIRIDIAN_FOREST")
+  end
+end
 
 -- Request everything `state`'s frame wants and evict what it no longer
 -- does; returns the current map's terrain mesh (or nil while it builds)
@@ -479,6 +515,7 @@ local lastLiveKey = nil
 -- fallback while the first slices run.
 function VoxelScene.prefetch(state)
   local Voxel = V.require("VoxelState")
+  refreshCanopyVoxelPeriod()
 
   -- The live set is the current map plus its rendered neighbours. When
   -- it changes, everything outside it (and the previous set, which
@@ -572,7 +609,7 @@ end
 -- below). Only that one entry gets the see-through treatment: NPCs and the
 -- ghosts standing on a neighbour map are left to honest occlusion, because
 -- it is only your own character you cannot afford to lose behind a roof.
-local function posesOf(state, spriteColors)
+local function posesOf(state, spriteColors, voxelPalette)
   local colors = spriteColors(state.map)
   local posed = {}
   local me = nil
@@ -587,6 +624,7 @@ local function posesOf(state, spriteColors)
       facing = facing, phase = phase, flip = flip,
       gh = groundAt(g.map or state.map, g.npc.cellX, g.npc.cellY),
       lift = g.npc.py - vy, colors = spriteColors(g.map or state.map),
+      voxColors = voxelPalette(g.map or state.map),
     }
   end
   for _, e in ipairs(state.entities or {}) do
@@ -600,6 +638,7 @@ local function posesOf(state, spriteColors)
         facing = facing, phase = phase, flip = flip,
         gh = groundAt(state.map, e.cellX, e.cellY),
         lift = e.py - vy, colors = colors,
+        voxColors = voxelPalette(state.map),
       }
       if e == state.player then
         me = posed[#posed]
@@ -684,7 +723,7 @@ local function drawCast(state, posed, atlasFor)
   for _, p in ipairs(posed) do
     if not (p.isPlayer and hideMe) then
       drawEntity(p.sprite, p.px, p.py, viewFacing(p), p.phase, p.flip, p.gh,
-                 p.colors, p.lift)
+                 p.colors, p.lift, p.voxColors)
     end
   end
   -- back on for everything textured from the atlas again -- figures, grass
@@ -1003,7 +1042,8 @@ local function castShadows(state, terrain, ring, nbMesh, posed, cx, cy, vw, vh,
             local ox, oz = VoxAssets.spriteOrigin(voxName, p.px, p.py)
             Mat4.translateInPlace(spriteVoxMat, ox,
                                   p.gh + (p.lift or 0), oz)
-            ShadowMap.draw(mesh, VoxAssets.texture(p.colors), spriteVoxMat)
+            ShadowMap.draw(mesh, VoxAssets.texture(p.voxColors or p.colors),
+                           spriteVoxMat)
           end
         else
           local frame, mirror = frameFor(def, viewFacing(p), p.phase, p.flip)
@@ -1078,7 +1118,7 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
     return TerrainAtlas.forMap(map, modeColors(paletteFor, map))
   end
   local function voxTextureFor(map)
-    return VoxAssets.texture(modeColors(paletteFor, map))
+    return VoxAssets.texture(voxelColors(paletteFor, map))
   end
 
   -- sprite palettes only exist in the SGB modes; under RED++ the OBP bake
@@ -1088,7 +1128,8 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
     return modeColors(paletteFor, map)
   end
 
-  local posed, me = posesOf(state, spriteColors)
+  local posed, me = posesOf(state, spriteColors,
+                            function(map) return voxelColors(paletteFor, map) end)
 
   -- The first-person rig, built (or blended) for this frame and handed to
   -- Voxel3D BEFORE either pass runs: the sun's box is fitted around this

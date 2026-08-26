@@ -111,7 +111,6 @@ function InputFeature.new(ctx)
               end
             elseif Pipelines.canToggle("voxel", top, self.overworld) then
               claim:cycle(self)
-              if ctx.stagedBattles() then OverworldBattle.forceOG(self) end
               return
             end
           end

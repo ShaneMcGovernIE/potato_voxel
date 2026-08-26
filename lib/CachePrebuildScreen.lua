@@ -12,8 +12,12 @@ function Screen.new(game, onDone, onCancel)
   return setmetatable({ game = game, onDone = onDone, onCancel = onCancel }, Screen)
 end
 
+function Screen:wantsFillScale() return true end
+function Screen:drawsWidescreen() return true end
+
 function Screen:sgbPalettes(game)
-  return PaletteFX.wholeNamed(game.data, "MEWMON")
+  local ok, pal = pcall(PaletteFX.wholeNamed, game and game.data, "MEWMON")
+  return (ok and pal) or nil
 end
 
 function Screen:back()
@@ -23,6 +27,8 @@ end
 
 function Screen:update()
   local input = self.game.input
+  Prebuild.update(true)
+  Prebuild.pump(true)
   local _, _, running = Prebuild.progress()
   if running then
     if input:wasPressed("a") or input:wasPressed("b") then
