@@ -12,8 +12,8 @@ Stereoscopic3D.modeSetting = ModSetting.new(
 
 Stereoscopic3D.depthSetting = ModSetting.new(
   "stereoDepth", "3D DEPTH",
-  { "medium", "low", "high" },
-  { "MEDIUM", "LOW", "HIGH" })
+  { "high", "medium", "low" },
+  { "HIGH", "MEDIUM", "LOW" })
 
 Stereoscopic3D.PROFILES = {
   colorcode = {
@@ -72,11 +72,7 @@ Stereoscopic3D.DEPTH = {
   high = 5,
 }
 
-Stereoscopic3D.CHROMA_RANGE = {
-  low = 1.5,
-  medium = 1.0,
-  high = 0.7,
-}
+Stereoscopic3D.CHROMA_RANGE = 0.45
 
 local COMPOSITE_SHADER = [[
   uniform Image leftEye;
@@ -135,7 +131,8 @@ local CHROMADEPTH_SHADER = [[
     float span = max(0.001, focus * depthRange);
     float t = clamp(0.5 + (distance - focus) / span, 0.0, 1.0);
     float luminance = dot(source.rgb, vec3(0.299, 0.587, 0.114));
-    vec3 encoded = chromaRamp(t) * max(luminance, 0.035);
+    float brightness = mix(0.55, 1.0, clamp(luminance, 0.0, 1.0));
+    vec3 encoded = chromaRamp(t) * brightness;
     return vec4(clamp(encoded, 0.0, 1.0), source.a) * color;
   }
 ]]
@@ -275,11 +272,7 @@ function Stereoscopic3D.buildEyes(camera, w, h, slot, adopt)
       base.eye[2] + ry * offset,
       base.eye[3] + rz * offset,
     }
-    out.focus = {
-      base.focus[1] + rx * offset,
-      base.focus[2] + ry * offset,
-      base.focus[3] + rz * offset,
-    }
+    out.focus = copyVector(base.focus)
     out.projectionShift = -shift * sign
     return { camera = out, w = w, h = h, slot = slot .. "_" .. name,
              adopt = adopt and true or false }
@@ -428,8 +421,7 @@ function Stereoscopic3D.chromadepth(canvas, depthCanvas, w, h,
   near = tonumber(near) or 1
   far = math.max(near + 1, tonumber(far) or near + 1)
   focus = math.max(near, math.min(far, tonumber(focus) or (near + far) * 0.5))
-  local range = Stereoscopic3D.CHROMA_RANGE[Stereoscopic3D.depth()]
-                or Stereoscopic3D.CHROMA_RANGE.medium
+  local range = Stereoscopic3D.CHROMA_RANGE
   local previousCanvas = love.graphics.getCanvas()
   local previousShader = love.graphics.getShader()
   local previousBlend, previousAlpha = love.graphics.getBlendMode()

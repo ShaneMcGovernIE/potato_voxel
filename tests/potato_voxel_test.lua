@@ -51,11 +51,10 @@ T.check(Stereoscopic3D.linearDepth(0.9, 1, 100)
         "chromadepth linearizes increasing depth")
 T.eq(Stereoscopic3D.modeSetting.values[6], "chromadepth",
      "3D mode includes a dedicated chromadepth profile")
-T.check(Stereoscopic3D.CHROMA_RANGE.low
-        > Stereoscopic3D.CHROMA_RANGE.medium
-        and Stereoscopic3D.CHROMA_RANGE.medium
-           > Stereoscopic3D.CHROMA_RANGE.high,
-        "chromadepth strength orders its hue ranges")
+T.eq(Stereoscopic3D.CHROMA_RANGE, 0.45,
+     "chromadepth uses a fixed hue range")
+T.eq(Stereoscopic3D.depthSetting.values[1], "high",
+     "3D depth defaults to high")
 do
   local modeGet = Stereoscopic3D.modeSetting.get
   Stereoscopic3D.modeSetting.get = function() return "chromadepth" end
@@ -92,6 +91,10 @@ do
   T.eq(lowEyes[1].camera.focus[1] + lowEyes[2].camera.focus[1],
        base.focus[1] * 2,
        "stereo eyes keep a shared convergence plane")
+  T.eq(lowEyes[1].camera.focus[2], base.focus[2],
+       "left eye keeps the shared convergence target")
+  T.eq(lowEyes[2].camera.focus[2], base.focus[2],
+       "right eye keeps the shared convergence target")
   local colorcode = Stereoscopic3D.PROFILES.colorcode
   local redblue = Stereoscopic3D.PROFILES.redblue
   local redcyan = Stereoscopic3D.PROFILES.redcyan

@@ -124,8 +124,8 @@ exposed as a setting. ChromaDepth glasses have no left/right filter
 orientation.
 
 **3D DEPTH** controls the eye separation for anaglyph modes and the hue-range
-strength for **CHROMADEPTH**. **MEDIUM** is the default; use **LOW** for a
-more relaxed image or **HIGH** for stronger separation. Anaglyph stereo
+strength for **CHROMADEPTH**. **HIGH** is the default; use **MEDIUM** or **LOW**
+for a more relaxed image, or **HIGH** for stronger separation. Anaglyph stereo
 renders the overworld and staged 3D battles twice, while ChromaDepth renders
 one scene plus a depth-color pass. Lower **RENDER SCALE** if the frame rate
 drops. Menus, dialogue, HUDs, and battle text stay in one readable mono layer.

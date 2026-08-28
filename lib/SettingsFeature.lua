@@ -90,9 +90,9 @@ function SettingsFeature.new(ctx)
       { "Stereo or color",
         "depth strength.",
         "LOW is subtle,",
-        "MEDIUM is the",
-        "default, HIGH is",
-        "strongest." },
+        "MEDIUM is balanced,",
+        "HIGH is the",
+        "default and strongest." },
       when = function() return ctx.Stereoscopic3D.supported()
                          and ctx.Stereoscopic3D.mode() ~= "off" end,
       full = true },
