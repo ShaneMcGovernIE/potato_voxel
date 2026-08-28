@@ -1418,6 +1418,7 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   end   -- drawScene
 
   if not eyes then
+    Voxel3D.camera = nil
     if not Voxel3D.beginScene(w, h, cx, cy, vw, vh, skyFor(state.map)) then
       return nil
     end

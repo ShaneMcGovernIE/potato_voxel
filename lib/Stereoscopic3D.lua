@@ -69,7 +69,7 @@ Stereoscopic3D.PROFILES = {
 Stereoscopic3D.DEPTH = {
   low = 1.5,
   medium = 3,
-  high = 5,
+  high = 4,
 }
 
 Stereoscopic3D.CHROMA_RANGE = 0.45
