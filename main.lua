@@ -121,6 +121,7 @@ local FreeMove = V.require("FreeMove")
 local CamControl = V.require("CamControl")
 local InputFeature = V.require("InputFeature")
 local VR = V.require("VR")
+local Stereoscopic3D = V.require("Stereoscopic3D")
 local CachePrebuild = V.require("CachePrebuild")
 local CacheFeature = V.require("CacheFeature")
 local MeshCache = V.require("MeshCache")
@@ -139,6 +140,7 @@ DebugOverlay.setProbe(function()
   local done, total, running, eta = CachePrebuild.progress()
   return {
     voxel = Voxel3D.diagnostics(),
+    stereo = Stereoscopic3D.diagnostics(),
     shadows = ShadowMap.diagnostics(),
     cache = {
       identity = MeshCache.identity(),
@@ -468,6 +470,7 @@ mod.content.render_pipelines:register("voxel", {
           "drawWorld stale for %d ticks while active; forcing invalidation",
           worldDiag.drawStaleTicks)
         Voxel3D.invalidate()
+        Stereoscopic3D.invalidate()
         ChunkMesher.invalidate()
         worldDiag.drawStaleTicks = 0
       end
@@ -498,6 +501,7 @@ mod.content.render_pipelines:register("voxel", {
 
   invalidate = function()
     Voxel3D.invalidate()
+    Stereoscopic3D.invalidate()
     OverworldBattle.invalidate()
     AntiAlias.invalidate()
     Upscale.invalidate()
@@ -626,6 +630,7 @@ local Settings = SettingsFeature.new({
   MapAtmos = MapAtmos,
   Weather = Weather,
   AntiAlias = AntiAlias,
+  Stereoscopic3D = Stereoscopic3D,
   VR = VR,
   ShadowSettings = ShadowSettings,
   DebugOverlay = DebugOverlay,
