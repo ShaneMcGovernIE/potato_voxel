@@ -151,7 +151,10 @@ end
 --     single-row upright top bands during Gen1 precache.
 -- 70: Replace Gen1 jump-ledge terminal caps when tile 52 sits over ground.
 -- 71: Give the Gen1 terminal-cap copy tile 52's Advanced palette group.
-MeshCache.GEOMETRY_VERSION = 71
+-- 72: Stop the corner AO probe shading a connected map edge against border
+--     ring the connection hides, which changes the baked vertex shade of
+--     every tile along a seam.
+MeshCache.GEOMETRY_VERSION = 72
 local Identity = CacheIdentity.new({
   geometryVersion = MeshCache.GEOMETRY_VERSION,
 })

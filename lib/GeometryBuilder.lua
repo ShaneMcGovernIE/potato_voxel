@@ -55,6 +55,8 @@ function GeometryBuilder.emit(map, bodyOnly, masks, sink, waterSink)
   local waterPush = waterSink and waterSink.push or nil
   local tileset = map.tileset
   local S = Structures.forMap(map)
+  local def = map.def
+  local tw, th = def.width * 4, def.height * 4         -- map size in tiles
   local perRow = tileset.tilesPerRow or 16
   local atlasW = tileset.imageWidth or (perRow * 8)
   local atlasH = tileset.imageHeight or 48
@@ -66,6 +68,51 @@ function GeometryBuilder.emit(map, bodyOnly, masks, sink, waterSink)
     if run then return run.h end
     local s = S.shapeAt[k]
     return s and s.h or 0
+  end
+
+  -- Does the cell one step past the body belong to a CONNECTED NEIGHBOUR
+  -- rather than to the border ring?
+  --
+  -- Structures fills the whole ring with the map's border block, and
+  -- heightAt answers out of that analysis wherever it is asked -- so a
+  -- cell just outside the body always reports a neighbour standing there,
+  -- and outdoors that neighbour is the solid tree wall. Where the map ENDS
+  -- that is the truth. Where it CONNECTS it is not: the ring is not drawn
+  -- there at all (`masks` suppress it under the neighbour's body, and a
+  -- body-only build emits no ring in the first place) and the neighbour's
+  -- own ground runs flush with the seam.
+  --
+  -- Only the AO probe asks. The faces themselves still read heightAt
+  -- straight, because a face is a hole if it is wrong and a crease is only
+  -- a shade.
+  --
+  -- A cell outside the body on BOTH axes is not flush whatever connects: a
+  -- neighbour to the east is not also north of itself, and the ring really
+  -- does stand in the corner past the end of the seam.
+  local conn = def.connections
+  local cN = (conn and conn.north) ~= nil
+  local cS = (conn and conn.south) ~= nil
+  local cE = (conn and conn.east) ~= nil
+  local cW = (conn and conn.west) ~= nil
+  local anyConn = cN or cS or cE or cW
+  local function flush(tx, ty)
+    if not anyConn then return false end
+    if ty >= 0 and ty < th then
+      if tx >= tw then return cE end
+      if tx < 0 then return cW end
+    end
+    if tx >= 0 and tx < tw then
+      if ty >= th then return cS end
+      if ty < 0 then return cN end
+    end
+    return false
+  end
+
+  -- The AO probe's own neighbour test: raised enough to crowd this corner,
+  -- and actually THERE to do it.
+  local function crowds(tx, ty, h)
+    if flush(tx, ty) then return false end
+    return heightAt(tx, ty) > h
   end
 
   -- one atlas-rect UV, optionally cropped to art rows [vTop, vBot] of 8
@@ -117,14 +164,14 @@ function GeometryBuilder.emit(map, bodyOnly, masks, sink, waterSink)
   -- A top face's four corners, each occluded by the three cells that touch
   -- it: two edge neighbours and the diagonal between them.
   local function aoShades(tx, ty, h, shade)
-    local n = heightAt(tx, ty - 1) > h
-    local s = heightAt(tx, ty + 1) > h
-    local e = heightAt(tx + 1, ty) > h
-    local w = heightAt(tx - 1, ty) > h
-    local nw = heightAt(tx - 1, ty - 1) > h
-    local ne = heightAt(tx + 1, ty - 1) > h
-    local sw = heightAt(tx - 1, ty + 1) > h
-    local se = heightAt(tx + 1, ty + 1) > h
+    local n = crowds(tx, ty - 1, h)
+    local s = crowds(tx, ty + 1, h)
+    local e = crowds(tx + 1, ty, h)
+    local w = crowds(tx - 1, ty, h)
+    local nw = crowds(tx - 1, ty - 1, h)
+    local ne = crowds(tx + 1, ty - 1, h)
+    local sw = crowds(tx - 1, ty + 1, h)
+    local se = crowds(tx + 1, ty + 1, h)
     if not (n or s or e or w or nw or ne or sw or se) then return shade end
     local function corner(a, b, d)
       local k = 0
@@ -249,8 +296,6 @@ function GeometryBuilder.emit(map, bodyOnly, masks, sink, waterSink)
     push(c, uv, shade)
   end
 
-  local def = map.def
-  local tw, th = def.width * 4, def.height * 4         -- map size in tiles
   local r = bodyOnly and 0 or RING * 4
 
   -- true when the (ring) position lies under a connected neighbour's body
