@@ -5,6 +5,7 @@
 # private require against the archive (CONTRIBUTING-mods.md "What the PR
 # must contain", 2).
 tests/potato_voxel_test.lua
+tests/voxel_seam_ao_test.lua
 tests/potato_voxel_cache_test.lua
 tests/voxel_loading_test.lua
 tests/shadow_cadence_probe.lua
